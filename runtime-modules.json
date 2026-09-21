@@ -1,5 +1,5 @@
 {
-  "stage": "phase4-lazy-evolution",
+  "stage": "phase5-manual-rebuild",
   "hostEntrypoint": null,
   "modules": [
     "constants.js",
@@ -18,6 +18,8 @@
     "injection.js",
     "elapsed.js",
     "evolution-wire.js",
-    "evolution.js"
+    "evolution.js",
+    "manual.js",
+    "rebuild.js"
   ]
 }

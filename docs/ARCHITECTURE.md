@@ -286,17 +286,23 @@ UI search is free-text/anchor based. No region/faction taxonomy.
 
 ## 15. Manual controls
 
-Recommended command family:
+Phase 5 implements a host-neutral manual-control service layer. It does **not** register commands or UI yet.
 
-- `/worldstate inspect`
-- `/worldstate inspect <query>`
-- `/worldstate update <query>`
-- `/worldstate rebuild`
-- `/worldstate reset`
-- `/worldstate export`
-- `/worldstate import`
+Available service behavior:
 
-Avoid a no-argument automatic global `update` that silently evolves everything. If retained, no-argument update should only capture current exchange or require UI confirmation.
+- deterministic free-text/status/kind query over canonical records
+- inspect one record with bounded evidence and related links
+- targeted manual create/update/resolve/supersede through the canonical reducer
+- export preparation
+- import preview + explicit confirmation
+- reset preview + explicit confirmation
+- explicit rebuild orchestration
+
+A targeted manual mutation is not an unowned side edit. It must be attached to the current raw-message head on the same proven branch, include a concise operator note as `manual` evidence, pass duplicate/lifecycle validation, and journal through the ordinary branch owner. Manual correction does not advance automatic capture cadence.
+
+Future host wiring may expose a command family such as `/worldstate inspect`, `update`, `rebuild`, `reset`, `export`, and `import`, but command registration belongs to a later host/UI phase.
+
+There is no no-argument automatic global update that silently evolves everything.
 
 ## 16. Provider handling
 
@@ -425,27 +431,39 @@ persist rebased lineage
 
 ## 21. Manual rebuild flow
 
+Phase 5 rebuild remains host-neutral and explicit-only:
+
 ```text
-explicit rebuild
+explicit rebuild request
    |
-freeze ordinary automatic writers for this chat
+snapshot canonical state + exact current chat lineage
    |
-scan history in bounded chronological chunks
+plan bounded assistant-completed exchange windows
    |
-extract grounded mutations/events
+start isolated empty/root-checkpoint candidate
    |
-deterministic reducer constructs current records
+for each window in chronology:
+   existing capture prompt + source firewall
+   + relevant active records
+   + relevant resolved/superseded tombstones
+   -> one bounded capture-style request
+   -> evidence reclassified as rebuild provenance
+   -> reducer + exact-message journal on candidate only
    |
-reconcile relevant lore baseline without promoting possibilities
+never replay lazy evolution / never simulate missing off-screen motion
    |
-rebuild evidence + lineage checkpoints
+stale / malformed / provider/context failure?
+ yes -> discard whole candidate, canonical state unchanged
+ no  -> finish full lineage
    |
-compare controlled-fixture result to incremental state
+compare controlled current-state semantics where requested
    |
-atomic replace on success
-   |
-resume ordinary runtime
+atomic replace candidate on complete success
 ```
+
+The provider-call ceiling for rebuild is therefore bounded by the number of assistant-completed exchange windows admitted by the configured rebuild limit. The default Phase 5 cap is 1024 boundaries. Planning itself is local and performs zero provider calls.
+
+Rebuild deliberately prefers narrated evidence over reconstructing hypothetical Phase 4 evolution. If an earlier evolved condition materially affected the campaign, subsequent established narration can recover that consequence. Otherwise rebuild does not manufacture it.
 
 ## 22. Design review questions A-S
 

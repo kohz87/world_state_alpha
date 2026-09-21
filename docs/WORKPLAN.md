@@ -1,6 +1,6 @@
 # World State Alpha staged workplan
 
-Status: architecture accepted. Phases 1-4 implemented candidates; Phases 5+ remain gated.
+Status: architecture accepted. Phases 1-5 implemented candidates; Phases 6+ remain gated.
 
 ## Phase 0 - architecture/bootstrap
 
@@ -102,7 +102,7 @@ Acceptance:
 - no thread explosion
 - resolved record does not resurrect from lore
 
-## Phase 5 - manual controls + rebuild
+## Phase 5 - manual controls + rebuild [IMPLEMENTED CANDIDATE]
 
 Build:
 

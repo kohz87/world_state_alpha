@@ -50,6 +50,12 @@ No fixture may require schema code specific to its setting.
 18. Non-fantasy fixtures pass unchanged schema.
 19. No record requires geographic/faction `scope`.
 20. Rebuild and incremental state are equivalent for controlled fixture.
+21. Manual targeted correction is current-head/branch-owned and rolls back with the branch journal.
+22. Reset/import require preview plus explicit confirmation.
+23. Rebuild failure/staleness discards the whole candidate and leaves canonical state untouched.
+24. Relevant resolved tombstone blocks passive rebuild resurrection.
+25. Explicit new episode may be reconstructed only when grounded and linked to the resolved predecessor.
+26. Rebuild never invokes lazy evolution or hidden world simulation.
 
 ## Additional safety tests
 
@@ -69,6 +75,12 @@ No fixture may require schema code specific to its setting.
 - derived candidate limit exceeded -> bounded reject
 - record summary grows history-like -> consolidation truncates/replaces
 - import from another chat -> source message IDs rebased/cleared, not trusted as local
+- manual mutation against non-head or divergent lineage -> reject
+- rebuild boundary limit exceeded -> reject before provider work
+- rebuild provider fails on a later chunk -> original canonical state unchanged
+- rebuild currentness changes mid-run -> discard whole candidate
+- rebuild passive duplicate of resolved episode -> reject
+- rebuild explicit new related episode -> create new record, retain tombstone
 
 ## Model/provider acceptance
 

@@ -11,7 +11,7 @@ import { extractElapsedHint } from '../elapsed.js';
 import { EVOLUTION_WIRE_LIMITS } from '../evolution-wire.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-if (inventory.stage !== 'phase4-lazy-evolution') throw new Error('Phase 4 runtime inventory stage mismatch');
+if (!['phase4-lazy-evolution', 'phase5-manual-rebuild'].includes(inventory.stage)) throw new Error('Phase 4 cumulative runtime inventory stage mismatch');
 if (inventory.hostEntrypoint !== null) throw new Error('Phase 4 must remain host-neutral; SillyTavern bootstrap is not authorized yet');
 
 const required = ['elapsed.js', 'evolution-wire.js', 'evolution.js'];
@@ -25,7 +25,7 @@ for (const file of required) {
   await import(new URL(`../${file}`, import.meta.url));
 }
 
-for (const forbidden of ['ui.js', 'commands.js', 'rebuild.js', 'bootstrap.js', 'runtime.js']) {
+for (const forbidden of ['ui.js', 'commands.js', 'bootstrap.js', 'runtime.js']) {
   if (inventory.modules.includes(forbidden)) throw new Error(`Phase 4 inventory contains unauthorized later-phase/host module: ${forbidden}`);
 }
 

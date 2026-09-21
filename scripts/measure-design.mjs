@@ -3,6 +3,8 @@ import { performance } from 'node:perf_hooks';
 import { buildCapturePrompt } from '../capture.js';
 import { buildWorldStateInjection } from '../injection.js';
 import { buildEvolutionContext, buildEvolutionPrompt, planLazyEvolution } from '../evolution.js';
+import { queryWorldState } from '../manual.js';
+import { planChronologicalRebuild } from '../rebuild.js';
 
 const files = ['docs/core-contract.md', 'docs/ARCHITECTURE.md', 'docs/DATA_MODEL.md'];
 for (const file of files) {
@@ -145,4 +147,36 @@ console.log(JSON.stringify({
   ordinaryTargets: ordinaryPlan.targets.length,
   elapsedTargets: evolutionPlan.targets.length,
   maxAutomaticTargets: 4,
+}));
+
+
+const manualStart = performance.now();
+const manualQuery = queryWorldState({ records, evidence: {}, links: [] }, {
+  text: 'Kesselpass freight',
+  statuses: ['active'],
+  limit: 30,
+});
+const manualElapsed = performance.now() - manualStart;
+console.log(JSON.stringify({
+  kind: 'phase5-manual-query',
+  corpusRecords: records.length,
+  matchedRecords: manualQuery.totalMatched,
+  returnedRecords: manualQuery.records.length,
+  wallMs: Math.round(manualElapsed * 1000) / 1000,
+}));
+
+const rebuildChat = Array.from({ length: 1000 }, (_, index) => ({
+  role: index % 2 === 0 ? 'user' : 'assistant',
+  content: index % 2 === 0 ? `User exchange ${index}.` : `Assistant exchange ${index}.`,
+}));
+const rebuildStart = performance.now();
+const rebuildPlan = planChronologicalRebuild(rebuildChat);
+const rebuildElapsed = performance.now() - rebuildStart;
+console.log(JSON.stringify({
+  kind: 'phase5-rebuild-plan',
+  chatMessages: rebuildChat.length,
+  assistantBoundaries: rebuildPlan.windows.length,
+  providerCallsDuringPlanning: 0,
+  maxBoundaries: rebuildPlan.metrics.maxBoundaries,
+  wallMs: Math.round(rebuildElapsed * 1000) / 1000,
 }));

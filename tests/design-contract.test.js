@@ -31,6 +31,12 @@ test('core safety invariants are present', () => {
     /Elapsed time is permission to evaluate/i,
     /zero evolution calls on ordinary relevant turns/i,
     /at most four developments/i,
+    /Phase 5 exposes host-neutral service functions only/i,
+    /current raw-message head/i,
+    /preview-then-confirm/i,
+    /never an automatic response to incompleteness/i,
+    /do not replay lazy evolution/i,
+    /atomically replace canonical state only after the complete chronological pass succeeds/i,
   ]) assert.match(contract, expected);
 });
 

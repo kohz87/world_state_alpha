@@ -54,7 +54,7 @@ function mergeAnchors(existing = [], incoming = [], max = 20) {
 export function consolidateCreateCandidate(
   mutation,
   visibleRecords = [],
-  { threshold = 0.78, newEpisodeThreshold = 0.55 } = {},
+  { threshold = 0.78, resolvedThreshold = 0.70, newEpisodeThreshold = 0.55 } = {},
 ) {
   if (mutation?.action !== 'create') return { ok: true, mutation, duplicate: null };
   const records = Array.isArray(visibleRecords) ? visibleRecords : [];
@@ -85,9 +85,16 @@ export function consolidateCreateCandidate(
     if (!best || score > best.score) best = { record, score };
   }
 
-  if (!best || best.score < threshold) return { ok: true, mutation, duplicate: best };
+  if (!best) return { ok: true, mutation, duplicate: best };
 
   const record = best.record;
+  if (record.status === 'active' && best.score < threshold) {
+    return { ok: true, mutation, duplicate: best };
+  }
+  if (record.status !== 'active' && best.score < resolvedThreshold) {
+    return { ok: true, mutation, duplicate: best };
+  }
+
   if (record.status === 'active') {
     const action = mutation.status === 'resolved' ? 'resolve' : 'update';
     return {

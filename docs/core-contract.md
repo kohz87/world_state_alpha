@@ -1,6 +1,6 @@
 # World State Alpha - core contract
 
-Status: ARCHITECTURE ACCEPTED. Phases 1-4 are implemented as candidates; Phase 5+ runtime work remains gated.
+Status: ARCHITECTURE ACCEPTED. Phases 1-5 are implemented as candidates; Phase 6+ runtime work remains gated.
 
 ## C01. Product purpose
 
@@ -144,7 +144,7 @@ No fictional calendar parser is required for correctness.
 
 ## C10. Branch and rollback safety
 
-Every automatic mutation is owned by one raw-message boundary and exact lineage fingerprint.
+Every automatic canonical mutation is owned by one raw-message boundary and exact lineage fingerprint. A manual targeted mutation is also boundary-owned: it must attach to the current raw-message head on the same proven lineage, carry explicit operator evidence, and use the same reversible journal.
 
 Maintain a reversible mutation journal and bounded checkpoints sufficient to restore proven boundaries. Recovery is exact-boundary only; approximate ancestor substitution is forbidden.
 
@@ -171,6 +171,8 @@ Requirements:
 - export/import
 - reset
 - rebuild
+- preview/confirm semantics for destructive reset/import
+- foreign import clears local message provenance unless same-chat provenance preservation is explicitly requested
 - no correctness dependence on hidden in-memory state
 
 ## C12. Relevance retrieval
@@ -274,13 +276,37 @@ Normal exchange target:
 - local relevance retrieval
 - compact injection
 
-Any additional automatic request path requires explicit contract justification and measurements.
+Manual inspect/query/correction and rebuild add no automatic normal-turn request path. Any additional automatic request path requires explicit contract justification and measurements.
 
-## C19. Rebuild
+## C19. Manual controls and rebuild
 
-Rebuild is manual/expensive recovery, not ordinary runtime.
+Phase 5 exposes host-neutral service functions only. It does not register slash commands, menus, DOM, or SillyTavern event hooks.
 
-It may scan campaign history in bounded chunks, reconcile lore baseline, reconstruct current records, rebuild evidence/provenance, and compare incremental equivalence.
+Manual inspect/query is deterministic and read-only. A targeted manual correction:
+
+- requires an existing current raw-message head
+- requires the stored state lineage to agree with the current chat branch
+- requires a concise operator note stored as `manual` evidence
+- goes through duplicate admission, the canonical reducer, and the same branch journal
+- must not advance automatic capture cadence merely because an operator corrected state
+
+Reset and import are preview-then-confirm operations. Foreign import preserves current semantic meaning but clears local raw-message provenance, branch lineage, rollback history, and local evidence ownership rather than pretending another chat's chronology occurred here.
+
+Rebuild is explicit/manual expensive recovery, never ordinary runtime and never an automatic response to incompleteness.
+
+The Phase 5 rebuild contract is:
+
+- plan the current chat in bounded chronological assistant-completed exchange windows
+- fail before provider work if the configured boundary cap is exceeded
+- rebuild into an isolated candidate state from the root, never incrementally overwrite canonical state while scanning
+- reuse the existing capture prompt, source firewall, duplicate gate, reducer, request dispatcher, and exact message lineage
+- tag reconstructed narrative evidence as `rebuild`
+- surface relevant resolved/superseded tombstones during reconstruction so passive historical similarity cannot resurrect an old episode
+- allow a genuinely new related episode only through explicit new-episode semantics
+- do not replay lazy evolution or run hidden off-screen simulation during rebuild
+- discard the entire candidate on stale scope, malformed response, provider failure, or supporting-context failure
+- atomically replace canonical state only after the complete chronological pass succeeds
+- support controlled semantic comparison between incremental and rebuilt current state even when evidence source classes differ
 
 Normal runtime must never depend on recurring rebuilds.
 
@@ -288,7 +314,7 @@ Normal runtime must never depend on recurring rebuilds.
 
 World State does not modify Ukiyo, Megumin Suite Beta, Writer's Mind, or the RP CoT.
 
-World State Alpha may consume narrative produced by an RP model using a story-driving CoT such as Writer's Mind, but those instructions are not inherited by capture or evolution.
+World State Alpha may consume narrative produced by an RP model using a story-driving CoT such as Writer's Mind, but those instructions are not inherited by capture or evolution. Rebuild reuses the capture firewall and likewise does not inherit story-driving instructions.
 
 Story-driving principles such as autonomous world motion, scene variation, chance, escalation, or avoiding stagnation are narration concerns and are not evidence that a world change occurred.
 

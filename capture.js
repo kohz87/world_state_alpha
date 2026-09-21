@@ -159,6 +159,8 @@ export function processCaptureResponse({
   chatKey,
   sourceMessageId,
   sourceLineageKey,
+  operation = 'capture',
+  evidenceSourceClass = '',
 } = {}) {
   const raw = parseCaptureJson(text);
   const wire = validateCaptureEnvelope(raw);
@@ -173,6 +175,12 @@ export function processCaptureResponse({
     if (!firewalled.ok) {
       rejected.push(rejectedEntry('source-firewall', firewalled.reason, { index }));
       continue;
+    }
+    if (evidenceSourceClass) {
+      firewalled.mutation.evidence = (firewalled.mutation.evidence || []).map(item => ({
+        ...item,
+        sourceClass: evidenceSourceClass,
+      }));
     }
     const consolidated = consolidateCreateCandidate(firewalled.mutation, boundedRecords);
     if (!consolidated.ok) {
@@ -189,6 +197,7 @@ export function processCaptureResponse({
     chatKey,
     messageId: sourceMessageId,
     lineageKey: sourceLineageKey,
+    operation,
     mutations: accepted,
   });
   for (const item of reduced.rejected) {
@@ -223,6 +232,9 @@ export async function runCaptureOperation({
   isCurrent = undefined,
   diagnostics = undefined,
   dispatcher = dispatchWorldStateRequest,
+  operation = 'capture',
+  evidenceSourceClass = '',
+  label = 'capture',
 } = {}) {
   const diagnosticStore = diagnostics || createDiagnosticStore();
   const startedAt = Date.now();
@@ -252,7 +264,7 @@ export async function runCaptureOperation({
       timeoutMs,
       signal,
       isCurrent: current,
-      label: 'capture',
+      label,
     });
   } catch (error) {
     const receipt = error?.receipt || {};
@@ -310,6 +322,8 @@ export async function runCaptureOperation({
       chatKey,
       sourceMessageId,
       sourceLineageKey,
+      operation,
+      evidenceSourceClass,
     });
     const outcome = processed.applied.length > 0 ? 'applied' : 'no-change';
     diagnosticStore.record(chatKey, {

@@ -39,6 +39,12 @@ for (const phrase of [
   'Elapsed time is permission to evaluate',
   'zero evolution calls on ordinary relevant turns',
   'at most four developments',
+  'Phase 5 exposes host-neutral service functions only',
+  'current raw-message head',
+  'preview-then-confirm',
+  'never an automatic response to incompleteness',
+  'do not replay lazy evolution',
+  'atomically replace canonical state only after the complete chronological pass succeeds',
 ]) {
   if (!contract.toLowerCase().includes(phrase.toLowerCase())) {
     throw new Error('Core contract missing invariant: ' + phrase);

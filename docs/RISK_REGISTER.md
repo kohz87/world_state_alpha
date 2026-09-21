@@ -14,7 +14,9 @@
 | Provider inconsistency | model emits malformed/overcreative output | compact schema validator, retry policy bounded, reducer owns truth | multi-route acceptance |
 | Thread escalation chains | each evolution spawns more developments | derived creation cap + material causal gate + no drama objective | adversarial evolution fixture |
 | Wrong time inference | fictional calendar misparsed | message chronology mandatory, opaque time anchors optional | no-calendar fixture |
-| Rebuild divergence | rebuild creates different current reality | controlled equivalence tests and atomic replacement only on success | incremental-vs-rebuild |
+| Rebuild divergence | rebuild creates different current reality | bounded assistant-boundary replay through capture firewall + semantic equivalence fixtures + atomic replacement only on full success | incremental-vs-rebuild |
+| Rebuild hidden simulation | recovery invents off-screen evolution not established in narration | rebuild never invokes lazy evolution; reconstruct only grounded chronological capture evidence | no-evolution rebuild fixture |
+| Manual provenance drift | operator edit attaches to stale/other branch | current-head + exact-lineage guard + manual evidence + ordinary rollback journal | manual branch/head fixtures |
 | Approximate rollback corruption | older snapshot used as parent | exact-boundary only, fail closed | missing-parent fixture |
 | Diagnostics leak | prompts/story/credentials stored | allowlisted bounded receipts | serialization inspection |
 | Over-ontology | schema accretes genre assumptions | no mandatory typed anchors/scope; universality fixtures | schema lint |
