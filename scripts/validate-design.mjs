@@ -45,6 +45,11 @@ for (const phrase of [
   'never an automatic response to incompleteness',
   'do not replay lazy evolution',
   'atomically replace canonical state only after the complete chronological pass succeeds',
+  'Phase 6 is a **projection layer only**',
+  'maintenance buttons emit caller-owned action intents',
+  'ordinary rendered UI must not expose raw record IDs',
+  'diagnostics pass through the existing allowlist sanitizer before display',
+  'does not register SillyTavern event hooks',
 ]) {
   if (!contract.toLowerCase().includes(phrase.toLowerCase())) {
     throw new Error('Core contract missing invariant: ' + phrase);

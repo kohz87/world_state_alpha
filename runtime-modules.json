@@ -1,5 +1,5 @@
 {
-  "stage": "phase5-manual-rebuild",
+  "stage": "phase6-ui-evidence",
   "hostEntrypoint": null,
   "modules": [
     "constants.js",
@@ -20,6 +20,10 @@
     "evolution-wire.js",
     "evolution.js",
     "manual.js",
-    "rebuild.js"
+    "rebuild.js",
+    "ui.js"
+  ],
+  "assets": [
+    "ui.css"
   ]
 }

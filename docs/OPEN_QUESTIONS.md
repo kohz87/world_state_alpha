@@ -10,4 +10,6 @@ Resolved: Phase 4 uses correctness-first lazy evolution only for stale relevant 
 
 Resolved: Phase 5 manual correction is attached only to the current raw-message head on the proven branch and requires an operator note; reset/import use preview-then-confirm; rebuild is explicit-only, bounded by assistant-completed exchange windows, atomic on success, reuses the capture firewall, and does not replay lazy evolution.
 
-There are currently no unresolved user-preference decisions required before Phase 6. UI presentation and host command ergonomics remain Phase 6+ decisions rather than backend-state semantics.
+Resolved: Phase 6 uses a projection-only responsive panel with Current / Recent / Resolved / Search / Detail / Diagnostics / Data views. Desktop uses a bounded two-pane panel; <=700 px is full-screen/stacked; maintenance controls emit intents only and do not acquire mutation authority.
+
+There are currently no unresolved user-preference decisions required before Phase 7. Host mounting, launcher/command ergonomics, and coexistence integration remain Phase 7+ decisions.

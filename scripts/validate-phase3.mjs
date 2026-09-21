@@ -21,7 +21,7 @@ for (const file of ['relevance.js', 'injection.js']) {
   if (/"scope"\s*:/.test(text)) throw new Error(`Phase 3 reintroduced mandatory scope ontology: ${file}`);
 }
 
-for (const forbidden of ['ui.js', 'commands.js', 'bootstrap.js', 'runtime.js']) {
+for (const forbidden of ['commands.js', 'bootstrap.js', 'runtime.js']) {
   if (inventory.modules.includes(forbidden)) throw new Error(`Phase 3 cumulative validation found unauthorized host/later-phase module: ${forbidden}`);
 }
 

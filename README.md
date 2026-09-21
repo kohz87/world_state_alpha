@@ -11,7 +11,7 @@ World State Alpha models **change, not maps**. It has no required geography, pol
 
 ## Implementation status
 
-**Phases 1-5 are implemented as candidates: canonical state/rollback, immediate capture, local relevance/private injection, bounded lazy evolution, and host-neutral manual controls/rebuild. Phase 6 and later remain gated until separately authorized.**
+**Phases 1-6 are implemented as candidates: canonical state/rollback, immediate capture, local relevance/private injection, bounded lazy evolution, host-neutral manual controls/rebuild, and a bounded projection-only UI/evidence inspector. Phase 7 and later remain gated until separately authorized.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 
@@ -63,4 +63,4 @@ World State Alpha never rewrites source lore and never modifies Ukiyo.
 
 ## Repository rule
 
-Phases 1-5 authorize the canonical state/rollback substrate, bounded immediate capture, deterministic local relevance/private injection, targeted lazy evolution, and host-neutral manual inspection/correction/transfer/rebuild services. UI, command registration, coexistence host wiring, and SillyTavern bootstrap remain later-phase work.
+Phases 1-6 authorize the canonical state/rollback substrate, bounded immediate capture, deterministic local relevance/private injection, targeted lazy evolution, host-neutral manual inspection/correction/transfer/rebuild services, and the browser-safe projection UI/evidence inspector. Command registration, coexistence hardening, and SillyTavern bootstrap/event wiring remain later-phase work.

@@ -37,6 +37,11 @@ test('core safety invariants are present', () => {
     /never an automatic response to incompleteness/i,
     /do not replay lazy evolution/i,
     /atomically replace canonical state only after the complete chronological pass succeeds/i,
+    /Phase 6 is a \*\*projection layer only\*\*/i,
+    /maintenance buttons emit caller-owned action intents/i,
+    /ordinary rendered UI must not expose raw record IDs/i,
+    /diagnostics pass through the existing allowlist sanitizer before display/i,
+    /does not register SillyTavern event hooks/i,
   ]) assert.match(contract, expected);
 });
 

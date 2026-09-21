@@ -56,6 +56,12 @@ No fixture may require schema code specific to its setting.
 24. Relevant resolved tombstone blocks passive rebuild resurrection.
 25. Explicit new episode may be reconstructed only when grounded and linked to the resolved predecessor.
 26. Rebuild never invokes lazy evolution or hidden world simulation.
+27. Current / Recent / Resolved / Search projections return the correct lifecycle sets and deterministic ordering.
+28. Detail view exposes bounded human-readable evidence and relations without mutable canonical references.
+29. Canonical/evidence/diagnostic HTML metacharacters are escaped and cannot become executable markup.
+30. Ordinary rendered UI contains no raw record IDs, evidence IDs, lineage keys, rollback internals, prompts, transcripts, credentials, or provider payloads.
+31. A 1000-record backend still yields bounded Current / Recent / Resolved / Search UI lists.
+32. Desktop and <=700px / <=420px responsive rules keep the UI readable without requiring backend internals.
 
 ## Additional safety tests
 
@@ -81,6 +87,12 @@ No fixture may require schema code specific to its setting.
 - rebuild currentness changes mid-run -> discard whole candidate
 - rebuild passive duplicate of resolved episode -> reject
 - rebuild explicit new related episode -> create new record, retain tombstone
+- empty UI search -> no accidental whole-database dump
+- malicious HTML in summary/anchor/evidence/diagnostic fields -> escaped text only
+- UI maintenance click -> emits caller action intent only; no direct reset/import/rebuild/storage mutation
+- diagnostics with prompt/story/credential extras -> unexpected fields dropped before display
+- UI projection over 1000 records -> hard list/detail caps remain enforced
+- UI source imports provider/Node/host lifecycle APIs -> validation failure
 
 ## Model/provider acceptance
 

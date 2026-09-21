@@ -1,6 +1,6 @@
 # World State Alpha staged workplan
 
-Status: architecture accepted. Phases 1-5 implemented candidates; Phases 6+ remain gated.
+Status: architecture accepted. Phases 1-6 implemented candidates; Phases 7+ remain gated.
 
 ## Phase 0 - architecture/bootstrap
 
@@ -119,7 +119,7 @@ Acceptance:
 - controlled fixture converges to equivalent current state
 - foreign import does not invent local message provenance
 
-## Phase 6 - UI + evidence inspection
+## Phase 6 - UI + evidence inspection [IMPLEMENTED CANDIDATE]
 
 Build:
 

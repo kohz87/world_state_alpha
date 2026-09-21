@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-The design is accepted and **Phases 1-5 only** are currently authorized. Phase 5 may implement host-neutral inspect/query, current-head targeted manual mutation, preview/confirm reset/export/import services, and explicit bounded chronological rebuild with atomic replacement and equivalence checks. Do not implement Phase 6+ UI, command registration, coexistence host wiring, or SillyTavern bootstrap without a new explicit authorization.
+The design is accepted and **Phases 1-6 only** are currently authorized. Phase 6 may implement the bounded projection-only Current/Recent/Resolved/Search/detail/evidence/diagnostics/data-maintenance UI, responsive CSS, and a host-neutral mount/controller API. Maintenance controls may emit intents to Phase 5 services but must not own canonical mutation. Do not implement Phase 7+ coexistence hardening, command registration, or SillyTavern bootstrap/event wiring without a new explicit authorization.
 
 ## Product boundary
 

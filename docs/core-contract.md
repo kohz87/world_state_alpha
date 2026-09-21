@@ -1,6 +1,6 @@
 # World State Alpha - core contract
 
-Status: ARCHITECTURE ACCEPTED. Phases 1-5 are implemented as candidates; Phase 6+ runtime work remains gated.
+Status: ARCHITECTURE ACCEPTED. Phases 1-6 are implemented as candidates; Phase 7+ runtime work remains gated.
 
 ## C01. Product purpose
 
@@ -276,7 +276,7 @@ Normal exchange target:
 - local relevance retrieval
 - compact injection
 
-Manual inspect/query/correction and rebuild add no automatic normal-turn request path. Any additional automatic request path requires explicit contract justification and measurements.
+Manual inspect/query/correction, rebuild, and Phase 6 UI projection add no automatic normal-turn request path. UI projection/search/rendering is local and must issue zero model/provider calls. Any additional automatic request path requires explicit contract justification and measurements.
 
 ## C19. Manual controls and rebuild
 
@@ -321,3 +321,33 @@ Story-driving principles such as autonomous world motion, scene variation, chanc
 World State records or evolves state only from its own grounded evidence and causal contract.
 
 It supplies compact continuity only. Scene reasoning and prose remain owned by the configured RP model.
+
+
+## C21. Phase 6 UI and evidence inspection
+
+Phase 6 is a **projection layer only**. Canonical state, mutation admission, persistence, rollback, transfer, and rebuild remain owned by their existing core/Phase 5 services.
+
+The Phase 6 UI surface provides:
+
+- Current: active records only
+- Recent: bounded records ordered by latest established change
+- Resolved: resolved and superseded tombstones
+- Search: bounded free-text summary/anchor search using the existing manual query semantics
+- Detail/evidence: current summary/status/trend, anchors, message boundaries, optional time anchor, bounded evidence, and causal/related records
+- Diagnostics: allowlisted sanitized telemetry only
+- Data & maintenance: health/count summaries plus explicit export/import/rebuild/reset action intents
+
+UI rules:
+
+- the UI never calls the canonical reducer, storage writer, import/reset applier, or rebuild executor directly
+- maintenance buttons emit caller-owned action intents; destructive preview/confirm semantics remain owned by Phase 5/caller wiring
+- all canonical, evidence, and diagnostic text is escaped before HTML rendering
+- ordinary rendered UI must not expose raw record IDs, evidence IDs, lineage fingerprints, checksums, rollback sequence numbers, undo patches, prompts, transcripts, credentials, or provider payloads
+- journal data may contribute a small human change label such as "Captured from story" or "Manual correction", but rollback internals are not an ordinary UI surface
+- evidence is bounded and source classes are translated to human labels
+- diagnostics pass through the existing allowlist sanitizer before display
+- list/detail/search outputs are bounded even when the backend contains hundreds or thousands of records
+- desktop uses a bounded two-pane panel; mobile at 700px and below becomes full-screen with a vertically scrollable body and mobile-size touch targets
+- UI namespace/classes remain isolated under World State Alpha
+
+Phase 6 may expose a host-neutral DOM mount/controller that accepts caller-supplied state, diagnostics, close, and maintenance callbacks. It does not register SillyTavern event hooks, slash commands, launchers, settings integration, extension manifests, or cross-extension adapters. Those remain Phase 7+ host/coexistence work.

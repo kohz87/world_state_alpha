@@ -261,28 +261,27 @@ Keep a tiny settings pointer in extension settings; canonical bulk state lives i
 
 ## 14. UI
 
+Phase 6 implements a host-neutral, projection-only UI. It consumes canonical state and bounded diagnostics but does not own mutation, persistence, rebuild, provider routing, or SillyTavern lifecycle registration.
+
 Primary views:
 
-- Current
-- Recent changes
-- Resolved
-- Search
-- Details/evidence
-- Diagnostics
-- Data & maintenance
+- Current: active records only, newest established change first, bounded to 120 rows
+- Recent changes: latest changed records across lifecycle states, bounded to 40 rows
+- Resolved: resolved and superseded tombstones, bounded to 80 rows
+- Search: free-text summary/anchor search using the Phase 5 manual-query semantics, bounded to 100 rows
+- Details/evidence: current summary/status/trend, anchors, created/changed/evaluated boundaries, optional time anchor, at most 32 evidence items, and at most 24 causal/related rows
+- Diagnostics: at most 40 rows after the existing diagnostics allowlist sanitizer
+- Data & maintenance: safe counts/recovery health plus export/import/rebuild/reset action intents
 
-Current should answer "what is happening now?" without exposing backend mechanics.
+Current answers "what is happening now?" without exposing backend mechanics. Recent may translate a journal reason into a human label such as "Captured from story" or "Manual correction", but raw journal sequence numbers, lineage keys, undo patches, checksums, raw record/evidence IDs, prompts, transcripts, credentials, and provider payloads are not ordinary UI output.
 
-Record detail should show:
+All state/evidence/diagnostic text is escaped before HTML rendering. Search and record-detail projections return cloned data rather than mutable references to canonical state.
 
-- current summary/status/trend
-- anchors
-- created/changed/evaluated message boundaries
-- bounded evidence
-- causal links
-- last mutation reason
+The host-neutral controller accepts a caller-supplied root, `getState()`, optional `getDiagnostics()`, `onMaintenanceAction()`, and `onClose()`. Maintenance buttons emit an intent only. Phase 5/caller wiring retains preview/confirm and mutation authority.
 
-UI search is free-text/anchor based. No region/faction taxonomy.
+Desktop uses a centered panel up to roughly 1040 px with a list/detail split. At 700 px and below the panel becomes full-screen `100vw × 100dvh` with a vertically scrollable stacked body and >=44 px tab targets. At 420 px and below dense grids collapse to one column.
+
+Phase 6 deliberately does not add a launcher, manifest, settings pane, slash-command registration, SillyTavern event hooks, MutationObserver/watchdog integration, or cross-extension adapter. Those belong to Phase 7+ host/coexistence work.
 
 ## 15. Manual controls
 

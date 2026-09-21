@@ -19,4 +19,8 @@
 | Manual provenance drift | operator edit attaches to stale/other branch | current-head + exact-lineage guard + manual evidence + ordinary rollback journal | manual branch/head fixtures |
 | Approximate rollback corruption | older snapshot used as parent | exact-boundary only, fail closed | missing-parent fixture |
 | Diagnostics leak | prompts/story/credentials stored | allowlisted bounded receipts | serialization inspection |
+| UI authority drift | presentation code mutates state or bypasses Phase 5 confirmation | projection-only UI + maintenance intent callbacks + static boundary validator | Phase 6 mutation-boundary tests |
+| UI data leak / XSS | backend IDs, lineage, private telemetry, or executable markup reaches the panel | escaped text + human projections + diagnostic allowlist + no raw IDs in rendered HTML | hostile-markup/privacy fixture |
+| UI overload | large world database creates an unusable or huge panel | hard per-view/detail caps + local bounded search projection | 1000-record UI fixture |
+| Mobile unreadability | desktop panel overflows or tiny controls block maintenance/inspection | <=700px full-screen stacked layout, >=44px tabs, <=420px one-column grids | static responsive CSS tests + later live browser acceptance |
 | Over-ontology | schema accretes genre assumptions | no mandatory typed anchors/scope; universality fixtures | schema lint |

@@ -2,7 +2,7 @@
 
 ## Current gate
 
-Architecture is accepted. Phases 1-5 are authorized and later phases remain gated.
+Architecture is accepted. Phases 1-6 are authorized and later phases remain gated.
 
 Allowed in the current gate:
 
@@ -10,13 +10,13 @@ Allowed in the current gate:
 - Phase 2 bounded immediate capture and request-scoped provider routing
 - Phase 3 deterministic local relevance and compact private injection
 - Phase 4 bounded stale-relevant lazy evolution
-- Phase 5 host-neutral inspect/query and current-head manual correction
-- preview/confirm reset/export/import services
-- explicit bounded chronological rebuild using the capture firewall
-- atomic rebuild replacement and incremental-vs-rebuild equivalence checks
-- cumulative Phase 1-5 deterministic tests and validation
+- Phase 5 host-neutral inspect/query, current-head manual correction, transfer, and explicit rebuild
+- Phase 6 bounded Current/Recent/Resolved/Search/detail/evidence/diagnostics/data-maintenance projections
+- responsive desktop/mobile UI rendering with a host-neutral controller
+- maintenance action intents only; canonical writes remain owned by Phase 5/core services
+- cumulative Phase 1-6 deterministic tests and validation
 
-Not yet authorized: UI, slash-command/host registration, coexistence host wiring, or SillyTavern event/bootstrap wiring.
+Not yet authorized: coexistence hardening, slash-command registration, SillyTavern event/bootstrap wiring, or other Phase 7+ host integration.
 
 ## Standard engineering loop
 

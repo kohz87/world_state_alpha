@@ -80,6 +80,7 @@ Allowed source classes should remain small:
 - `lore_baseline`
 - `manual`
 - `rebuild`
+- `foreign_import`
 
 `lore_baseline` alone cannot create an active current record.
 
@@ -114,6 +115,8 @@ The provider does not write storage directly. The deterministic reducer validate
 Phase 4 evolution uses the same canonical mutation model but marks the batch owner as `evolution`, so evaluation writes advance record provenance without masquerading as routine capture. A stable evaluation may add `elapsed_hint` evidence and advance `lastEvaluatedMessage` while leaving `lastChangedMessage` untouched.
 
 Phase 5 does not change the persisted schema. Targeted operator corrections use `manual` evidence at an exact current raw-message head. Chronological rebuild reuses ordinary narrative evidence ownership checks, then stores accepted reconstructed evidence as `rebuild`. Foreign import uses `foreign_import` and clears local message/lineage provenance unless same-chat message provenance preservation is explicitly requested.
+
+Phase 6 also changes no persisted schema. UI rows/details/diagnostics are bounded ephemeral projections derived from canonical state and allowlisted telemetry. UI selection/search state is presentation state only and is never persisted as canonical world truth.
 
 ## Per-chat state
 

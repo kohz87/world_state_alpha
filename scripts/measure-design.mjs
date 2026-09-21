@@ -5,6 +5,7 @@ import { buildWorldStateInjection } from '../injection.js';
 import { buildEvolutionContext, buildEvolutionPrompt, planLazyEvolution } from '../evolution.js';
 import { queryWorldState } from '../manual.js';
 import { planChronologicalRebuild } from '../rebuild.js';
+import { buildWorldStateUiModel, renderWorldStatePanel } from '../ui.js';
 
 const files = ['docs/core-contract.md', 'docs/ARCHITECTURE.md', 'docs/DATA_MODEL.md'];
 for (const file of files) {
@@ -179,4 +180,23 @@ console.log(JSON.stringify({
   providerCallsDuringPlanning: 0,
   maxBoundaries: rebuildPlan.metrics.maxBoundaries,
   wallMs: Math.round(rebuildElapsed * 1000) / 1000,
+}));
+
+
+const uiStart = performance.now();
+const uiModel = buildWorldStateUiModel({ records, evidence: {}, links: [] }, {
+  query: 'Kesselpass freight',
+});
+const uiHtml = renderWorldStatePanel(uiModel, { activeTab: 'search' });
+const uiElapsed = performance.now() - uiStart;
+console.log(JSON.stringify({
+  kind: 'phase6-ui-projection',
+  corpusRecords: records.length,
+  currentRows: uiModel.views.current.length,
+  recentRows: uiModel.views.recent.length,
+  resolvedRows: uiModel.views.resolved.length,
+  searchRows: uiModel.views.search.length,
+  renderedChars: uiHtml.length,
+  providerCalls: 0,
+  wallMs: Math.round(uiElapsed * 1000) / 1000,
 }));

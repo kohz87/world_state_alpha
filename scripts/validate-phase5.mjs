@@ -13,7 +13,7 @@ import {
 import { createState } from '../state-core.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-if (inventory.stage !== 'phase5-manual-rebuild') throw new Error('Phase 5 runtime inventory stage mismatch');
+if (!['phase5-manual-rebuild', 'phase6-ui-evidence'].includes(inventory.stage)) throw new Error('Phase 5 cumulative runtime inventory stage mismatch');
 if (inventory.hostEntrypoint !== null) throw new Error('Phase 5 must remain host-neutral; SillyTavern bootstrap is not authorized yet');
 
 for (const file of ['manual.js', 'rebuild.js']) {
@@ -26,7 +26,7 @@ for (const file of ['manual.js', 'rebuild.js']) {
   await import(new URL(`../${file}`, import.meta.url));
 }
 
-for (const forbidden of ['ui.js', 'commands.js', 'bootstrap.js', 'runtime.js']) {
+for (const forbidden of ['commands.js', 'bootstrap.js', 'runtime.js']) {
   if (inventory.modules.includes(forbidden)) throw new Error(`Phase 5 inventory contains unauthorized Phase 6+/host module: ${forbidden}`);
 }
 
