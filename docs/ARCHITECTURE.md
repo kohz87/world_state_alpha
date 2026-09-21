@@ -165,18 +165,23 @@ Phase 3 renders the selected records into a host-neutral descriptor using namesp
 
 ## 9. Lazy catch-up
 
-Before each RP generation:
+Phase 4 implements this host-neutral preparation flow:
 
-1. retrieve top relevant records locally
-2. identify relevant `development` records whose `lastEvaluatedMessage` predates a meaningful elapsed-time anchor or direct affecting evidence
-3. if none, inject immediately
-4. if some, run one **batched targeted evolution request** for only those records
-5. re-run local retrieval
-6. inject compact current summaries
+1. retrieve current relevant active records locally
+2. keep only active `development` records whose `lastEvaluatedMessage` predates either a meaningful elapsed hint or grounded direct affecting evidence
+3. if none qualify, inject the last-established state immediately with zero evolution calls
+4. if some qualify, evaluate at most four in one **batched targeted evolution request**
+5. require one result per target, with `stable` explicitly valid
+6. admit changes only from current affecting evidence, or meaningful elapsed time plus prior accepted evidence for that target
+7. gate any derived development to one candidate, with strict declared-cause support and duplicate/resurrection protection
+8. re-run local relevance against the resulting canonical state
+9. inject compact current summaries
 
-Never issue one evolution call per record.
+Elapsed time never forces motion. It opens an evaluation window. The evaluator does not inherit Writer's Mind/Ukiyo story-driving incentives and cannot create events merely to avoid stagnation.
 
-If no reliable elapsed hint and no new affecting evidence exist, a dormant record can simply remain as last established.
+Opaque fictional time strings are supported directly. A small local recognizer handles obvious relative intervals such as weeks/months/years without becoming a calendar engine.
+
+Never issue one evolution call per record. If no reliable elapsed hint and no grounded affecting evidence exist, a dormant record remains exactly as last established.
 
 ## 10. Injection boundary
 

@@ -6,15 +6,6 @@ Resolved: Phase 2 automatic capture defaults to one eligible capture after each 
 
 Resolved: Phase 3 private injection defaults to a hard 800 conservative local-token-unit budget, at most six selected records, shallow `IN_CHAT` SYSTEM placement at depth 1, and a much smaller typical payload.
 
-## 1. Automatic lazy-evolution latency policy
+Resolved: Phase 4 uses correctness-first lazy evolution only for stale relevant active developments with a meaningful elapsed-time hint or grounded direct affecting evidence. Ordinary relevant turns use zero evolution calls. Eligible records are evaluated in one batch capped at four targets; elapsed time permits evaluation but never forces change.
 
-Two valid product behaviors:
-
-- correctness-first: if a newly relevant stale development clearly requires catch-up, await one bounded evolution before the RP request
-- latency-first: inject last-established state now and perform catch-up only on explicit/manual or post-turn opportunity
-
-Recommended starting point: correctness-first only for explicit meaningful time skips/direct affecting events; otherwise no evolution.
-
-User decision before Phase 4: acceptable tradeoff.
-
-Everything else in the first-pass specification can be resolved by repository inspection and engineering judgment.
+There are currently no unresolved user-preference decisions required before Phase 5. Manual-control/rebuild UX choices should be revisited only if implementation reveals a genuine product tradeoff.

@@ -1,6 +1,6 @@
 # World State Alpha - core contract
 
-Status: ARCHITECTURE ACCEPTED. Phases 1-3 are implemented as candidates; Phase 4+ runtime work remains gated.
+Status: ARCHITECTURE ACCEPTED. Phases 1-4 are implemented as candidates; Phase 5+ runtime work remains gated.
 
 ## C01. Product purpose
 
@@ -102,13 +102,12 @@ Capture must not run global simulation or fabricate off-screen developments mere
 
 Deliberative evolution is targeted, not global.
 
-It may run when one or more records are relevant and at least one trigger justifies evaluation:
+Automatic evolution may run when one or more records are relevant and at least one bounded trigger justifies evaluation:
 
-- meaningful elapsed campaign time is available
-- a major new established event directly affects the record
-- context returns to a stale relevant record
-- user explicitly requests targeted update/refresh
-- rebuild/recovery explicitly requires it
+- meaningful elapsed campaign time is available for that stale relevant development
+- grounded new current-exchange evidence directly affects that stale relevant development
+
+Merely returning to a stale context is not an automatic evolution trigger. Explicit manual update and rebuild/recovery are separate later-phase operations.
 
 Elapsed time alone is not a change signal.
 
@@ -194,9 +193,22 @@ No geographic scope hierarchy is required. No model/provider call is permitted s
 
 A record may remain untouched for many messages.
 
-When it becomes relevant again, World State may evaluate only that stale relevant record and tightly connected records before injection if meaningful elapsed time or intervening evidence makes evaluation necessary.
+Phase 4 uses correctness-first catch-up only when an **active relevant development** is stale and one of these bounded triggers exists:
 
-Do not continuously simulate dormant state.
+- a meaningful elapsed-time hint grounded to the current raw-message boundary, or
+- grounded current-exchange evidence that directly affects that development
+
+Ordinary relevance alone is not an evolution trigger. Short passage alone is not automatically meaningful. Opaque fictional time hints are allowed without requiring a calendar engine.
+
+All eligible targets are evaluated in one batch, capped at four developments. Never issue one model request per record.
+
+Elapsed time is permission to evaluate, not evidence that change occurred. `stable` is a first-class outcome. A changed outcome requires either grounded current affecting evidence, or meaningful elapsed time plus prior accepted evidence from that same development.
+
+A stable evaluation may advance `lastEvaluatedMessage` and retain elapsed/evaluation provenance, but must not advance `lastChangedMessage` when current world truth did not change.
+
+At most one derived development may be proposed per batch. It requires either at least two supplied causal target developments, or one target plus grounded current affecting evidence. Each declared cause must contribute its own non-time support; support cannot be borrowed from undeclared records. Duplicate/resolved-episode checks apply before admission.
+
+Do not continuously simulate dormant state. Resolved/superseded records are not normal evolution targets and static lore cannot resurrect them.
 
 ## C14. Injection
 
@@ -253,10 +265,12 @@ Diagnostics never become canonical state and never store credentials, full priva
 Normal exchange target:
 
 - at most one capture model call when capture is due
-- zero evolution calls unless a bounded trigger is met
-- no full-world scan
+- zero evolution calls on ordinary relevant turns
+- at most one batched evolution model call when a Phase 4 trigger is met
+- at most four developments in that automatic evolution batch
+- no full-world scan, including evolution
 - no full-chat scan
-- no per-record fan-out
+- no per-record request fan-out
 - local relevance retrieval
 - compact injection
 

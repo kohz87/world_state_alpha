@@ -2,19 +2,20 @@
 
 ## Current gate
 
-Architecture is accepted. Phases 1-3 are authorized and later phases remain gated.
+Architecture is accepted. Phases 1-4 are authorized and later phases remain gated.
 
 Allowed in the current gate:
 
 - Phase 1 canonical state, persistence, transfer, and exact rollback substrate
 - Phase 2 bounded immediate capture and request-scoped provider routing
-- deterministic local relevance scoring with optional one-hop expansion
-- compact private current-state rendering
-- unique World State prompt namespace/key
-- host-neutral shallow IN_CHAT SYSTEM injection descriptor
-- cumulative Phase 1-3 deterministic tests and validation
+- Phase 3 deterministic local relevance and compact private injection
+- Phase 4 setting-agnostic elapsed hints and stale-relevant trigger planning
+- one batched targeted evolution request, capped at four developments
+- stable/update/resolve/supersede with grounded causal support
+- at most one conservatively gated derived development
+- cumulative Phase 1-4 deterministic tests and validation
 
-Not yet authorized: elapsed-time evolution, UI, commands, rebuild runtime, or SillyTavern host event/bootstrap wiring.
+Not yet authorized: manual controls/rebuild, UI, coexistence host wiring, or SillyTavern event/bootstrap wiring.
 
 ## Standard engineering loop
 

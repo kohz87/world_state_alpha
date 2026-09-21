@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { buildCapturePrompt } from '../capture.js';
 import { buildWorldStateInjection } from '../injection.js';
+import { buildEvolutionContext, buildEvolutionPrompt, planLazyEvolution } from '../evolution.js';
 
 const files = ['docs/core-contract.md', 'docs/ARCHITECTURE.md', 'docs/DATA_MODEL.md'];
 for (const file of files) {
@@ -73,4 +74,75 @@ console.log(JSON.stringify({
   estimatedTokens: injection.estimatedTokens,
   budgetTokens: injection.budgetTokens,
   wallMs: Math.round(elapsed * 1000) / 1000,
+}));
+
+
+const evolutionRecords = Array.from({ length: 4 }, (_, index) => ({
+  id: `wsr_evolve_${index}`,
+  kind: 'development',
+  summary: `Kesselpass development ${index} remains active because its established mechanism persists.`,
+  status: 'active',
+  trend: 'stable',
+  anchors: ['Kesselpass', `development-${index}`],
+  createdAtMessage: 1,
+  lastChangedMessage: 10,
+  lastEvaluatedMessage: 10,
+  timeAnchor: '',
+  evidenceIds: [`ev_evolve_${index}`],
+  causedBy: [],
+  affects: [],
+}));
+const evolutionEvidence = Object.fromEntries(evolutionRecords.map((record, index) => [`ev_evolve_${index}`, {
+  id: `ev_evolve_${index}`,
+  sourceMessageId: 10,
+  lineageKey: 'ln10',
+  sourceClass: 'assistant_narration',
+  claim: `Kesselpass development ${index} remains active because its established mechanism persists.`,
+  timeAnchor: '',
+  recordIds: [record.id],
+}]));
+const evolutionState = { records: evolutionRecords, evidence: evolutionEvidence, links: [] };
+const evolutionExchange = [{
+  messageId: 100,
+  role: 'user',
+  content: 'Five weeks later, Lucien returns to Kesselpass.',
+  lineageKey: 'ln100',
+}];
+const evolutionPlan = planLazyEvolution(evolutionState, {
+  selectedEntries: evolutionRecords.map(record => ({ record, score: 10, source: 'seed' })),
+  exchange: evolutionExchange,
+  sourceMessageId: 100,
+  sourceLineageKey: 'ln100',
+});
+const evolutionContext = buildEvolutionContext(evolutionState, evolutionPlan);
+const evolutionPrompt = buildEvolutionPrompt(evolutionContext, {
+  loreText: 'Kesselpass is a major freight crossing.',
+});
+const evolutionPromptChars = evolutionPrompt.systemPrompt.length + evolutionPrompt.prompt.length;
+console.log(JSON.stringify({
+  kind: 'phase4-evolution-prompt',
+  targets: evolutionPlan.targets.length,
+  systemChars: evolutionPrompt.systemPrompt.length,
+  userChars: evolutionPrompt.prompt.length,
+  totalChars: evolutionPromptChars,
+  estimatedTokens: Math.ceil(evolutionPromptChars / 4),
+  responseTokenBudget: evolutionPrompt.responseLength,
+}));
+
+const ordinaryPlan = planLazyEvolution(evolutionState, {
+  selectedEntries: evolutionRecords.map(record => ({ record, score: 10, source: 'seed' })),
+  exchange: [{
+    messageId: 101,
+    role: 'user',
+    content: 'Lucien returns to Kesselpass.',
+    lineageKey: 'ln101',
+  }],
+  sourceMessageId: 101,
+  sourceLineageKey: 'ln101',
+});
+console.log(JSON.stringify({
+  kind: 'phase4-trigger-policy',
+  ordinaryTargets: ordinaryPlan.targets.length,
+  elapsedTargets: evolutionPlan.targets.length,
+  maxAutomaticTargets: 4,
 }));

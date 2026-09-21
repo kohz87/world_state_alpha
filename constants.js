@@ -13,6 +13,7 @@ export const EVIDENCE_SOURCE_CLASSES = Object.freeze([
   'user_narration',
   'assistant_narration',
   'recent_history',
+  'elapsed_hint',
   'lore_baseline',
   'manual',
   'rebuild',

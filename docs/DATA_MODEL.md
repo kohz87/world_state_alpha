@@ -76,6 +76,7 @@ Allowed source classes should remain small:
 - `user_narration`
 - `assistant_narration`
 - `recent_history`
+- `elapsed_hint`
 - `lore_baseline`
 - `manual`
 - `rebuild`
@@ -109,6 +110,8 @@ Allowed source classes should remain small:
 ```
 
 The provider does not write storage directly. The deterministic reducer validates every proposal.
+
+Phase 4 evolution uses the same canonical mutation model but marks the batch owner as `evolution`, so evaluation writes advance record provenance without masquerading as routine capture. A stable evaluation may add `elapsed_hint` evidence and advance `lastEvaluatedMessage` while leaving `lastChangedMessage` untouched.
 
 ## Per-chat state
 

@@ -1,5 +1,5 @@
 {
-  "stage": "phase3-relevance-injection",
+  "stage": "phase4-lazy-evolution",
   "hostEntrypoint": null,
   "modules": [
     "constants.js",
@@ -15,6 +15,9 @@
     "provider-routing.js",
     "capture.js",
     "relevance.js",
-    "injection.js"
+    "injection.js",
+    "elapsed.js",
+    "evolution-wire.js",
+    "evolution.js"
   ]
 }

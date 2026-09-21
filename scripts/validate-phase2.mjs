@@ -24,7 +24,7 @@ for (const file of required) {
   if (!inventory.modules.includes(file)) throw new Error(`Phase 2 module missing from runtime inventory: ${file}`);
 }
 
-for (const forbidden of ['evolution.js', 'ui.js', 'commands.js', 'bootstrap.js', 'runtime.js']) {
+for (const forbidden of ['ui.js', 'commands.js', 'rebuild.js', 'bootstrap.js', 'runtime.js']) {
   if (inventory.modules.includes(forbidden)) throw new Error(`Phase 2 cumulative validation found unauthorized later-phase module: ${forbidden}`);
 }
 

@@ -28,6 +28,9 @@ test('core safety invariants are present', () => {
     /Writer's Mind/i,
     /those instructions are not inherited by capture or evolution/i,
     /are narration concerns and are not evidence/i,
+    /Elapsed time is permission to evaluate/i,
+    /zero evolution calls on ordinary relevant turns/i,
+    /at most four developments/i,
   ]) assert.match(contract, expected);
 });
 

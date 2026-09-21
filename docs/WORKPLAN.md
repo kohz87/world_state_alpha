@@ -1,6 +1,6 @@
 # World State Alpha staged workplan
 
-Status: architecture accepted. Phases 1-3 implemented candidates; Phases 4+ remain gated.
+Status: architecture accepted. Phases 1-4 implemented candidates; Phases 5+ remain gated.
 
 ## Phase 0 - architecture/bootstrap
 
@@ -83,7 +83,7 @@ Acceptance:
 - no model call for retrieval
 - NPC State simultaneous install has no namespace/prompt collision
 
-## Phase 4 - lazy evolution + elapsed time
+## Phase 4 - lazy evolution + elapsed time [IMPLEMENTED CANDIDATE]
 
 Build:
 

@@ -36,6 +36,9 @@ for (const phrase of [
   "Writer's Mind",
   'those instructions are not inherited by capture or evolution',
   'are narration concerns and are not evidence',
+  'Elapsed time is permission to evaluate',
+  'zero evolution calls on ordinary relevant turns',
+  'at most four developments',
 ]) {
   if (!contract.toLowerCase().includes(phrase.toLowerCase())) {
     throw new Error('Core contract missing invariant: ' + phrase);

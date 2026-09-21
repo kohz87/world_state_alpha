@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-The design is accepted and **Phases 1-3 only** are currently authorized. Phase 3 may implement deterministic local relevance ranking, bounded one-hop expansion, compact private continuity rendering, and a host-neutral injection descriptor with a unique World State prompt key. Do not implement Phase 4+ elapsed-time evolution, UI, commands, rebuild runtime, or SillyTavern host event wiring without a new explicit authorization.
+The design is accepted and **Phases 1-4 only** are currently authorized. Phase 4 may implement setting-agnostic elapsed hints, stale-relevant trigger planning, one bounded batched evolution request, stable/update/resolve/supersede outcomes, and a conservative single-derived-development gate. Do not implement Phase 5+ manual controls/rebuild, UI, coexistence host wiring, or SillyTavern bootstrap without a new explicit authorization.
 
 ## Product boundary
 

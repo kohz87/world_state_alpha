@@ -318,6 +318,7 @@ export function reduceMutations(inputState, batch) {
     chatKey: String(batch?.chatKey || state.chatKey || ''),
     messageId: messageId(batch?.messageId),
     lineageKey: boundedText(batch?.lineageKey, 80),
+    operation: boundedText(batch?.operation, 24) || 'capture',
   };
   const proposals = Array.isArray(batch?.mutations) ? batch.mutations : [];
   const applied = [];
@@ -392,6 +393,10 @@ export function reduceMutations(inputState, batch) {
       affects: record.affects,
     });
 
+    if (Object.hasOwn(mutation, 'timeAnchor')) {
+      record.timeAnchor = boundedText(mutation.timeAnchor, 160);
+    }
+
     if (action === 'update') {
       if (Object.hasOwn(mutation, 'status') && mutation.status !== record.status) {
         rejected.push({ mutation, reason: 'update cannot change lifecycle status; use resolve or supersede' });
@@ -406,7 +411,6 @@ export function reduceMutations(inputState, batch) {
       if (Object.hasOwn(mutation, 'anchors')) {
         record.anchors = uniqueStrings(mutation.anchors, LIMITS.anchorsPerRecord, LIMITS.anchorChars);
       }
-      if (Object.hasOwn(mutation, 'timeAnchor')) record.timeAnchor = boundedText(mutation.timeAnchor, 160);
       if (Object.hasOwn(mutation, 'causedBy')) record.causedBy = uniqueStrings(mutation.causedBy, LIMITS.linksPerRecord, 120);
       if (Object.hasOwn(mutation, 'affects')) record.affects = uniqueStrings(mutation.affects, LIMITS.linksPerRecord, 120);
     } else if (action === 'resolve') {
@@ -433,7 +437,9 @@ export function reduceMutations(inputState, batch) {
     applied.push({ action, recordId: record.id });
   }
 
-  if (applied.some(item => item.action !== 'noop')) state.lastCaptureMessage = context.messageId;
+  if (context.operation === 'capture' && applied.some(item => item.action !== 'noop')) {
+    state.lastCaptureMessage = context.messageId;
+  }
   return { state, undo: buildUndoPatch(before, state), applied, rejected };
 }
 

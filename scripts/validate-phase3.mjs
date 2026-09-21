@@ -9,8 +9,7 @@ import {
 } from '../injection.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-if (inventory.stage !== 'phase3-relevance-injection') throw new Error('Phase 3 runtime inventory stage mismatch');
-if (inventory.hostEntrypoint !== null) throw new Error('Phase 3 must remain host-neutral; SillyTavern bootstrap is not authorized yet');
+if (inventory.hostEntrypoint !== null) throw new Error('Phase 3 substrate must remain host-neutral before SillyTavern bootstrap');
 
 for (const file of ['relevance.js', 'injection.js']) {
   if (!inventory.modules.includes(file)) throw new Error(`Phase 3 module missing from runtime inventory: ${file}`);
@@ -22,8 +21,8 @@ for (const file of ['relevance.js', 'injection.js']) {
   if (/"scope"\s*:/.test(text)) throw new Error(`Phase 3 reintroduced mandatory scope ontology: ${file}`);
 }
 
-for (const forbidden of ['evolution.js', 'ui.js', 'commands.js', 'bootstrap.js', 'runtime.js']) {
-  if (inventory.modules.includes(forbidden)) throw new Error(`Phase 3 inventory contains unauthorized later-phase module: ${forbidden}`);
+for (const forbidden of ['ui.js', 'commands.js', 'bootstrap.js', 'runtime.js']) {
+  if (inventory.modules.includes(forbidden)) throw new Error(`Phase 3 cumulative validation found unauthorized host/later-phase module: ${forbidden}`);
 }
 
 if (WORLD_STATE_NAMESPACE !== 'world_state_alpha') throw new Error('World State namespace drifted');
