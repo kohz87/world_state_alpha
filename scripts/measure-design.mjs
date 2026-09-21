@@ -9,4 +9,4 @@ for (const file of files) {
     estimatedTokens: Math.ceil(text.length / 4),
   }));
 }
-console.log('Runtime prompt measurement is not applicable until implementation is authorized.');
+console.log('Phase 1 contains no model prompts; capture/evolution prompt measurement begins in later phases.');

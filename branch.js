@@ -1,0 +1,297 @@
+import { LIMITS, ROLLBACK_JOURNAL_VERSION } from './constants.js';
+import { deterministicId, hashText, stableStringify } from './hash.js';
+import {
+  applyUndoPatch,
+  buildUndoPatch,
+  canonicalDomain,
+  clone,
+  normalizeState,
+} from './state-core.js';
+
+function messageContent(message) {
+  if (!message || typeof message !== 'object') return '';
+  if (typeof message.mes === 'string') return message.mes;
+  if (typeof message.content === 'string') return message.content;
+  if (typeof message.text === 'string') return message.text;
+  return '';
+}
+
+export function fingerprintMessage(message) {
+  return hashText(stableStringify({
+    role: message?.role || '',
+    name: message?.name || '',
+    is_user: Boolean(message?.is_user),
+    is_system: Boolean(message?.is_system),
+    content: messageContent(message),
+  }));
+}
+
+export function chatLineage(chat = []) {
+  const out = [];
+  let parentLineageKey = 'root';
+  for (let messageId = 0; messageId < chat.length; messageId += 1) {
+    const fingerprint = fingerprintMessage(chat[messageId]);
+    const lineageKey = deterministicId('ln', [parentLineageKey, fingerprint]);
+    out.push({ messageId, fingerprint, lineageKey, parentLineageKey });
+    parentLineageKey = lineageKey;
+  }
+  return out;
+}
+
+export function firstLineageDivergence(previous = [], current = []) {
+  const limit = Math.min(previous.length, current.length);
+  for (let i = 0; i < limit; i += 1) {
+    if (previous[i]?.lineageKey !== current[i]?.lineageKey) return i;
+  }
+  return previous.length === current.length ? -1 : limit;
+}
+
+function checkpointSnapshot(state) {
+  return canonicalDomain(state);
+}
+
+function restoreCheckpoint(state, snapshot) {
+  const restored = normalizeState(clone(state));
+  restored.records = clone(snapshot.records || []);
+  restored.evidence = clone(snapshot.evidence || {});
+  restored.links = clone(snapshot.links || []);
+  restored.lastCaptureMessage = Number.isInteger(snapshot.lastCaptureMessage) ? snapshot.lastCaptureMessage : null;
+  return normalizeState(restored);
+}
+
+function trimJournal(state, maxEntries) {
+  const cap = Math.max(1, Number(maxEntries) || LIMITS.rollbackEntries);
+  if (state.rollbackJournal.length <= cap) {
+    const first = state.rollbackJournal[0];
+    state.rollbackJournalFloorMessageId = first ? Math.max(-1, first.beforeMessageId) : state.rollbackHead?.messageId ?? -1;
+    return;
+  }
+  state.rollbackJournal = state.rollbackJournal.slice(-cap);
+  const first = state.rollbackJournal[0];
+  if (first) first.prevSeq = 0;
+  state.rollbackJournalFloorMessageId = first ? Math.max(-1, first.beforeMessageId) : -1;
+}
+
+function trimCheckpoints(state, maxCheckpoints) {
+  const cap = Math.max(1, Number(maxCheckpoints) || LIMITS.checkpoints);
+  if (state.checkpoints.length > cap) state.checkpoints = state.checkpoints.slice(-cap);
+}
+
+export function commitMutationBoundary(beforeState, afterState, chat, messageId, reason = 'mutation', options = {}) {
+  const lineage = chatLineage(chat);
+  if (!Number.isInteger(messageId) || messageId < 0 || messageId >= lineage.length) {
+    throw new Error('commit boundary must reference an existing raw message');
+  }
+  const before = normalizeState(clone(beforeState));
+  const next = normalizeState(clone(afterState));
+  const boundary = lineage[messageId];
+  const undo = buildUndoPatch(before, next);
+
+  next.lineage = lineage;
+  next.rollbackJournalVersion = ROLLBACK_JOURNAL_VERSION;
+  next.recoveryRequired = null;
+
+  if (undo) {
+    const head = next.rollbackHead || before.rollbackHead;
+    const currentJournal = clone(before.rollbackJournal || []);
+    const currentSequence = Math.max(
+      Number(before.rollbackJournalSequence) || 0,
+      ...currentJournal.map(entry => Number(entry.seq) || 0),
+      0,
+    );
+    const sameBoundary = head
+      && head.messageId === messageId
+      && head.lineageKey === boundary.lineageKey
+      && head.seq > 0;
+    let seq;
+    let journal = currentJournal;
+    let nextHead = null;
+
+    if (sameBoundary) {
+      const index = journal.findIndex(entry => entry.seq === head.seq);
+      const existing = index >= 0 ? journal[index] : null;
+      if (!existing) throw new Error('rollback head references a missing journal entry');
+      const earliest = applyUndoPatch(before, existing.undo);
+      const combinedUndo = buildUndoPatch(earliest, next);
+      if (combinedUndo) {
+        journal[index] = {
+          ...existing,
+          reason: String(reason || existing.reason || 'mutation'),
+          undo: combinedUndo,
+        };
+        seq = existing.seq;
+        nextHead = { seq, messageId, lineageKey: boundary.lineageKey };
+      } else {
+        journal.splice(index, 1);
+        seq = existing.prevSeq;
+        const predecessor = journal.find(entry => entry.seq === seq) || null;
+        if (predecessor) {
+          nextHead = {
+            seq: predecessor.seq,
+            messageId: predecessor.messageId,
+            lineageKey: predecessor.lineageKey,
+          };
+        } else if (existing.beforeMessageId >= 0) {
+          nextHead = {
+            seq: 0,
+            messageId: existing.beforeMessageId,
+            lineageKey: lineage[existing.beforeMessageId]?.lineageKey || '',
+          };
+        }
+      }
+    } else {
+      seq = currentSequence + 1;
+      journal.push({
+        seq,
+        prevSeq: Math.max(0, Number(head?.seq) || 0),
+        messageId,
+        beforeMessageId: Number.isInteger(head?.messageId) ? head.messageId : messageId - 1,
+        lineageKey: boundary.lineageKey,
+        parentLineageKey: boundary.parentLineageKey,
+        reason: String(reason || 'mutation'),
+        undo,
+      });
+      nextHead = { seq, messageId, lineageKey: boundary.lineageKey };
+    }
+
+    next.rollbackJournal = journal;
+    next.rollbackJournalSequence = Math.max(currentSequence, seq || 0);
+    next.rollbackHead = nextHead;
+  } else {
+    next.rollbackJournal = clone(before.rollbackJournal || []);
+    next.rollbackJournalSequence = Number(before.rollbackJournalSequence) || 0;
+    next.rollbackHead = before.rollbackHead ? clone(before.rollbackHead) : null;
+  }
+
+  const existingCheckpoint = next.checkpoints.findIndex(item => item.messageId === messageId && item.lineageKey === boundary.lineageKey);
+  const checkpoint = {
+    messageId,
+    lineageKey: boundary.lineageKey,
+    rollbackSeq: Math.max(0, Number(next.rollbackHead?.seq) || 0),
+    snapshot: checkpointSnapshot(next),
+  };
+  if (existingCheckpoint >= 0) next.checkpoints[existingCheckpoint] = checkpoint;
+  else next.checkpoints.push(checkpoint);
+
+  trimJournal(next, options.maxJournalEntries);
+  trimCheckpoints(next, options.maxCheckpoints);
+  return normalizeState(next);
+}
+
+function exactCheckpoint(state, currentLineage, targetMessageId) {
+  if (targetMessageId < 0) return state.checkpoints.find(item => item.messageId === -1) || null;
+  const key = currentLineage[targetMessageId]?.lineageKey;
+  if (!key) return null;
+  return [...state.checkpoints]
+    .reverse()
+    .find(item => item.messageId === targetMessageId && item.lineageKey === key) || null;
+}
+
+function restoreByJournal(state, previousLineage, divergence) {
+  const targetMessageId = divergence - 1;
+  const floor = Number.isInteger(state.rollbackJournalFloorMessageId) ? state.rollbackJournalFloorMessageId : -1;
+  if (targetMessageId < floor) return null;
+
+  const bySeq = new Map(state.rollbackJournal.map(entry => [entry.seq, entry]));
+  let working = normalizeState(clone(state));
+  let seq = Math.max(0, Number(state.rollbackHead?.seq) || 0);
+  let headMessageId = Number.isInteger(state.rollbackHead?.messageId)
+    ? state.rollbackHead.messageId
+    : previousLineage.length - 1;
+
+  while (headMessageId >= divergence && seq > 0) {
+    const entry = bySeq.get(seq);
+    if (!entry) return null;
+    if (entry.messageId >= previousLineage.length || previousLineage[entry.messageId]?.lineageKey !== entry.lineageKey) return null;
+    working = applyUndoPatch(working, entry.undo);
+    seq = entry.prevSeq;
+    headMessageId = entry.beforeMessageId;
+  }
+  if (headMessageId >= divergence) return null;
+  return { state: working, headSeq: seq, targetMessageId };
+}
+
+export function reconcileBranch(inputState, chat, options = {}) {
+  const state = normalizeState(clone(inputState));
+  const currentLineage = chatLineage(chat);
+  const previousLineage = Array.isArray(state.lineage) ? state.lineage : [];
+  const divergence = firstLineageDivergence(previousLineage, currentLineage);
+
+  if (divergence === -1 || (divergence === previousLineage.length && currentLineage.length >= previousLineage.length)) {
+    state.lineage = currentLineage;
+    state.recoveryRequired = null;
+    return {
+      state,
+      divergence: divergence === -1 ? -1 : divergence,
+      action: divergence === -1 ? 'same' : 'forward-extension',
+      exactRestored: true,
+      failClosed: false,
+    };
+  }
+
+  const targetMessageId = divergence - 1;
+  const journalRestore = restoreByJournal(state, previousLineage, divergence);
+  let restored = null;
+  let action = '';
+
+  if (journalRestore) {
+    restored = journalRestore.state;
+    action = 'rollback-journal';
+  } else {
+    const checkpoint = exactCheckpoint(state, currentLineage, targetMessageId);
+    if (checkpoint) {
+      restored = restoreCheckpoint(state, checkpoint.snapshot);
+      action = 'exact-checkpoint';
+    }
+  }
+
+  if (!restored) {
+    state.recoveryRequired = {
+      reason: 'exact-boundary-unavailable',
+      divergence,
+      targetMessageId,
+    };
+    return {
+      state,
+      divergence,
+      action: 'fail-closed',
+      exactRestored: false,
+      failClosed: true,
+    };
+  }
+
+  restored.rollbackJournal = state.rollbackJournal.filter(entry => entry.messageId < divergence);
+  const retainedSeqs = new Set(restored.rollbackJournal.map(entry => entry.seq));
+  const lastEntry = restored.rollbackJournal.at(-1) || null;
+  restored.rollbackHead = lastEntry
+    ? { seq: lastEntry.seq, messageId: lastEntry.messageId, lineageKey: lastEntry.lineageKey }
+    : null;
+  if (restored.rollbackHead && !retainedSeqs.has(restored.rollbackHead.seq)) restored.rollbackHead = null;
+  restored.checkpoints = state.checkpoints.filter(item => item.messageId < divergence);
+  restored.lineage = currentLineage;
+  restored.recoveryRequired = null;
+  trimJournal(restored, options.maxJournalEntries);
+  trimCheckpoints(restored, options.maxCheckpoints);
+
+  return {
+    state: normalizeState(restored),
+    divergence,
+    action,
+    exactRestored: true,
+    failClosed: false,
+  };
+}
+
+export function seedRootCheckpoint(inputState) {
+  const state = normalizeState(clone(inputState));
+  const existing = state.checkpoints.findIndex(item => item.messageId === -1);
+  const checkpoint = {
+    messageId: -1,
+    lineageKey: 'root',
+    rollbackSeq: 0,
+    snapshot: checkpointSnapshot(state),
+  };
+  if (existing >= 0) state.checkpoints[existing] = checkpoint;
+  else state.checkpoints.unshift(checkpoint);
+  return state;
+}

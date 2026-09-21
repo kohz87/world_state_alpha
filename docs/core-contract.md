@@ -1,6 +1,6 @@
 # World State Alpha - core contract
 
-Status: DESIGN CANDIDATE. Runtime implementation is not yet authorized.
+Status: ARCHITECTURE ACCEPTED. Phase 1 core is implemented as a candidate; later runtime phases remain gated.
 
 ## C01. Product purpose
 

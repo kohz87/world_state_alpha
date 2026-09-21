@@ -1,0 +1,12 @@
+{
+  "stage": "phase1-core",
+  "hostEntrypoint": null,
+  "modules": [
+    "constants.js",
+    "hash.js",
+    "state-core.js",
+    "branch.js",
+    "storage.js",
+    "transfer.js"
+  ]
+}

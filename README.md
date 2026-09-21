@@ -9,9 +9,9 @@ It is the world-level conceptual sibling of NPC State Delta:
 
 World State Alpha models **change, not maps**. It has no required geography, polity, faction, settlement, calendar, genre, or setting ontology.
 
-## Design status
+## Implementation status
 
-**Architecture/design only. Runtime implementation is not yet authorized.**
+**Phase 1 core is implemented. Phases 2 and later remain unauthorized until separately reviewed.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 
@@ -63,4 +63,4 @@ World State Alpha never rewrites source lore and never modifies Ukiyo.
 
 ## Repository rule
 
-Until the design is explicitly accepted, changes in this repository are limited to architecture, contracts, workflow, tests/fixtures planning, and non-runtime bootstrap documentation.
+Phase 1 authorizes only the canonical state, evidence, storage, transfer, and branch/rollback substrate. Scanner/provider logic, relevance/injection, UI, commands, and Ukiyo/NPC State integrations remain later-phase work.

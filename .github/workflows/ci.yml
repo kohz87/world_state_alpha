@@ -1,4 +1,4 @@
-name: World State Alpha Design CI
+name: World State Alpha CI
 
 on:
   push:

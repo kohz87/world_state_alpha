@@ -1,6 +1,6 @@
 # World State Alpha staged workplan
 
-Status: design candidate. No runtime phase is authorized yet.
+Status: architecture accepted. Phase 1 implemented candidate; Phases 2+ remain gated.
 
 ## Phase 0 - architecture/bootstrap
 
@@ -21,7 +21,7 @@ Acceptance:
 - no runtime extension implementation exists
 - design validator passes
 
-## Phase 1 - canonical state + branch-safe persistence
+## Phase 1 - canonical state + branch-safe persistence [IMPLEMENTED CANDIDATE]
 
 Build only:
 

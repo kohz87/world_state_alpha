@@ -1,10 +1,14 @@
 import fs from 'node:fs';
 
 fs.mkdirSync('dist', { recursive: true });
+const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
 const payload = {
-  status: 'design-only',
+  status: 'phase1-core',
+  coreImplemented: true,
   runtimeImplemented: false,
+  hostIntegrated: false,
   generatedAt: new Date().toISOString(),
+  modules: inventory.modules,
   authorities: [
     'AGENTS.md',
     'WORKFLOW.md',
@@ -16,5 +20,5 @@ const payload = {
     'docs/RISK_REGISTER.md'
   ]
 };
-fs.writeFileSync('dist/world_state_alpha-design.json', JSON.stringify(payload, null, 2));
-console.log('Wrote dist/world_state_alpha-design.json');
+fs.writeFileSync('dist/world_state_alpha-phase1.json', JSON.stringify(payload, null, 2));
+console.log('Wrote dist/world_state_alpha-phase1.json');

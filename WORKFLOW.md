@@ -2,17 +2,19 @@
 
 ## Current gate
 
-Runtime implementation is blocked until the architecture is reviewed and explicitly accepted.
+Architecture is accepted. Phase 1 is authorized and later phases remain gated.
 
-Allowed before that gate:
+Allowed in the current gate:
 
-- reference-repository inspection
-- architecture/contracts
-- data/schema design
-- workflow/CI design
-- deterministic design validators
-- test fixtures and test planning
-- controller/repository bootstrap required to support the project
+- canonical state normalization/reducer
+- evidence and causal-link storage
+- deterministic IDs
+- per-chat sidecar persistence abstraction
+- exact branch/rollback journal and checkpoints
+- export/import/reset primitives
+- Phase 1 deterministic tests and validation
+
+Not yet authorized: scanner/provider calls, capture/evolution prompts, relevance/injection, UI, commands, or host event wiring.
 
 ## Standard engineering loop
 

@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-World State Alpha is currently **design-only**. Do not implement runtime code until the user explicitly accepts the design and authorizes an implementation phase.
+The design is accepted and **Phase 1 only** is currently authorized. The Phase 1 core may implement canonical state, evidence, sidecar persistence, transfer/reset, and branch/rollback primitives. Do not implement Phase 2+ scanner/provider, injection, evolution, UI, or command surfaces without a new explicit authorization.
 
 ## Product boundary
 
