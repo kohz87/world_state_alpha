@@ -267,8 +267,14 @@ It may scan campaign history in bounded chunks, reconcile lore baseline, reconst
 
 Normal runtime must never depend on recurring rebuilds.
 
-## C20. Ukiyo boundary
+## C20. Ukiyo / story-driving CoT boundary
 
-World State does not modify Ukiyo, Megumin Suite Beta, or the RP CoT.
+World State does not modify Ukiyo, Megumin Suite Beta, Writer's Mind, or the RP CoT.
+
+World State Alpha may consume narrative produced by an RP model using a story-driving CoT such as Writer's Mind, but those instructions are not inherited by capture or evolution.
+
+Story-driving principles such as autonomous world motion, scene variation, chance, escalation, or avoiding stagnation are narration concerns and are not evidence that a world change occurred.
+
+World State records or evolves state only from its own grounded evidence and causal contract.
 
 It supplies compact continuity only. Scene reasoning and prose remain owned by the configured RP model.
