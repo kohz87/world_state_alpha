@@ -3,9 +3,12 @@ import fs from 'node:fs';
 fs.mkdirSync('dist', { recursive: true });
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
 const payload = {
-  status: 'phase2-capture',
+  status: 'phase3-relevance-injection',
   coreImplemented: true,
   captureImplemented: true,
+  relevanceImplemented: true,
+  injectionImplemented: true,
+  evolutionImplemented: false,
   runtimeImplemented: false,
   hostIntegrated: false,
   generatedAt: new Date().toISOString(),
@@ -21,5 +24,5 @@ const payload = {
     'docs/RISK_REGISTER.md'
   ]
 };
-fs.writeFileSync('dist/world_state_alpha-phase2.json', JSON.stringify(payload, null, 2));
-console.log('Wrote dist/world_state_alpha-phase2.json');
+fs.writeFileSync('dist/world_state_alpha-phase3.json', JSON.stringify(payload, null, 2));
+console.log('Wrote dist/world_state_alpha-phase3.json');

@@ -4,13 +4,9 @@ Only decisions that genuinely need user preference remain here.
 
 Resolved: Phase 2 automatic capture defaults to one eligible capture after each completed assistant exchange, with empty/system-only exchanges skipped cheaply and duplicate raw-message receipts suppressed.
 
-## 1. Default injection budget
+Resolved: Phase 3 private injection defaults to a hard 800 conservative local-token-unit budget, at most six selected records, shallow `IN_CHAT` SYSTEM placement at depth 1, and a much smaller typical payload.
 
-Recommended initial engineering default: 700-900 tokens maximum with a much smaller typical output, because world state is supplementary to lore/NPC continuity.
-
-User decision before Phase 3: preferred default cap.
-
-## 2. Automatic lazy-evolution latency policy
+## 1. Automatic lazy-evolution latency policy
 
 Two valid product behaviors:
 

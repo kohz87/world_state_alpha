@@ -1,6 +1,6 @@
 # World State Alpha - core contract
 
-Status: ARCHITECTURE ACCEPTED. Phases 1-2 are implemented as candidates; Phase 3+ runtime work remains gated.
+Status: ARCHITECTURE ACCEPTED. Phases 1-3 are implemented as candidates; Phase 4+ runtime work remains gated.
 
 ## C01. Product purpose
 
@@ -178,18 +178,17 @@ Requirements:
 
 Normal RP injection selects only a small subset of active records.
 
-Signals may include:
+Phase 3 retrieval is deterministic and local. It uses:
 
-- exact/normalized anchor mention
-- semantic similarity to recent scene text
+- normalized anchor matches in recent scene text
+- compact token overlap with current summaries
 - overlap with currently retrieved lore
-- causal links from already relevant records
-- recent record changes
-- direct relationship to selected records
+- bounded one-hop links from already relevant active records
+- recent-change bonus only after independent relevance already exists
 
-No geographic scope hierarchy is required.
+Recency alone never makes an unrelated record relevant. Resolved/superseded records are excluded from normal current-state injection. The default selected set is capped at six records.
 
-Relevance selection is deterministic/local by default. Do not add a model call solely to choose what to inject.
+No geographic scope hierarchy is required. No model/provider call is permitted solely to choose what to inject.
 
 ## C13. Lazy catch-up
 
@@ -201,13 +200,15 @@ Do not continuously simulate dormant state.
 
 ## C14. Injection
 
-World State uses its own unique prompt key/namespace and injects a compact SYSTEM continuity block through SillyTavern's extension prompt mechanism.
+World State owns namespace `world_state_alpha` and prompt key `world_state_alpha_private_continuity`. They must not collide with NPC State Delta or other extensions.
 
-Default placement should mirror the proven Delta pattern: `IN_CHAT`, system role, shallow configurable depth, with a unique World State key and strict token budget.
+Default placement mirrors the proven Delta pattern: `IN_CHAT`, SYSTEM role, depth 1 by default, with a host-neutral descriptor until SillyTavern bootstrap wiring is separately authorized.
 
-Injection contains only current relevant summaries and minimal causal/state qualifiers. It does not dump evidence/history.
+The default hard local budget is 800 conservative token units and six selected records, with typical output expected to be much smaller. If the mandatory privacy header cannot fit, inject nothing rather than dropping the boundary text.
 
-The header must state that this is private world continuity and **not automatic player-character knowledge**.
+Injection contains only current relevant summaries and minimal trend qualifiers. It does not dump record IDs, anchors, evidence, mutation history, or backend provenance.
+
+The header must state that this is private world continuity and **not automatic player-character knowledge**, require a plausible information path before remote/private facts become character knowledge, and must not turn continuity notes into instructions for autonomous world motion or plot generation.
 
 ## C15. NPC State boundary
 

@@ -1,5 +1,5 @@
 {
-  "stage": "phase2-capture",
+  "stage": "phase3-relevance-injection",
   "hostEntrypoint": null,
   "modules": [
     "constants.js",
@@ -13,6 +13,8 @@
     "duplicate.js",
     "diagnostics.js",
     "provider-routing.js",
-    "capture.js"
+    "capture.js",
+    "relevance.js",
+    "injection.js"
   ]
 }

@@ -147,18 +147,21 @@ The reducer rejects unsupported new threads.
 
 ## 8. Relevance without scope
 
-Phase 1 retrieval should be local and deterministic.
+Phase 3 retrieval is implemented as a local deterministic ranker.
 
-Score components can be simple and inspectable:
+The current score surface is intentionally small and inspectable:
 
-1. anchor exact/normalized match in recent context
-2. summary semantic token overlap
-3. anchor overlap with currently retrieved lore text
-4. one-hop causal link from an already relevant record
-5. recent change bonus
-6. stale-but-returned bonus only for evaluation priority, not injection priority
+1. normalized anchor match in recent context
+2. compact summary-token overlap
+3. anchor/summary overlap with currently retrieved lore
+4. bounded one-hop expansion from an already relevant active record
+5. recent-change bonus only after independent relevance exists
 
-No embedding service is required for Alpha. If semantic embeddings are later added, they must be optional acceleration, not correctness-critical storage.
+Recency cannot bootstrap unrelated records into relevance. Resolved/superseded records are excluded from normal injection. The default final set is at most six records.
+
+No embedding service or model call is required for Alpha retrieval. If semantic embeddings are later added, they must remain optional acceleration, not correctness-critical storage.
+
+Phase 3 renders the selected records into a host-neutral descriptor using namespace `world_state_alpha`, prompt key `world_state_alpha_private_continuity`, shallow `IN_CHAT` SYSTEM placement, and an 800 conservative local-token-unit cap. The renderer emits current summaries/trends only and preserves the private-reality/player-knowledge boundary.
 
 ## 9. Lazy catch-up
 

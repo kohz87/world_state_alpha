@@ -1,6 +1,6 @@
 # World State Alpha staged workplan
 
-Status: architecture accepted. Phases 1-2 implemented candidates; Phases 3+ remain gated.
+Status: architecture accepted. Phases 1-3 implemented candidates; Phases 4+ remain gated.
 
 ## Phase 0 - architecture/bootstrap
 
@@ -64,7 +64,7 @@ Acceptance:
 - one automatic capture request maximum per eligible exchange
 - fantasy/sci-fi/social fixtures use identical schema
 
-## Phase 3 - relevance + injection
+## Phase 3 - relevance + injection [IMPLEMENTED CANDIDATE]
 
 Build:
 

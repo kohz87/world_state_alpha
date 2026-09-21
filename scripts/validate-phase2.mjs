@@ -2,8 +2,7 @@ import fs from 'node:fs';
 import { buildCapturePrompt, CAPTURE_SYSTEM_PROMPT } from '../capture.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-if (inventory.stage !== 'phase2-capture') throw new Error('Phase 2 runtime inventory stage mismatch');
-if (inventory.hostEntrypoint !== null) throw new Error('Phase 2 must not expose a SillyTavern host entrypoint');
+if (inventory.hostEntrypoint !== null) throw new Error('Phase 2 substrate must remain valid before SillyTavern host wiring');
 
 const required = [
   'capture-wire.js',
@@ -25,8 +24,8 @@ for (const file of required) {
   if (!inventory.modules.includes(file)) throw new Error(`Phase 2 module missing from runtime inventory: ${file}`);
 }
 
-for (const forbidden of ['evolution.js', 'relevance.js', 'injection.js', 'ui.js', 'commands.js', 'bootstrap.js', 'runtime.js']) {
-  if (inventory.modules.includes(forbidden)) throw new Error(`Phase 2 inventory contains later-phase module: ${forbidden}`);
+for (const forbidden of ['evolution.js', 'ui.js', 'commands.js', 'bootstrap.js', 'runtime.js']) {
+  if (inventory.modules.includes(forbidden)) throw new Error(`Phase 2 cumulative validation found unauthorized later-phase module: ${forbidden}`);
 }
 
 if (!/Story-driving CoT principles/.test(CAPTURE_SYSTEM_PROMPT)
