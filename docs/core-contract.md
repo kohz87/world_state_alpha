@@ -23,7 +23,7 @@ It does not write the story and does not replace scene reasoning.
 
 ## C02. Universal ontology
 
-The core schema must not require geographic, political, organizational, genre, or calendar ontology.
+The core schema must not require geographic, political, organizational, genre, or calendar ontology. World State Alpha models change, not maps.
 
 No mandatory `scope` field exists.
 
@@ -145,7 +145,7 @@ No fictional calendar parser is required for correctness.
 
 Every automatic mutation is owned by one raw-message boundary and exact lineage fingerprint.
 
-Maintain a reversible mutation journal and bounded checkpoints sufficient to restore proven boundaries.
+Maintain a reversible mutation journal and bounded checkpoints sufficient to restore proven boundaries. Recovery is exact-boundary only; approximate ancestor substitution is forbidden.
 
 On swipe/delete/edit/truncation/branch:
 
