@@ -6,6 +6,8 @@ import { buildEvolutionContext, buildEvolutionPrompt, planLazyEvolution } from '
 import { queryWorldState } from '../manual.js';
 import { planChronologicalRebuild } from '../rebuild.js';
 import { buildWorldStateUiModel, renderWorldStatePanel } from '../ui.js';
+import { getWorldStateChatKey } from '../host-identity.js';
+import { worldStateHostFileName } from '../host-storage.js';
 
 const files = ['docs/core-contract.md', 'docs/ARCHITECTURE.md', 'docs/DATA_MODEL.md'];
 for (const file of files) {
@@ -199,4 +201,27 @@ console.log(JSON.stringify({
   renderedChars: uiHtml.length,
   providerCalls: 0,
   wallMs: Math.round(uiElapsed * 1000) / 1000,
+}));
+
+
+const hostMeasureStart = performance.now();
+const hostChatKey = getWorldStateChatKey({
+  chatId: 'Campaign Alpha.jsonl',
+  characterId: 0,
+  characters: [{ avatar: 'lucien.png' }],
+});
+const hostFileName = worldStateHostFileName('world_state_alpha/example.json');
+const hostInjection = buildWorldStateInjection({ records, links: [] }, {
+  recentText: 'Lucien reaches Kesselpass and sees caravans queued around the freight yard.',
+  currentMessageId: 1000,
+});
+const hostMeasureElapsed = performance.now() - hostMeasureStart;
+console.log(JSON.stringify({
+  kind: 'phase7-local-host-overhead',
+  chatIdentityChars: hostChatKey.length,
+  sidecarNameChars: hostFileName.length,
+  injectedRecords: hostInjection.included.length,
+  providerCalls: 0,
+  note: 'Local identity + filename + injection projection only; not a TTFT measurement.',
+  wallMs: Math.round(hostMeasureElapsed * 1000) / 1000,
 }));

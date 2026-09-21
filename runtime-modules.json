@@ -1,6 +1,6 @@
 {
-  "stage": "phase6-ui-evidence",
-  "hostEntrypoint": null,
+  "stage": "phase7-coexistence-host",
+  "hostEntrypoint": "bootstrap.js",
   "modules": [
     "constants.js",
     "hash.js",
@@ -21,9 +21,16 @@
     "evolution.js",
     "manual.js",
     "rebuild.js",
-    "ui.js"
+    "ui.js",
+    "host-identity.js",
+    "host-storage.js"
   ],
   "assets": [
     "ui.css"
+  ],
+  "hostFiles": [
+    "bootstrap.js",
+    "index.js",
+    "manifest.json"
   ]
 }

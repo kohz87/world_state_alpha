@@ -62,6 +62,16 @@ No fixture may require schema code specific to its setting.
 30. Ordinary rendered UI contains no raw record IDs, evidence IDs, lineage keys, rollback internals, prompts, transcripts, credentials, or provider payloads.
 31. A 1000-record backend still yields bounded Current / Recent / Resolved / Search UI lists.
 32. Desktop and <=700px / <=420px responsive rules keep the UI readable without requiring backend internals.
+33. Owner-qualified host identity keeps equal chat filenames under different characters/groups separate.
+34. Host sidecar upload uses the World State filename namespace, revision checks the existing pointer, and persists the actual server-returned path.
+35. Hydration failure with an existing pointer fails closed and never overwrites durable state with a fresh empty state.
+36. Assistant lifecycle performs at most one eligible capture request and journals/persists only if its chat/lineage/epoch guard remains current.
+37. User lifecycle performs local relevance/injection and only one batched lazy-evolution request when an existing Phase 4 trigger is justified.
+38. Edit/delete/swipe lifecycle cancels World State requests and restores exact branch state or fails closed.
+39. Alpha and pinned Delta identifiers do not collide across settings, prompt key, DOM, global, sidecar filename, manifest dependency, or loading order.
+40. Phase 7 host source neither reads nor mutates NPC State Delta, Ukiyo, Megumin Suite, or Writer's Mind state.
+41. Import/reset/rebuild host actions preserve Phase 5 preview/confirm/atomic contracts and rebuild remains explicit-only.
+42. No launcher/watchdog/MutationObserver or generic slash-command framework is introduced by Phase 7.
 
 ## Additional safety tests
 
@@ -93,6 +103,15 @@ No fixture may require schema code specific to its setting.
 - diagnostics with prompt/story/credential extras -> unexpected fields dropped before display
 - UI projection over 1000 records -> hard list/detail caps remain enforced
 - UI source imports provider/Node/host lifecycle APIs -> validation failure
+- same chat filename under two character owners -> different Alpha chat keys and sidecars
+- same chat filename under group vs character -> different Alpha chat keys and sidecars
+- server-side sidecar revision differs from pointer -> conflict before upload
+- server upload returns a non-logical path -> pointer stores returned path, not guessed filename
+- existing sidecar pointer GET/parse fails -> no empty replacement write
+- chat/branch changes during capture/evolution/rebuild -> stale result discarded
+- Alpha + Delta pinned namespace fixture -> no settings/prompt/DOM/global/file/load-order collision
+- disabling Alpha/injection -> clear only `world_state_alpha_private_continuity`
+- maintenance rebuild -> reachable only after explicit user confirmation
 
 ## Model/provider acceptance
 

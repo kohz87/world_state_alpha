@@ -9,8 +9,8 @@ import {
 } from '../ui.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-if (inventory.stage !== 'phase6-ui-evidence') throw new Error('Phase 6 runtime inventory stage mismatch');
-if (inventory.hostEntrypoint !== null) throw new Error('Phase 6 must remain host-neutral; SillyTavern bootstrap is not authorized yet');
+if (!['phase6-ui-evidence', 'phase7-coexistence-host'].includes(inventory.stage)) throw new Error('Phase 6 cumulative runtime inventory stage mismatch');
+if (inventory.stage !== 'phase7-coexistence-host' && inventory.hostEntrypoint !== null) throw new Error('Phase 6 UI substrate must remain host-neutral before the authorized host phase');
 if (!inventory.modules.includes('ui.js')) throw new Error('Phase 6 ui.js missing from runtime inventory');
 if (!Array.isArray(inventory.assets) || !inventory.assets.includes('ui.css')) throw new Error('Phase 6 ui.css missing from asset inventory');
 

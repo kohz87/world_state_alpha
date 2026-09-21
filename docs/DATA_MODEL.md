@@ -164,3 +164,17 @@ Record IDs should derive from a generated stable random UUID/compact UUID at adm
 Evidence IDs may combine source boundary + monotonic local sequence or UUID.
 
 Semantic duplicate detection must not depend on ID derivation.
+
+
+## Phase 7 host ownership metadata
+
+Phase 7 does not change the canonical schema, sidecar format version, bundle version, or rollback journal version.
+
+Host-only metadata lives outside canonical World State:
+
+- `extension_settings.world_state_alpha.dataFiles[chatKey]` stores only the current sidecar pointer/revision/checksum returned by the storage boundary
+- the owner-qualified `chatKey` distinguishes character and group ownership even when chat filenames match
+- panel/search state and diagnostics remain non-canonical presentation/telemetry state
+- no NPC State Delta pointer, dossier identifier, or external-extension state is stored in World State
+
+The host storage adapter may translate a logical `world_state_alpha/<hash>.json` path into a SillyTavern uploaded filename, but the sidecar payload and checksum/revision semantics remain the Phase 1 format.

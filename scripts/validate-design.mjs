@@ -50,6 +50,11 @@ for (const phrase of [
   'ordinary rendered UI must not expose raw record IDs',
   'diagnostics pass through the existing allowlist sanitizer before display',
   'does not register SillyTavern event hooks',
+  'Phase 7 supplies the smallest real SillyTavern host shell',
+  'NPC State Delta remains completely independent',
+  'No external-extension state adapter is authorized in Phase 7',
+  'All asynchronous provider-backed work is guarded by current chat identity',
+  'Rebuild never becomes automatic',
 ]) {
   if (!contract.toLowerCase().includes(phrase.toLowerCase())) {
     throw new Error('Core contract missing invariant: ' + phrase);

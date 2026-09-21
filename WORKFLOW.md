@@ -2,7 +2,7 @@
 
 ## Current gate
 
-Architecture is accepted. Phases 1-6 are authorized and later phases remain gated.
+Architecture is accepted. Phases 1-7 are authorized and Phase 8 remains gated.
 
 Allowed in the current gate:
 
@@ -10,13 +10,13 @@ Allowed in the current gate:
 - Phase 2 bounded immediate capture and request-scoped provider routing
 - Phase 3 deterministic local relevance and compact private injection
 - Phase 4 bounded stale-relevant lazy evolution
-- Phase 5 host-neutral inspect/query, current-head manual correction, transfer, and explicit rebuild
+- Phase 5 inspect/query, current-head manual correction, transfer, and explicit rebuild services
 - Phase 6 bounded Current/Recent/Resolved/Search/detail/evidence/diagnostics/data-maintenance projections
-- responsive desktop/mobile UI rendering with a host-neutral controller
-- maintenance action intents only; canonical writes remain owned by Phase 5/core services
-- cumulative Phase 1-6 deterministic tests and validation
+- Phase 7 minimal SillyTavern manifest/bootstrap, World-State-only settings/sidecar adapter, lifecycle capture/injection/rollback wiring, and mounting the existing Phase 6 panel
+- explicit coexistence hardening against NPC State Delta and Ukiyo/Megumin ownership
+- cumulative Phase 1-7 deterministic tests and validation
 
-Not yet authorized: coexistence hardening, slash-command registration, SillyTavern event/bootstrap wiring, or other Phase 7+ host integration.
+Still gated: Phase 8 performance/release hardening and any optional external-state adapter, launcher/watchdog framework, generic slash-command surface, or new semantic subsystem.
 
 ## Standard engineering loop
 

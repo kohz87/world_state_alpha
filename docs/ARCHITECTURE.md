@@ -251,13 +251,17 @@ Recommended sidecar identity:
 
 - format: `world_state_alpha_chat_data`
 - extension settings key: `world_state_alpha`
-- prompt key: `world_state_alpha_continuity`
+- prompt key: `world_state_alpha_private_continuity`
 - bundle format: `world_state_alpha_bundle`
 - public global, if needed: `WorldStateAlpha`
 
-Use per-chat qualified keys and revision-guarded sidecar writes.
+Use owner-qualified per-chat keys and revision-guarded sidecar writes.
 
-Keep a tiny settings pointer in extension settings; canonical bulk state lives in the sidecar.
+Phase 7 maps the logical `world_state_alpha/<hash>.json` sidecar to a SillyTavern uploaded filename prefixed `world-state-alpha-`. The actual server-returned path is persisted in `extension_settings.world_state_alpha.dataFiles[chatKey]`. Equal chat filenames owned by different characters/groups therefore remain separate.
+
+Hydration is fail-closed. An existing pointer that cannot be read/decoded is preserved; the host must not overwrite it with a fresh empty state.
+
+Keep only the tiny settings pointer in extension settings; canonical bulk state lives in the sidecar.
 
 ## 14. UI
 
@@ -281,7 +285,7 @@ The host-neutral controller accepts a caller-supplied root, `getState()`, option
 
 Desktop uses a centered panel up to roughly 1040 px with a list/detail split. At 700 px and below the panel becomes full-screen `100vw × 100dvh` with a vertically scrollable stacked body and >=44 px tab targets. At 420 px and below dense grids collapse to one column.
 
-Phase 6 deliberately does not add a launcher, manifest, settings pane, slash-command registration, SillyTavern event hooks, MutationObserver/watchdog integration, or cross-extension adapter. Those belong to Phase 7+ host/coexistence work.
+Phase 6 itself remains host-neutral. Phase 7 mounts it through one `world_state_alpha_panel_root` plus a compact World State settings card. Phase 7 still deliberately omits a launcher/watchdog/MutationObserver framework, generic slash-command surface, and cross-extension adapter.
 
 ## 15. Manual controls
 
@@ -299,7 +303,7 @@ Available service behavior:
 
 A targeted manual mutation is not an unowned side edit. It must be attached to the current raw-message head on the same proven branch, include a concise operator note as `manual` evidence, pass duplicate/lifecycle validation, and journal through the ordinary branch owner. Manual correction does not advance automatic capture cadence.
 
-Future host wiring may expose a command family such as `/worldstate inspect`, `update`, `rebuild`, `reset`, `export`, and `import`, but command registration belongs to a later host/UI phase.
+Phase 7 does not add a generic slash-command family. The settings/panel host wires export/import/reset/rebuild to the existing Phase 5 services, preserving their preview/confirm and atomicity contracts.
 
 There is no no-argument automatic global update that silently evolves everything.
 
@@ -314,6 +318,29 @@ Adapt Delta's request-scoped Connection Profile strategy:
 - timeout/cancellation accounting
 - no silent fallback
 - no credential copying
+
+## 16.5. Phase 7 host shell
+
+The SillyTavern shell is intentionally thin:
+
+- `manifest.json` -> `bootstrap.js` -> `index.js`
+- `host-identity.js` derives owner-qualified character/group chat keys without reading another extension
+- `host-storage.js` adapts the existing revision/checksum sidecar contract to SillyTavern `/api/files/upload` and pointer GETs
+- `index.js` owns World-State-only settings, hydration cache, event registration, currentness guards, persistence, prompt application, and mounting the Phase 6 panel
+
+The shell calls existing capture/evolution/relevance/branch/manual/rebuild services rather than duplicating their semantic logic.
+
+Co-install boundaries are structural:
+
+- Alpha settings: `world_state_alpha`; Delta settings: `npc_state_delta`
+- Alpha prompt: `world_state_alpha_private_continuity`; Delta prompt remains separate
+- Alpha uploaded sidecars: `world-state-alpha-*`; Delta file names remain separate
+- Alpha DOM IDs/classes use `world_state_alpha` / `wsa`; Delta DOM remains separate
+- Alpha optional debug global: `WorldStateAlpha`; Delta global remains separate
+- manifest has no dependency on Delta
+- Alpha never queries or mutates Delta DOM/storage/settings/global state
+
+No Ukiyo/Megumin/Writer's Mind integration hook is needed: they continue to consume normal SillyTavern prompt composition, while World State injects only its private continuity block.
 
 ## 17. Normal-turn sequence
 

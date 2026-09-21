@@ -1,6 +1,6 @@
 # World State Alpha staged workplan
 
-Status: architecture accepted. Phases 1-6 implemented candidates; Phases 7+ remain gated.
+Status: architecture accepted. Phases 1-7 implemented candidates; Phase 8 remains gated.
 
 ## Phase 0 - architecture/bootstrap
 
@@ -135,7 +135,7 @@ Acceptance:
 - UI is projection of canonical state only
 - backend internals not required for ordinary use
 
-## Phase 7 - coexistence hardening
+## Phase 7 - coexistence hardening [IMPLEMENTED CANDIDATE]
 
 Build/test:
 

@@ -133,7 +133,8 @@ export async function writeSidecar({
       }
       const revision = Math.max(0, Math.trunc(Number(result?.revision) || nextRevision));
       if (revision !== nextRevision) throw new RevisionConflictError('storage adapter returned an unexpected revision');
-      return { path, revision, checksum: target.checksum };
+      const committedPath = String(result?.path || path).trim() || path;
+      return { path: committedPath, revision, checksum: target.checksum };
     } catch (error) {
       if (error instanceof RevisionConflictError || error?.code === 'WORLD_STATE_REVISION_CONFLICT') {
         const recovered = await recoverCommittedWrite();

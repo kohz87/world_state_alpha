@@ -1,6 +1,6 @@
 # World State Alpha - core contract
 
-Status: ARCHITECTURE ACCEPTED. Phases 1-6 are implemented as candidates; Phase 7+ runtime work remains gated.
+Status: ARCHITECTURE ACCEPTED. Phases 1-7 are implemented as candidates; Phase 8 runtime/release hardening remains gated.
 
 ## C01. Product purpose
 
@@ -350,4 +350,45 @@ UI rules:
 - desktop uses a bounded two-pane panel; mobile at 700px and below becomes full-screen with a vertically scrollable body and mobile-size touch targets
 - UI namespace/classes remain isolated under World State Alpha
 
-Phase 6 may expose a host-neutral DOM mount/controller that accepts caller-supplied state, diagnostics, close, and maintenance callbacks. It does not register SillyTavern event hooks, slash commands, launchers, settings integration, extension manifests, or cross-extension adapters. Those remain Phase 7+ host/coexistence work.
+Phase 6 exposes a host-neutral DOM mount/controller that accepts caller-supplied state, diagnostics, close, and maintenance callbacks. The Phase 6 module does not register SillyTavern event hooks, slash commands, launchers, settings integration, extension manifests, or cross-extension adapters. Phase 7 may mount this controller through the separate host shell without moving host authority into `ui.js`.
+
+
+## C22. Phase 7 SillyTavern host and coexistence boundary
+
+Phase 7 supplies the smallest real SillyTavern host shell around the already-accepted core. The host shell owns integration mechanics only; it does not introduce new World State semantics.
+
+Owned host namespace:
+
+- extension settings key: `world_state_alpha`
+- private prompt key: `world_state_alpha_private_continuity`
+- settings/root DOM IDs and event selectors prefixed with `world_state_alpha` / `wsa`
+- sidecar upload filenames prefixed with `world-state-alpha-`
+- optional read-only debug global: `WorldStateAlpha`
+
+NPC State Delta remains completely independent. World State Alpha must not read, mutate, enumerate, migrate, or depend on NPC State Delta settings, sidecars, DOM, prompt keys, globals, commands, or dossier internals. It must not target Ukiyo, Megumin Suite, Writer's Mind, or any other story-driving extension for mutation or configuration. No external-extension state adapter is authorized in Phase 7.
+
+The host uses an owner-qualified per-chat key so equal chat filenames belonging to different characters/groups cannot share World State storage. A tiny sidecar pointer may live under World State's own extension settings; canonical bulk state remains in the World State sidecar. Sidecar writes for the same target are serialized before revision check/upload, using the browser Web Locks API when available and an in-process queue otherwise. A durable pointer that fails hydration is never replaced by a fresh empty state. Hydration/corruption errors fail closed and suppress automatic mutation until the owned state is safely available again. For canonical mutations, the host persists the candidate sidecar before publishing that candidate into the in-memory canonical cache.
+
+Normal lifecycle ownership:
+
+- completed assistant message -> reconcile exact branch -> at most one eligible capture request -> canonical reducer result -> branch journal ownership -> sidecar persistence
+- user message before the next generation -> reconcile exact branch -> local relevance + optional meaningful elapsed-time catch-up -> compact private injection
+- chat load/change -> cancel World State in-flight work, hydrate/reconcile current owned state, then refresh only the World State prompt/UI
+- edit/delete/swipe lifecycle -> cancel World State requests and run exact `reconcileBranch`; never preserve abandoned-branch state
+
+All asynchronous provider-backed work is guarded by current chat identity, exact raw-message lineage, and local state epoch. Stale completion is discarded.
+
+The host calls `setExtensionPrompt` only for `world_state_alpha_private_continuity`, SYSTEM / `IN_CHAT`, at the configured shallow depth. Disabling, leaving a chat, or failing hydration clears only that World State key. The host never mutates global RP provider/model/preset settings.
+
+Phase 7 mounts the existing Phase 6 panel through one World-State-owned root and a small settings card. It does not add a launcher/watchdog/MutationObserver framework or a generic slash-command surface. Maintenance remains a host projection over Phase 5 services:
+
+- export is local
+- import uses preview, explicit confirmation, then apply/persist
+- reset uses preview, explicit confirmation, then apply/persist
+- rebuild is explicit confirmation only, uses the bounded Phase 5 rebuild service, and atomically replaces state only after complete success
+
+Rebuild never becomes automatic because of hydration failure, missing state, branch change, or ordinary play.
+
+World-significant person facts may still exist as generic World State records, but Phase 7 does not read or duplicate NPC dossier fields such as personality, speech, appearance, mood, relationship, mannerism, behavioral profile, or personal goals.
+
+Deterministic Phase 7 tests may prove namespace/prompt/storage/DOM isolation and mocked host transactions. They do not prove live SillyTavern browser compatibility, live provider quality/latency, or real simultaneous co-install behavior; those remain explicit acceptance boundaries for Phase 8/release hardening.

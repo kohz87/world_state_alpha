@@ -9,7 +9,8 @@ import {
 } from '../injection.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-if (inventory.hostEntrypoint !== null) throw new Error('Phase 3 substrate must remain host-neutral before SillyTavern bootstrap');
+const phase7Host = inventory.stage === 'phase7-coexistence-host';
+if (!phase7Host && inventory.hostEntrypoint !== null) throw new Error('Phase 3 substrate must remain host-neutral before the authorized host phase');
 
 for (const file of ['relevance.js', 'injection.js']) {
   if (!inventory.modules.includes(file)) throw new Error(`Phase 3 module missing from runtime inventory: ${file}`);

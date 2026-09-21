@@ -541,3 +541,50 @@
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Phase 7 SillyTavern settings mount. Kept outside the panel namespace but World State-owned. */
+#world_state_alpha_settings.world-state-alpha-settings {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  margin: 10px 0;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+  border-radius: 10px;
+  background: var(--black30a, rgba(0,0,0,.18));
+}
+#world_state_alpha_settings .world-state-alpha-settings-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+#world_state_alpha_settings .world-state-alpha-settings-head span {
+  opacity: .68;
+  font-size: .78rem;
+}
+#world_state_alpha_settings label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+#world_state_alpha_settings label > input[type="number"],
+#world_state_alpha_settings label > input[type="text"] {
+  min-width: 0;
+  margin-left: auto;
+}
+#world_state_alpha_open {
+  min-height: 40px;
+}
+@media (max-width: 700px) {
+  #world_state_alpha_settings label {
+    flex-wrap: wrap;
+  }
+  #world_state_alpha_settings label > input[type="number"],
+  #world_state_alpha_settings label > input[type="text"],
+  #world_state_alpha_open {
+    width: 100%;
+    min-height: 44px;
+  }
+}

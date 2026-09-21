@@ -42,6 +42,11 @@ test('core safety invariants are present', () => {
     /ordinary rendered UI must not expose raw record IDs/i,
     /diagnostics pass through the existing allowlist sanitizer before display/i,
     /does not register SillyTavern event hooks/i,
+    /Phase 7 supplies the smallest real SillyTavern host shell/i,
+    /NPC State Delta remains completely independent/i,
+    /No external-extension state adapter is authorized in Phase 7/i,
+    /All asynchronous provider-backed work is guarded by current chat identity/i,
+    /Rebuild never becomes automatic/i,
   ]) assert.match(contract, expected);
 });
 

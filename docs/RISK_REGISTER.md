@@ -23,4 +23,10 @@
 | UI data leak / XSS | backend IDs, lineage, private telemetry, or executable markup reaches the panel | escaped text + human projections + diagnostic allowlist + no raw IDs in rendered HTML | hostile-markup/privacy fixture |
 | UI overload | large world database creates an unusable or huge panel | hard per-view/detail caps + local bounded search projection | 1000-record UI fixture |
 | Mobile unreadability | desktop panel overflows or tiny controls block maintenance/inspection | <=700px full-screen stacked layout, >=44px tabs, <=420px one-column grids | static responsive CSS tests + later live browser acceptance |
+| Host namespace collision | Alpha overwrites/reads another extension's settings, prompt, DOM, global, or file | isolated `world_state_alpha` / `world-state-alpha-` namespaces + no dependency/adapters | pinned Delta coexistence/static host tests |
+| Cross-chat sidecar collision | equal chat filename shares state across character/group owners | owner-qualified character/group chat key + hashed logical sidecar | host identity fixture |
+| Hydration clobber | missing/corrupt durable sidecar replaced by empty state | pointer-preserving fail-closed hydration; writes blocked while hydration error exists | hydration/static transaction tests |
+| Stale host completion | capture/evolution commits after chat/branch/state changed | chat key + lineage + state epoch currentness guard + request cancellation | stale-operation host checks |
+| Host framework creep | launcher/watchdog/commands become a second UI/runtime system | settings card + existing Phase 6 panel only; no MutationObserver/generic commands | static source validator |
+| Live co-install mismatch | deterministic isolation passes but real ST/Delta event order differs | keep host shell independent and run explicit live simultaneous-install acceptance | Phase 8 live co-install run |
 | Over-ontology | schema accretes genre assumptions | no mandatory typed anchors/scope; universality fixtures | schema lint |

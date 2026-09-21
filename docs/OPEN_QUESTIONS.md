@@ -12,4 +12,6 @@ Resolved: Phase 5 manual correction is attached only to the current raw-message 
 
 Resolved: Phase 6 uses a projection-only responsive panel with Current / Recent / Resolved / Search / Detail / Diagnostics / Data views. Desktop uses a bounded two-pane panel; <=700 px is full-screen/stacked; maintenance controls emit intents only and do not acquire mutation authority.
 
-There are currently no unresolved user-preference decisions required before Phase 7. Host mounting, launcher/command ergonomics, and coexistence integration remain Phase 7+ decisions.
+Resolved: Phase 7 uses a minimal settings-card host with no separate launcher/watchdog framework and no generic slash-command family. It mounts the existing Phase 6 panel, stores only World State sidecar pointers under `extension_settings.world_state_alpha`, uses the existing private prompt key, and has no NPC State/Ukiyo/Megumin dependency or external-state adapter.
+
+There are currently no unresolved user-preference decisions required before Phase 8. Live SillyTavern co-install/provider/browser acceptance and release-performance thresholds remain Phase 8/release-hardening work rather than new semantic decisions.

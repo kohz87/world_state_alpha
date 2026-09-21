@@ -3,7 +3,7 @@ import fs from 'node:fs';
 fs.mkdirSync('dist', { recursive: true });
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
 const payload = {
-  status: 'phase6-ui-evidence',
+  status: 'phase7-coexistence-host',
   coreImplemented: true,
   captureImplemented: true,
   relevanceImplemented: true,
@@ -16,10 +16,13 @@ const payload = {
   rebuildImplemented: true,
   uiImplemented: true,
   evidenceInspectionImplemented: true,
-  runtimeImplemented: false,
-  hostIntegrated: false,
+  runtimeImplemented: true,
+  hostIntegrated: true,
+  coexistenceHardened: true,
   generatedAt: new Date().toISOString(),
   modules: inventory.modules,
+  hostEntrypoint: inventory.hostEntrypoint,
+  hostFiles: inventory.hostFiles || [],
   assets: inventory.assets || [],
   authorities: [
     'AGENTS.md',
@@ -32,5 +35,5 @@ const payload = {
     'docs/RISK_REGISTER.md'
   ]
 };
-fs.writeFileSync('dist/world_state_alpha-phase6.json', JSON.stringify(payload, null, 2));
-console.log('Wrote dist/world_state_alpha-phase6.json');
+fs.writeFileSync('dist/world_state_alpha-phase7.json', JSON.stringify(payload, null, 2));
+console.log('Wrote dist/world_state_alpha-phase7.json');

@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-The design is accepted and **Phases 1-6 only** are currently authorized. Phase 6 may implement the bounded projection-only Current/Recent/Resolved/Search/detail/evidence/diagnostics/data-maintenance UI, responsive CSS, and a host-neutral mount/controller API. Maintenance controls may emit intents to Phase 5 services but must not own canonical mutation. Do not implement Phase 7+ coexistence hardening, command registration, or SillyTavern bootstrap/event wiring without a new explicit authorization.
+The design is accepted and **Phases 1-7 only** are currently authorized. Phase 7 may implement the minimal SillyTavern host shell and coexistence hardening: World-State-only settings, owner-qualified per-chat sidecar hydration/persistence, lifecycle capture/injection/rollback wiring, mounting the existing Phase 6 panel, and Phase 5 maintenance service wiring with explicit confirmation. It must not introduce NPC State dependencies, external-state adapters, Story Director behavior, launcher/watchdog machinery, generic slash-command surfaces, or new semantic rules. Phase 8 remains gated.
 
 ## Product boundary
 
