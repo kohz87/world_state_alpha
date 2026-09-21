@@ -139,18 +139,22 @@ export function renderWorldStateInjection(selectedEntries = [], {
 }
 
 export function buildWorldStateInjection(state, {
+  index = null,
   recentText = '',
   loreText = '',
   currentMessageId = null,
   budgetTokens = WORLD_STATE_INJECTION_DEFAULTS.budgetTokens,
   maxRecords = WORLD_STATE_INJECTION_DEFAULTS.maxRecords,
   depth = WORLD_STATE_INJECTION_DEFAULTS.depth,
+  candidateCap = 128,
 } = {}) {
   const retrieval = selectRelevantRecords(state, {
+    index,
     recentText,
     loreText,
     currentMessageId,
     maxRecords,
+    candidateCap,
   });
   const rendered = renderWorldStateInjection(retrieval.selected, { budgetTokens });
 

@@ -1,6 +1,6 @@
 # World State Alpha - core contract
 
-Status: ARCHITECTURE ACCEPTED. Phases 1-7 are implemented as candidates; Phase 8 runtime/release hardening remains gated.
+Status: ARCHITECTURE & RUNTIME ACCEPTED. Phases 1-8 are implemented as candidates.
 
 ## C01. Product purpose
 
@@ -392,3 +392,56 @@ Rebuild never becomes automatic because of hydration failure, missing state, bra
 World-significant person facts may still exist as generic World State records, but Phase 7 does not read or duplicate NPC dossier fields such as personality, speech, appearance, mood, relationship, mannerism, behavioral profile, or personal goals.
 
 Deterministic Phase 7 tests may prove namespace/prompt/storage/DOM isolation and mocked host transactions. They do not prove live SillyTavern browser compatibility, live provider quality/latency, or real simultaneous co-install behavior; those remain explicit acceptance boundaries for Phase 8/release hardening.
+
+## C23. Phase 8 performance and release hardening
+
+Phase 8 may optimize execution, storage growth, measurement, and packaging. It may not weaken the semantic/source/branch contracts established by earlier phases.
+
+### C23.1 Ordinary-turn work bound
+
+The real SillyTavern ordinary assistant/user path must not perform a full-chat or full-world traversal merely to prepare capture or continuity.
+
+On an append-only ordinary turn:
+
+- raw-message lineage is extended from the cached proven tail and only new message fingerprints are computed
+- edit/delete/swipe signals mark that chat branch dirty immediately; a dirty chat must complete exact reconciliation before the append fast path is permitted again
+- fail-closed recovery keeps the branch dirty and `recoveryRequired` blocks the fast path until exact recovery/rebuild clears it
+- bounded recent exchange extraction reuses cached lineage
+- provider currentness is guarded by chat identity, local state epoch, and the owned source-message fingerprint
+- capture/evolution journal commits reuse the already-known lineage
+- relevance uses the ephemeral index and bounded candidate discovery
+
+Whole-chat lineage reconciliation remains authorized for hydration/recovery, edit/delete/swipe, rebuild, and other explicit operations requiring whole-history proof.
+
+### C23.2 Indexed relevance bound
+
+The Phase 8 index is ephemeral and non-canonical. It must not be serialized or treated as source authority.
+
+Normal indexed retrieval must not iterate the complete record corpus, the complete exact-anchor dictionary, or every posting list. Query terms drive bounded posting-list lookups. Posting traversal and candidate scoring have hard deterministic caps. Exact/anchor evidence receives priority over weak common summary-token evidence before candidate truncation.
+
+Once admitted to the candidate set, records use the existing relevance scoring and one-hop expansion rules. A non-indexed compatibility path may remain for host-neutral/manual regression use, but the real normal-turn host path supplies the index.
+
+Full index rebuild is restricted to hydration and whole-state replacement/recovery paths. Routine canonical mutations update the cached index using small non-persisted reducer deltas. Incremental refresh must preserve generic persisted relation edges as well as causedBy/affects adjacency.
+
+### C23.3 Evidence compaction
+
+After successful canonical mutation, live `state.evidence` may contain only evidence still referenced by retained records. Unreferenced evidence is pruned deterministically.
+
+Compaction must preserve exact rollback. Undo data must retain any removed evidence necessary to restore a prior proven boundary. Persisted schema/sidecar/bundle/journal format versions remain unchanged.
+
+### C23.4 Version and package reproducibility
+
+Application version is `0.8.0-alpha.1`. Persisted versions remain:
+
+- `SCHEMA_VERSION = 1`
+- `SIDECAR_FORMAT_VERSION = 1`
+- `BUNDLE_VERSION = 1`
+- `ROLLBACK_JOURNAL_VERSION = 1`
+
+`npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
+
+### C23.5 Measurement honesty
+
+Synthetic/local measurements may establish bounded request counts, prompt/injection sizes, indexed candidate work, storage growth, rollback-window bytes, and package reproducibility. They must not be described as live TTFT, provider latency, browser timing, or real co-install proof.
+
+Real SillyTavern/provider/browser/Delta/Ukiyo/Megumin acceptance results are recorded separately under `docs/LIVE_ACCEPTANCE.md`. No live PASS result may be fabricated from mocks or deterministic tests.

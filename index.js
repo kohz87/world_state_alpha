@@ -6,7 +6,7 @@ import {
   getRequestHeaders,
 } from '../../../../script.js';
 
-import { chatLineage, commitMutationBoundary, reconcileBranch, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintMessage, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { CAPTURE_LIMITS, runCaptureOperation } from './capture.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange } from './elapsed.js';
@@ -27,12 +27,12 @@ import {
 } from './manual.js';
 import { cancelWorldStateRequests } from './provider-routing.js';
 import { runManualRebuild } from './rebuild.js';
-import { selectRelevantRecords } from './relevance.js';
+import { buildRelevanceIndex, selectRelevantRecords, updateRelevanceIndex } from './relevance.js';
 import { clone, createState, normalizeState } from './state-core.js';
 import { readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.7.0-alpha.1';
+export const WORLD_STATE_ALPHA_VERSION = '0.8.0-alpha.1';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -49,11 +49,13 @@ const DEFAULTS = Object.freeze({
 });
 
 const stateCache = new Map();
+const relevanceIndices = new Map();
 const loadedChats = new Set();
 const hydrationErrors = new Map();
 const loadingChats = new Map();
 const stateEpochs = new Map();
 const chatQueues = new Map();
+const branchDirtyChats = new Set();
 const diagnosticStore = createDiagnosticStore({ limit: 40 });
 
 let activeChatKey = 'no-chat';
@@ -122,14 +124,40 @@ function currentChatKey() {
   return getWorldStateChatKey(getContext());
 }
 
+function getRelevanceIndex(chatKey, state) {
+  if (!chatKey || chatKey === 'no-chat' || !state) return null;
+  if (relevanceIndices.has(chatKey)) return relevanceIndices.get(chatKey);
+  const index = buildRelevanceIndex(state);
+  relevanceIndices.set(chatKey, index);
+  return index;
+}
+
+function resetRelevanceIndex(chatKey, state) {
+  if (!chatKey || chatKey === 'no-chat' || !state) {
+    relevanceIndices.delete(chatKey);
+    return null;
+  }
+  const index = buildRelevanceIndex(state);
+  relevanceIndices.set(chatKey, index);
+  return index;
+}
+
 function epoch(chatKey) {
   return Number(stateEpochs.get(chatKey) || 0);
 }
 
-function setCachedState(chatKey, state) {
+function setCachedState(chatKey, state, { indexMode = 'rebuild', indexDelta = null } = {}) {
   const normalized = normalizeState(clone(state), { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
   stateEpochs.set(chatKey, epoch(chatKey) + 1);
+
+  if (indexMode === 'delta') {
+    const index = relevanceIndices.get(chatKey);
+    if (index) updateRelevanceIndex(index, indexDelta || {});
+    else resetRelevanceIndex(chatKey, normalized);
+  } else if (indexMode !== 'preserve') {
+    resetRelevanceIndex(chatKey, normalized);
+  }
   return normalized;
 }
 
@@ -225,10 +253,12 @@ function messageRole(message) {
   return 'assistant';
 }
 
-function boundedExchange(chat, endMessageId, limit = CAPTURE_LIMITS.exchangeMessages) {
+function boundedExchange(chat, endMessageId, limit = CAPTURE_LIMITS.exchangeMessages, knownLineage = null) {
   const rows = Array.isArray(chat) ? chat : [];
   if (!Number.isInteger(endMessageId) || endMessageId < 0 || endMessageId >= rows.length) return [];
-  const lineage = chatLineage(rows);
+  const lineage = Array.isArray(knownLineage) && knownLineage.length > endMessageId
+    ? knownLineage
+    : chatLineage(rows);
   const out = [];
   for (let index = endMessageId; index >= 0 && out.length < limit; index -= 1) {
     const message = rows[index];
@@ -260,11 +290,13 @@ function routeSettings() {
 function operationGuard(chatKey, sourceMessageId) {
   const startEpoch = epoch(chatKey);
   const chat = getContext().chat || [];
-  const sourceLineage = chatLineage(chat)[sourceMessageId]?.lineageKey || '';
+  const sourceFingerprint = Number.isInteger(sourceMessageId) && chat[sourceMessageId]
+    ? fingerprintMessage(chat[sourceMessageId])
+    : '';
   return () => {
-    if (currentChatKey() !== chatKey || epoch(chatKey) !== startEpoch) return false;
+    if (currentChatKey() !== chatKey || epoch(chatKey) !== startEpoch || !sourceFingerprint) return false;
     const live = getContext().chat || [];
-    return (chatLineage(live)[sourceMessageId]?.lineageKey || '') === sourceLineage;
+    return Boolean(live[sourceMessageId] && fingerprintMessage(live[sourceMessageId]) === sourceFingerprint);
   };
 }
 
@@ -309,8 +341,10 @@ function updatePrivateInjection() {
   }
   const chat = getContext().chat || [];
   const end = chat.length - 1;
-  const exchange = end >= 0 ? boundedExchange(chat, end, 4) : [];
+  const exchange = end >= 0 ? boundedExchange(chat, end, 4, state.lineage) : [];
+  const index = getRelevanceIndex(chatKey, state);
   const injection = buildWorldStateInjection(state, {
+    index,
     recentText: recentText(exchange),
     currentMessageId: end >= 0 ? end : null,
     budgetTokens: settings.injectBudgetTokens,
@@ -318,6 +352,28 @@ function updatePrivateInjection() {
   });
   setPrivatePrompt(injection.text, injection.descriptor.depth);
   return injection;
+}
+
+function extendCurrentBranchFast(chatKey) {
+  if (branchDirtyChats.has(chatKey)) return null;
+  const state = stateCache.get(chatKey);
+  if (state?.recoveryRequired) return null;
+  if (!state || currentChatKey() !== chatKey) return null;
+  const chat = getContext().chat || [];
+  const appended = extendChatLineage(state.lineage, chat);
+  if (appended === null) return null;
+  if (appended.length) {
+    state.lineage.push(...appended);
+    state.recoveryRequired = null;
+    stateEpochs.set(chatKey, epoch(chatKey) + 1);
+  }
+  return {
+    state,
+    divergence: appended.length ? state.lineage.length - appended.length : -1,
+    action: appended.length ? 'forward-extension' : 'same',
+    exactRestored: true,
+    failClosed: false,
+  };
 }
 
 async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) {
@@ -332,8 +388,11 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
     await persistState(chatKey, result.state);
     setCachedState(chatKey, result.state);
   } else if (changed) {
-    setCachedState(chatKey, result.state);
+    // Forward lineage extension changes chronology only; canonical relevance data is unchanged.
+    setCachedState(chatKey, result.state, { indexMode: 'preserve' });
   }
+  if (result.failClosed) branchDirtyChats.add(chatKey);
+  else branchDirtyChats.delete(chatKey);
   return result;
 }
 
@@ -352,7 +411,8 @@ async function handleAssistantMessage(messageId) {
   await queueChatWork(chatKey, async () => {
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
-    const branch = await reconcileCurrentBranch(chatKey, { persistRestore: true });
+    const branch = extendCurrentBranchFast(chatKey)
+      || await reconcileCurrentBranch(chatKey, { persistRestore: true });
     if (branch?.failClosed) {
       updatePrivateInjection();
       refreshPanel();
@@ -361,13 +421,15 @@ async function handleAssistantMessage(messageId) {
 
     const liveChat = getContext().chat || [];
     if (messageId >= liveChat.length || messageRole(liveChat[messageId]) !== 'assistant') return;
-    const exchange = boundedExchange(liveChat, messageId);
-    const lineage = chatLineage(liveChat);
-    const sourceLineageKey = lineage[messageId]?.lineageKey || '';
+    const currentState = stateCache.get(chatKey);
+    const exchange = boundedExchange(liveChat, messageId, CAPTURE_LIMITS.exchangeMessages, currentState?.lineage);
+    const sourceLineageKey = currentState?.lineage?.[messageId]?.lineageKey || '';
     if (!sourceLineageKey) return;
 
     const before = stateCache.get(chatKey);
+    const index = getRelevanceIndex(chatKey, before);
     const visible = selectRelevantRecords(before, {
+      index,
       recentText: recentText(exchange),
       currentMessageId: messageId,
       maxRecords: CAPTURE_LIMITS.visibleRecords,
@@ -390,9 +452,9 @@ async function handleAssistantMessage(messageId) {
     });
 
     if (!isCurrent() || result.outcome === 'stale' || result.outcome === 'skipped') return;
-    const committed = commitMutationBoundary(before, result.state, liveChat, messageId, 'capture');
+    const committed = commitMutationBoundary(before, result.state, liveChat, messageId, 'capture', { lineage: before.lineage });
     await persistState(chatKey, committed);
-    setCachedState(chatKey, committed);
+    setCachedState(chatKey, committed, { indexMode: 'delta', indexDelta: result.indexDelta });
     updatePrivateInjection();
     refreshPanel();
   });
@@ -414,7 +476,8 @@ async function handleUserMessage(messageId) {
   await queueChatWork(chatKey, async () => {
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
-    const branch = await reconcileCurrentBranch(chatKey, { persistRestore: true });
+    const branch = extendCurrentBranchFast(chatKey)
+      || await reconcileCurrentBranch(chatKey, { persistRestore: true });
     if (branch?.failClosed || !getWorldStateSettings().inject) {
       updatePrivateInjection();
       refreshPanel();
@@ -422,16 +485,18 @@ async function handleUserMessage(messageId) {
     }
 
     const liveChat = getContext().chat || [];
-    const exchange = boundedExchange(liveChat, messageId);
-    const lineage = chatLineage(liveChat);
-    const sourceLineageKey = lineage[messageId]?.lineageKey || '';
+    const currentState = stateCache.get(chatKey);
+    const exchange = boundedExchange(liveChat, messageId, CAPTURE_LIMITS.exchangeMessages, currentState?.lineage);
+    const sourceLineageKey = currentState?.lineage?.[messageId]?.lineageKey || '';
     const elapsedHint = detectElapsedHintFromExchange(exchange);
     const before = stateCache.get(chatKey);
+    const index = getRelevanceIndex(chatKey, before);
     const isCurrent = operationGuard(chatKey, messageId);
 
     const prepared = await prepareWorldStateContinuity({
       ctx: getContext(),
       state: before,
+      index,
       recentText: recentText(exchange),
       loreText: '',
       currentMessageId: messageId,
@@ -449,11 +514,22 @@ async function handleUserMessage(messageId) {
       diagnostics: diagnosticStore,
     });
 
-    if (!isCurrent()) return;
+    if (!isCurrent()) {
+      // prepareWorldStateContinuity may have applied an ephemeral index delta for final injection.
+      // A stale operation must restore the index to the still-canonical pre-operation state.
+      resetRelevanceIndex(chatKey, before);
+      return;
+    }
     if (stateChanged(before, prepared.state)) {
-      const committed = commitMutationBoundary(before, prepared.state, liveChat, messageId, 'evolution');
-      await persistState(chatKey, committed);
-      setCachedState(chatKey, committed);
+      const committed = commitMutationBoundary(before, prepared.state, liveChat, messageId, 'evolution', { lineage: before.lineage });
+      try {
+        await persistState(chatKey, committed);
+      } catch (error) {
+        resetRelevanceIndex(chatKey, before);
+        throw error;
+      }
+      // The evolution helper already updated the ephemeral index with its small reducer delta.
+      setCachedState(chatKey, committed, { indexMode: 'preserve' });
     }
     setPrivatePrompt(prepared.injection?.text || '', prepared.injection?.descriptor?.depth ?? getWorldStateSettings().injectDepth);
     refreshPanel();
@@ -466,6 +542,11 @@ async function handleBranchChange() {
     clearPrivatePrompt();
     return;
   }
+  // Mark the branch dirty synchronously so any subsequently queued normal event
+  // must take the exact reconciliation path before using append-only lineage.
+  branchDirtyChats.add(chatKey);
+  // Invalidate provider currentness immediately; exact reconciliation may wait behind queued chat work.
+  stateEpochs.set(chatKey, epoch(chatKey) + 1);
   cancelWorldStateRequests({ chatKey });
   await queueChatWork(chatKey, async () => {
     try {

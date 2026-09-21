@@ -20,5 +20,12 @@ jobs:
       - run: npm test
       - run: npm run validate
       - run: npm run measure:prompts
-      - run: npm run package
+      - name: Package release candidate
+        run: |
+          npm run package
+          sha256sum dist/world_state_alpha-0.8.0-alpha.1.zip dist/release-manifest.json > /tmp/world-state-package.sha256
+      - name: Verify package reproducibility
+        run: |
+          npm run package
+          sha256sum --check /tmp/world-state-package.sha256
       - run: git diff --check

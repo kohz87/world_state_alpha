@@ -5,6 +5,7 @@ import { EvolutionWireError, parseEvolutionJson, validateEvolutionEnvelope } fro
 import { hashText, stableStringify } from './hash.js';
 import { buildWorldStateInjection } from './injection.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
+import { updateRelevanceIndex } from './relevance.js';
 import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.js';
 import { clone, reduceMutations } from './state-core.js';
 
@@ -555,6 +556,7 @@ export function processEvolutionResponse({
     derivedCount: derivedMutations.length,
     rejectedDerived,
     proposedDerivedCount: raw.derived.length,
+    indexDelta: reduced.indexDelta || { upsertedRecords: [], appendedLinks: [], corpusRecords: reduced.state.records.length },
   };
 }
 
@@ -791,6 +793,7 @@ export async function runLazyEvolution({
 export async function prepareWorldStateContinuity({
   ctx,
   state,
+  index = null,
   recentText = '',
   loreText = '',
   currentMessageId = null,
@@ -801,6 +804,7 @@ export async function prepareWorldStateContinuity({
   budgetTokens = undefined,
   maxRecords = undefined,
   depth = undefined,
+  candidateCap = 128,
   chatKey,
   sourceMessageId = currentMessageId,
   sourceLineageKey,
@@ -813,9 +817,11 @@ export async function prepareWorldStateContinuity({
   dispatcher = dispatchWorldStateRequest,
 } = {}) {
   const beforeInjection = buildWorldStateInjection(state, {
+    index,
     recentText,
     loreText,
     currentMessageId,
+    candidateCap,
     ...(budgetTokens === undefined ? {} : { budgetTokens }),
     ...(maxRecords === undefined ? {} : { maxRecords }),
     ...(depth === undefined ? {} : { depth }),
@@ -858,10 +864,16 @@ export async function prepareWorldStateContinuity({
   });
 
   const nextState = evolution.state || state;
+  if (index && evolution.indexDelta) {
+    updateRelevanceIndex(index, evolution.indexDelta);
+  }
+
   const injection = buildWorldStateInjection(nextState, {
+    index,
     recentText,
     loreText,
     currentMessageId,
+    candidateCap,
     ...(budgetTokens === undefined ? {} : { budgetTokens }),
     ...(maxRecords === undefined ? {} : { maxRecords }),
     ...(depth === undefined ? {} : { depth }),

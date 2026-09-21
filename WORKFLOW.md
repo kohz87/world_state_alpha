@@ -2,9 +2,9 @@
 
 ## Current gate
 
-Architecture is accepted. Phases 1-7 are authorized and Phase 8 remains gated.
+Architecture and runtime implementation are accepted. Phases 1-8 are implemented as candidate releases.
 
-Allowed in the current gate:
+Included in the current gate:
 
 - Phase 1 canonical state, persistence, transfer, and exact rollback substrate
 - Phase 2 bounded immediate capture and request-scoped provider routing
@@ -13,10 +13,11 @@ Allowed in the current gate:
 - Phase 5 inspect/query, current-head manual correction, transfer, and explicit rebuild services
 - Phase 6 bounded Current/Recent/Resolved/Search/detail/evidence/diagnostics/data-maintenance projections
 - Phase 7 minimal SillyTavern manifest/bootstrap, World-State-only settings/sidecar adapter, lifecycle capture/injection/rollback wiring, and mounting the existing Phase 6 panel
+- Phase 8 performance & release hardening: ephemeral per-chat relevance indexing, candidate cap saturation (128), unreferenced evidence compaction on mutation, deterministic PKZip archive and manifest generation, prompt/latency measurements, and live acceptance protocol
 - explicit coexistence hardening against NPC State Delta and Ukiyo/Megumin ownership
-- cumulative Phase 1-7 deterministic tests and validation
+- cumulative Phase 1-8 deterministic tests and validation
 
-Still gated: Phase 8 performance/release hardening and any optional external-state adapter, launcher/watchdog framework, generic slash-command surface, or new semantic subsystem.
+Still gated: Any optional external-state adapter, launcher/watchdog framework, generic slash-command surface, or new semantic subsystem.
 
 ## Standard engineering loop
 

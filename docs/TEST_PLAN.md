@@ -72,6 +72,12 @@ No fixture may require schema code specific to its setting.
 40. Phase 7 host source neither reads nor mutates NPC State Delta, Ukiyo, Megumin Suite, or Writer's Mind state.
 41. Import/reset/rebuild host actions preserve Phase 5 preview/confirm/atomic contracts and rebuild remains explicit-only.
 42. No launcher/watchdog/MutationObserver or generic slash-command framework is introduced by Phase 7.
+43. 1000-record indexed retrieval isolates the relevant record while evaluating <=16 candidate records.
+44. Candidate cap saturation bounds candidates to 128 while deterministically prioritizing exact anchors over common-token matches.
+45. Incremental index update produces identical retrieval output to an index rebuilt from scratch.
+46. 50+ sequential updates compact unreferenced evidence to <=32 entries while undo patch accurately rolls back prior state.
+47. Release package archive and manifest generation are 100% byte-reproducible with identical SHA-256 hashes across runs.
+48. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
 
 ## Additional safety tests
 

@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-The design is accepted and **Phases 1-7 only** are currently authorized. Phase 7 may implement the minimal SillyTavern host shell and coexistence hardening: World-State-only settings, owner-qualified per-chat sidecar hydration/persistence, lifecycle capture/injection/rollback wiring, mounting the existing Phase 6 panel, and Phase 5 maintenance service wiring with explicit confirmation. It must not introduce NPC State dependencies, external-state adapters, Story Director behavior, launcher/watchdog machinery, generic slash-command surfaces, or new semantic rules. Phase 8 remains gated.
+The design and runtime candidate are accepted and **Phases 1-8** are implemented. Phase 8 implements performance optimization and release hardening: ephemeral per-chat relevance indexing, candidate cap saturation (128), unreferenced evidence compaction on mutation, deterministic byte-reproducible zip packaging, release manifests, and the live acceptance protocol (`docs/LIVE_ACCEPTANCE.md`). It maintains application version 0.8.0-alpha.1 while preserving persisted schema, sidecar, bundle, and journal versions at 1. It must not introduce NPC State dependencies, external-state adapters, Story Director behavior, launcher/watchdog machinery, generic slash-command surfaces, or new semantic rules.
 
 ## Product boundary
 

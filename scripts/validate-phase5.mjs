@@ -13,8 +13,8 @@ import {
 import { createState } from '../state-core.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-if (!['phase5-manual-rebuild', 'phase6-ui-evidence', 'phase7-coexistence-host'].includes(inventory.stage)) throw new Error('Phase 5 cumulative runtime inventory stage mismatch');
-if (inventory.stage !== 'phase7-coexistence-host' && inventory.hostEntrypoint !== null) throw new Error('Phase 5 service substrate must remain host-neutral before the authorized host phase');
+if (!['phase5-manual-rebuild', 'phase6-ui-evidence', 'phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage)) throw new Error('Phase 5 cumulative runtime inventory stage mismatch');
+if (!['phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage) && inventory.hostEntrypoint !== null) throw new Error('Phase 5 service substrate must remain host-neutral before the authorized host phase');
 
 for (const file of ['manual.js', 'rebuild.js']) {
   if (!inventory.modules.includes(file)) throw new Error(`Phase 5 module missing from runtime inventory: ${file}`);

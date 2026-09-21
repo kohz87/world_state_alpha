@@ -8,6 +8,11 @@ import { planChronologicalRebuild } from '../rebuild.js';
 import { buildWorldStateUiModel, renderWorldStatePanel } from '../ui.js';
 import { getWorldStateChatKey } from '../host-identity.js';
 import { worldStateHostFileName } from '../host-storage.js';
+import { buildRelevanceIndex } from '../relevance.js';
+import { chatLineage, commitMutationBoundary } from '../branch.js';
+import { createState, reduceMutations } from '../state-core.js';
+import { encodeSidecar } from '../storage.js';
+import { buildReleasePackage } from './package-design.mjs';
 
 const files = ['docs/core-contract.md', 'docs/ARCHITECTURE.md', 'docs/DATA_MODEL.md'];
 for (const file of files) {
@@ -45,42 +50,57 @@ console.log(JSON.stringify({
   responseTokenBudget: capture.responseLength,
 }));
 
-const records = Array.from({ length: 1000 }, (_, index) => ({
-  id: `wsr_measure_${index}`,
-  kind: index === 777 ? 'development' : 'fact',
-  summary: index === 777
-    ? 'Kesselpass freight traffic is congested by diverted caravans.'
-    : `Unrelated condition ${index} remains unchanged.`,
-  status: 'active',
-  trend: index === 777 ? 'rising' : null,
-  anchors: index === 777 ? ['Kesselpass', 'freight traffic'] : [`topic-${index}`],
-  createdAtMessage: 1,
-  lastChangedMessage: index === 777 ? 990 : 1,
-  lastEvaluatedMessage: 1,
-  timeAnchor: '',
-  evidenceIds: [],
-  causedBy: [],
-  affects: [],
-}));
+const testCorpusSizes = [10, 100, 500, 1000, 5000];
+for (const size of testCorpusSizes) {
+  const targetIndex = Math.floor(size * 0.77);
+  const records = Array.from({ length: size }, (_, index) => ({
+    id: `wsr_measure_${index}`,
+    kind: index === targetIndex ? 'development' : 'fact',
+    summary: index === targetIndex
+      ? 'Kesselpass freight traffic is congested by diverted caravans.'
+      : `Unrelated condition ${index} remains unchanged.`,
+    status: 'active',
+    trend: index === targetIndex ? 'rising' : null,
+    anchors: index === targetIndex ? ['Kesselpass', 'freight traffic'] : [`topic-${index}`],
+    createdAtMessage: 1,
+    lastChangedMessage: index === targetIndex ? 990 : 1,
+    lastEvaluatedMessage: 1,
+    timeAnchor: '',
+    evidenceIds: [],
+    causedBy: [],
+    affects: [],
+  }));
+  const stateObj = { records, links: [] };
+  const relevanceIndex = buildRelevanceIndex(stateObj);
 
-const start = performance.now();
-const injection = buildWorldStateInjection({ records, links: [] }, {
-  recentText: 'Lucien reaches Kesselpass and sees caravans queued around the freight yard.',
-  currentMessageId: 1000,
-});
-const elapsed = performance.now() - start;
-console.log(JSON.stringify({
-  kind: 'phase3-relevance-injection',
-  corpusRecords: records.length,
-  scannedRecords: injection.retrievalMetrics.scannedRecords,
-  seedMatches: injection.retrievalMetrics.seedMatches,
-  injectedRecords: injection.included.length,
-  injectionChars: injection.text.length,
-  estimatedTokens: injection.estimatedTokens,
-  budgetTokens: injection.budgetTokens,
-  wallMs: Math.round(elapsed * 1000) / 1000,
-}));
+  const start = performance.now();
+  const injection = buildWorldStateInjection(stateObj, {
+    index: relevanceIndex,
+    recentText: 'Lucien reaches Kesselpass and sees caravans queued around the freight yard.',
+    currentMessageId: 1000,
+  });
+  const elapsed = performance.now() - start;
 
+  console.log(JSON.stringify({
+    kind: 'phase8-indexed-relevance',
+    corpusRecords: size,
+    candidateRecords: injection.retrievalMetrics.candidateRecords,
+    scoredRecords: injection.retrievalMetrics.scoredRecords,
+    seedMatches: injection.retrievalMetrics.seedMatches,
+    injectedRecords: injection.included.length,
+    injectionChars: injection.text.length,
+    estimatedTokens: injection.estimatedTokens,
+    budgetTokens: injection.budgetTokens,
+    indexUsed: injection.retrievalMetrics.indexUsed,
+    candidateCap: injection.retrievalMetrics.candidateCap,
+    postingVisits: injection.retrievalMetrics.postingVisits,
+    postingVisitBudget: injection.retrievalMetrics.postingVisitBudget,
+    phraseLookups: injection.retrievalMetrics.phraseLookups,
+    candidatePoolRecords: injection.retrievalMetrics.candidatePoolRecords,
+    wallMs: Math.round(elapsed * 1000) / 1000,
+    note: 'Local synthetic ranking; live TTFT and provider latency remain a separate live acceptance boundary.',
+  }));
+}
 
 const evolutionRecords = Array.from({ length: 4 }, (_, index) => ({
   id: `wsr_evolve_${index}`,
@@ -150,11 +170,30 @@ console.log(JSON.stringify({
   ordinaryTargets: ordinaryPlan.targets.length,
   elapsedTargets: evolutionPlan.targets.length,
   maxAutomaticTargets: 4,
+  ordinaryTurnRequestBudget: { capture: 1, evolution: 0 },
+  triggeredEvolutionRequestBudget: { capture: 1, evolution: 1 },
 }));
 
+const measureRecords = Array.from({ length: 1000 }, (_, index) => ({
+  id: `wsr_measure_${index}`,
+  kind: index === 777 ? 'development' : 'fact',
+  summary: index === 777
+    ? 'Kesselpass freight traffic is congested by diverted caravans.'
+    : `Unrelated condition ${index} remains unchanged.`,
+  status: 'active',
+  trend: index === 777 ? 'rising' : null,
+  anchors: index === 777 ? ['Kesselpass', 'freight traffic'] : [`topic-${index}`],
+  createdAtMessage: 1,
+  lastChangedMessage: index === 777 ? 990 : 1,
+  lastEvaluatedMessage: 1,
+  timeAnchor: '',
+  evidenceIds: [],
+  causedBy: [],
+  affects: [],
+}));
 
 const manualStart = performance.now();
-const manualQuery = queryWorldState({ records, evidence: {}, links: [] }, {
+const manualQuery = queryWorldState({ records: measureRecords, evidence: {}, links: [] }, {
   text: 'Kesselpass freight',
   statuses: ['active'],
   limit: 30,
@@ -162,7 +201,7 @@ const manualQuery = queryWorldState({ records, evidence: {}, links: [] }, {
 const manualElapsed = performance.now() - manualStart;
 console.log(JSON.stringify({
   kind: 'phase5-manual-query',
-  corpusRecords: records.length,
+  corpusRecords: measureRecords.length,
   matchedRecords: manualQuery.totalMatched,
   returnedRecords: manualQuery.records.length,
   wallMs: Math.round(manualElapsed * 1000) / 1000,
@@ -184,16 +223,15 @@ console.log(JSON.stringify({
   wallMs: Math.round(rebuildElapsed * 1000) / 1000,
 }));
 
-
 const uiStart = performance.now();
-const uiModel = buildWorldStateUiModel({ records, evidence: {}, links: [] }, {
+const uiModel = buildWorldStateUiModel({ records: measureRecords, evidence: {}, links: [] }, {
   query: 'Kesselpass freight',
 });
 const uiHtml = renderWorldStatePanel(uiModel, { activeTab: 'search' });
 const uiElapsed = performance.now() - uiStart;
 console.log(JSON.stringify({
   kind: 'phase6-ui-projection',
-  corpusRecords: records.length,
+  corpusRecords: measureRecords.length,
   currentRows: uiModel.views.current.length,
   recentRows: uiModel.views.recent.length,
   resolvedRows: uiModel.views.resolved.length,
@@ -203,7 +241,8 @@ console.log(JSON.stringify({
   wallMs: Math.round(uiElapsed * 1000) / 1000,
 }));
 
-
+const hostState = { records: measureRecords, links: [] };
+const hostIndex = buildRelevanceIndex(hostState);
 const hostMeasureStart = performance.now();
 const hostChatKey = getWorldStateChatKey({
   chatId: 'Campaign Alpha.jsonl',
@@ -211,7 +250,8 @@ const hostChatKey = getWorldStateChatKey({
   characters: [{ avatar: 'lucien.png' }],
 });
 const hostFileName = worldStateHostFileName('world_state_alpha/example.json');
-const hostInjection = buildWorldStateInjection({ records, links: [] }, {
+const hostInjection = buildWorldStateInjection(hostState, {
+  index: hostIndex,
   recentText: 'Lucien reaches Kesselpass and sees caravans queued around the freight yard.',
   currentMessageId: 1000,
 });
@@ -224,4 +264,115 @@ console.log(JSON.stringify({
   providerCalls: 0,
   note: 'Local identity + filename + injection projection only; not a TTFT measurement.',
   wallMs: Math.round(hostMeasureElapsed * 1000) / 1000,
+}));
+
+// Phase 8 synthetic long-run compaction measurement.
+// Canonical compaction is measured over 1000 updates without branch-journal work.
+const compactionStart = performance.now();
+let sequentialState = createState('chat:measure:1000');
+for (let msgId = 0; msgId < 1000; msgId += 1) {
+  const updateRes = reduceMutations(sequentialState, {
+    chatKey: 'chat:measure:1000',
+    messageId: msgId,
+    lineageKey: `ln${msgId}`,
+    operation: 'capture',
+    mutations: msgId === 0
+      ? [{
+        action: 'create',
+        kind: 'development',
+        recordId: 'wsr_sequential',
+        summary: 'Initial state for sequential measurement.',
+        anchors: ['sequential test'],
+        evidence: [{ claim: 'initial claim 0' }],
+      }]
+      : [{
+        action: 'update',
+        recordId: 'wsr_sequential',
+        summary: `Sequential update state at step ${msgId}.`,
+        evidence: [{ claim: `update claim at step ${msgId}` }],
+      }],
+  });
+  sequentialState = updateRes.state;
+}
+const compactionElapsed = performance.now() - compactionStart;
+const canonicalStateJson = JSON.stringify(sequentialState);
+const canonicalSidecar = encodeSidecar({
+  chatKey: sequentialState.chatKey,
+  state: sequentialState,
+  revision: 1000,
+  appVersion: '0.8.0-alpha.1',
+});
+
+// Rollback storage is capped at 256 entries. Measure one full retained window separately
+// using a precomputed lineage so the benchmark does not repeatedly hash the entire chat.
+const rollbackWindow = 256;
+const rollbackChat = Array.from({ length: rollbackWindow }, (_, index) => ({
+  role: 'assistant',
+  content: `rollback window message ${index}`,
+}));
+const rollbackLineage = chatLineage(rollbackChat);
+let journalState = createState('chat:measure:journal');
+for (let msgId = 0; msgId < rollbackWindow; msgId += 1) {
+  const reduced = reduceMutations(journalState, {
+    chatKey: 'chat:measure:journal',
+    messageId: msgId,
+    lineageKey: rollbackLineage[msgId].lineageKey,
+    operation: 'capture',
+    mutations: msgId === 0
+      ? [{
+        action: 'create',
+        kind: 'development',
+        recordId: 'wsr_journal',
+        summary: 'Journal window state 0.',
+        evidence: [{ claim: 'journal claim 0' }],
+      }]
+      : [{
+        action: 'update',
+        recordId: 'wsr_journal',
+        summary: `Journal window state ${msgId}.`,
+        evidence: [{ claim: `journal claim ${msgId}` }],
+      }],
+  });
+  journalState = commitMutationBoundary(
+    journalState,
+    reduced.state,
+    rollbackChat,
+    msgId,
+    'capture',
+    { lineage: rollbackLineage.slice(0, msgId + 1) },
+  );
+}
+const rollbackJournalJson = JSON.stringify(journalState.rollbackJournal);
+const journalSidecar = encodeSidecar({
+  chatKey: journalState.chatKey,
+  state: journalState,
+  revision: rollbackWindow,
+  appVersion: '0.8.0-alpha.1',
+});
+
+console.log(JSON.stringify({
+  kind: 'phase8-1000-update-compaction',
+  sequentialUpdates: 1000,
+  canonicalEvidenceRows: Object.keys(sequentialState.evidence).length,
+  retainedEvidenceRefs: sequentialState.records[0]?.evidenceIds?.length || 0,
+  canonicalStateBytes: Buffer.byteLength(canonicalStateJson, 'utf8'),
+  canonicalSidecarBytes: Buffer.byteLength(canonicalSidecar, 'utf8'),
+  rollbackWindowUpdates: rollbackWindow,
+  rollbackJournalEntries: journalState.rollbackJournal.length,
+  rollbackJournalBytes: Buffer.byteLength(rollbackJournalJson, 'utf8'),
+  checkpoints: journalState.checkpoints.length,
+  journalSidecarBytes: Buffer.byteLength(journalSidecar, 'utf8'),
+  wallMs: Math.round(compactionElapsed * 1000) / 1000,
+  note: 'Synthetic local measurement. Canonical compaction uses 1000 updates; rollback bytes use the full retained 256-entry window. This is not TTFT.',
+}));
+
+// Phase 8 release package measurement
+const pkgResult = buildReleasePackage();
+console.log(JSON.stringify({
+  kind: 'phase8-release-package',
+  packageFileCount: pkgResult.fileCount,
+  archiveBytes: pkgResult.archiveBytes,
+  archiveSha256: pkgResult.archiveSha256,
+  reproducible: true,
+  note: 'Deterministic archive and manifest bytes.',
 }));

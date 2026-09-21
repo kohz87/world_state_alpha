@@ -1,6 +1,6 @@
 # World State Alpha architecture
 
-Status: first design pass.
+Status: ARCHITECTURE & RUNTIME ACCEPTED (Phases 1-8 implemented candidate).
 
 ## 1. Recommended core
 
@@ -559,3 +559,77 @@ Three changes are recommended:
 3. **Do not run evolution before every injection merely because a record is old.** Old is not stale in the causal sense. Require elapsed/affecting evidence or explicit request.
 
 These reduce model calls, ontology size, resurrection risk, and thread proliferation.
+
+## 24. Phase 8 performance and release hardening architecture
+
+Phase 8 changes execution cost, storage growth, and release reproducibility without changing World State semantics or persisted schema.
+
+### A. Ephemeral relevance index
+
+Normal host retrieval uses a per-chat in-memory index. It is never serialized into sidecars or bundles.
+
+The implementation maintains:
+
+```text
+byId                    active record ID -> record
+anchorPhrases           normalized exact anchor -> record IDs
+anchorTokens            anchor token -> record IDs
+anchorBigrams           bounded non-ASCII bigram -> record IDs
+summaryTokens           summary token -> record IDs
+recordTerms             record ID -> the posting-list keys owned by that record
+linkGraph               persisted generic related links
+recordRelations         record ID -> causedBy/affects targets
+reverseRecordRelations  target ID -> records pointing to it
+```
+
+`recordTerms` makes an ordinary record refresh proportional to that record's own indexed terms instead of scanning every posting list.
+
+The host builds/rebuilds the full index only when a whole canonical state is hydrated or replaced, including exact branch restore, import, reset, and rebuild. Routine capture applies the reducer's small `indexDelta`; routine evolution applies its small delta before rendering the refreshed injection. Forward-only raw-message lineage extension preserves the index because canonical relevance data did not change.
+
+Candidate discovery is query-driven rather than corpus-driven. It performs bounded exact anchor phrase lookups, bounded non-ASCII bigram lookups, anchor-token lookups, and summary-token lookups. Posting traversal has a hard budget derived from `candidateCap`, and the scored candidate set is capped before the existing relevance scorer runs. It must not iterate every record, every anchor phrase, or every posting list on an ordinary turn.
+
+Exact anchor evidence is processed before weaker token evidence. Once a record enters the candidate set, the existing relevance scoring/ranking semantics remain authoritative. One-hop expansion then uses the indexed generic/causal relation maps.
+
+The legacy no-index path remains for host-neutral services and regression comparison. The real SillyTavern normal-turn host path supplies the index.
+
+### B. Normal-turn lineage fast path
+
+Phase 8 also removes full-chat lineage hashing from ordinary user/assistant events.
+
+- The cached exact lineage is extended only for newly appended raw messages.
+- The previous tail fingerprint is checked before suffix extension.
+- Edit/delete/swipe events synchronously mark the chat branch dirty; a dirty chat cannot use the append fast path and must complete exact reconciliation first.
+- Bounded exchange extraction reuses cached lineage.
+- Provider currentness guards compare the owned source-message fingerprint plus chat/state epoch instead of rebuilding the whole lineage.
+- Capture/evolution journal commits receive the already-known lineage.
+
+Full `chatLineage` / exact `reconcileBranch` work remains appropriate for chat hydration, edit/delete/swipe recovery, explicit rebuild, and other operations that genuinely need whole-history proof. Branch-changing events bump the local epoch and cancel Alpha requests immediately before queued exact reconciliation.
+
+### C. Canonical evidence compaction
+
+After a successful canonical reducer batch, `compactEvidence(state)` removes evidence rows that are no longer referenced by any active, resolved, or superseded record.
+
+This does not weaken rollback. Undo patches are computed against the pre-mutation state and include evidence removed by compaction, so exact branch rollback can restore the prior evidence mapping.
+
+The record-level `evidenceIds` bound therefore also bounds live canonical evidence growth rather than leaving older orphan rows behind indefinitely.
+
+### D. Deterministic release packaging
+
+Application version is `0.8.0-alpha.1`. Persisted format versions remain at 1.
+
+`scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
+
+- stable sorted entry order
+- fixed ZIP timestamps/metadata
+- deterministic STORE entries with no compressor-version dependency
+- per-file SHA-256 entries
+- archive SHA-256 and byte count
+- deterministic JSON release manifest
+
+Two package runs from an unchanged tree must produce byte-identical archive and manifest outputs. CI records hashes from the first package and verifies a second package against them.
+
+### E. Measurement and live boundary
+
+Phase 8 deterministic measurements report prompt sizes, request budgets, indexed candidate/scoring work, posting-visit bounds, injection size, long-run evidence/storage growth, rollback-window bytes, and package hash/size.
+
+These local/synthetic measurements are not TTFT measurements. Actual provider latency, TTFT, browser event timing, real SillyTavern storage behavior, responsive UI behavior, and simultaneous live Delta/Ukiyo/Megumin operation are acceptance observations recorded separately in `docs/LIVE_ACCEPTANCE.md`.

@@ -30,3 +30,7 @@
 | Host framework creep | launcher/watchdog/commands become a second UI/runtime system | settings card + existing Phase 6 panel only; no MutationObserver/generic commands | static source validator |
 | Live co-install mismatch | deterministic isolation passes but real ST/Delta event order differs | keep host shell independent and run explicit live simultaneous-install acceptance | Phase 8 live co-install run |
 | Over-ontology | schema accretes genre assumptions | no mandatory typed anchors/scope; universality fixtures | schema lint |
+| Incremental index drift | In-memory relevance index becomes out of sync with mutated state | `reduceMutations` computes exact `indexDelta`; incremental delta tested against fresh index | incremental update fixture |
+| Compaction rollback corruption | Pruned evidence causes missing reference errors on branch swipe | `undo.evidence` retains compacted entries; undo patch restores uncompacted state | 50-step compaction rollback test |
+| Non-deterministic release zip | Zip bytes vary between builds due to archive timestamps or ordering | fixed DOS timestamps (2026-01-01) and alphabetical entry sorting | package hash reproducibility test |
+| Storage schema version drift | Application version bump accidentally bumps persisted schema version | decouple app version (0.8.0-alpha.1) from schema versions (all 1) | Phase 8 static version validator |

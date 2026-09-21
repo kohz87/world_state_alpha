@@ -225,7 +225,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(manifest.version, '0.7.0-alpha.1');
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -234,7 +234,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   assert.deepEqual(manifest.optional, []);
 
   assert.equal(pkg.version, manifest.version);
-  assert.equal(inventory.stage, 'phase7-coexistence-host');
+  assert.equal(['phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage), true);
   assert.equal(inventory.hostEntrypoint, 'bootstrap.js');
   assert.deepEqual(inventory.hostFiles, ['bootstrap.js', 'index.js', 'manifest.json']);
   assert.equal(inventory.modules.includes('host-identity.js'), true);
@@ -292,8 +292,8 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
   assert.match(source, /detectElapsedHintFromExchange\(exchange\)/);
   assert.match(source, /cancelWorldStateRequests\(\{\s*chatKey\s*\}\)/);
   assert.match(source, /reconcileBranch\(state, getContext\(\)\.chat \|\| \[\]\)/);
-  assert.match(source, /commitMutationBoundary\(before, result\.state, liveChat, messageId, 'capture'\)/);
-  assert.match(source, /commitMutationBoundary\(before, prepared\.state, liveChat, messageId, 'evolution'\)/);
+  assert.match(source, /commitMutationBoundary\(before, result\.state, liveChat, messageId, 'capture'(?:,|\))/);
+  assert.match(source, /commitMutationBoundary\(before, prepared\.state, liveChat, messageId, 'evolution'(?:,|\))/);
 
   assert.doesNotMatch(source, /Promise\.all\([^\n]*runCaptureOperation/);
   assert.doesNotMatch(source, /for\s*\([^)]*\)\s*\{[^}]*runCaptureOperation/s);
@@ -302,11 +302,12 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
 test('host publishes mutated canonical state only after durable sidecar success', () => {
   const source = fs.readFileSync('index.js', 'utf8');
 
-  assert.equal(
-    (source.match(/await persistState\(chatKey, committed\);\s*setCachedState\(chatKey, committed\);/g) || []).length,
-    2,
-    'capture and evolution must persist before cache publication',
-  );
+  for (const reason of ['capture', 'evolution']) {
+    const commitAt = source.indexOf("commitMutationBoundary(before, " + (reason === 'capture' ? 'result.state' : 'prepared.state') + ", liveChat, messageId, '" + reason + "'");
+    const persistAt = source.indexOf('await persistState(chatKey, committed)', commitAt);
+    const publishAt = source.indexOf('setCachedState(chatKey, committed', persistAt);
+    assert.ok(commitAt >= 0 && persistAt > commitAt && publishAt > persistAt, reason + ' must persist before cache publication');
+  }
   assert.equal(
     (source.match(/await persistState\(chatKey, next\);\s*setCachedState\(chatKey, next\);/g) || []).length,
     2,

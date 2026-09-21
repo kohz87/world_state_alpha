@@ -1,6 +1,6 @@
 # World State Alpha minimum data model
 
-Status: design candidate.
+Status: IMPLEMENTED CANDIDATE (Phases 1-8).
 
 ## Canonical record
 
@@ -178,3 +178,40 @@ Host-only metadata lives outside canonical World State:
 - no NPC State Delta pointer, dossier identifier, or external-extension state is stored in World State
 
 The host storage adapter may translate a logical `world_state_alpha/<hash>.json` path into a SillyTavern uploaded filename, but the sidecar payload and checksum/revision semantics remain the Phase 1 format.
+
+## Phase 8 performance, evidence compaction, and versioning
+
+### Evidence compaction
+
+Canonical evidence storage is compacted after a successful canonical reducer batch.
+
+- Only evidence IDs still referenced by records remain in live `state.evidence`.
+- Active, resolved, and superseded records all count as references.
+- Undo patches retain the previous evidence entries needed to restore an exact prior boundary.
+- No persisted field or schema version is added for compaction.
+
+### Ephemeral relevance index
+
+The Phase 8 relevance index is runtime-only and is never included in a sidecar, export bundle, or canonical checksum.
+
+Its implementation contains maps for active records, exact anchor phrases, anchor tokens, bounded non-ASCII anchor bigrams, summary tokens, per-record term ownership, persisted generic links, and forward/reverse causedBy/affects relations.
+
+`recordTerms` is especially important: it lets an incremental record refresh delete only that record's previous postings rather than scanning every posting list.
+
+The reducer exposes a non-persisted `indexDelta` with changed record snapshots, appended generic links, and corpus count. The SillyTavern host applies this delta for ordinary capture/evolution. Full index rebuild is reserved for hydration and whole-state replacement/recovery paths.
+
+### Lineage fast path
+
+The persisted lineage representation is unchanged. Phase 8 only changes how ordinary append-only messages are processed: the host verifies the cached lineage tail and computes lineage rows for the newly appended suffix. Exact full-history reconciliation remains the recovery authority for destructive branch changes.
+
+### Versioning invariants
+
+```javascript
+export const WORLD_STATE_ALPHA_VERSION = '0.8.0-alpha.1';
+export const SCHEMA_VERSION = 1;
+export const SIDECAR_FORMAT_VERSION = 1;
+export const BUNDLE_VERSION = 1;
+export const ROLLBACK_JOURNAL_VERSION = 1;
+```
+
+The application release changes without invalidating persisted format version 1.

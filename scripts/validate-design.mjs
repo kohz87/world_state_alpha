@@ -12,6 +12,7 @@ const required = [
   'docs/TEST_PLAN.md',
   'docs/RISK_REGISTER.md',
   'docs/OPEN_QUESTIONS.md',
+  'docs/LIVE_ACCEPTANCE.md',
 ];
 
 for (const file of required) {

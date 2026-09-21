@@ -1,6 +1,6 @@
 # World State Alpha staged workplan
 
-Status: architecture accepted. Phases 1-7 implemented candidates; Phase 8 remains gated.
+Status: architecture and runtime accepted. Phases 1-8 implemented candidates.
 
 ## Phase 0 - architecture/bootstrap
 
@@ -151,25 +151,26 @@ Acceptance:
 - no prompt-key collision
 - no database reads/writes across namespaces
 
-## Phase 8 - performance and release hardening
+## Phase 8 - performance and release hardening [IMPLEMENTED CANDIDATE]
 
-Measure and compact:
+Build and measure:
 
-- TTFT delta
-- total latency
-- requests per exchange
-- prompt chars/tokens
-- injected token count
-- backend record/evidence growth
-- rollback bytes
-- package/CI/release consistency
+- ephemeral per-chat relevance index caching (`relevanceIndices`, `buildRelevanceIndex`, `updateRelevanceIndex`)
+- candidate cap saturation (128) and deterministic priority sorting (exact anchors outrank common summary tokens)
+- unreferenced evidence compaction on canonical mutations (`compactEvidence`) while preserving undo patch rollback integrity
+- application version synchronized to `0.8.0-alpha.1` across manifest, package, and runtime entrypoint
+- persisted schema, sidecar format, bundle, and rollback journal versions preserved at 1
+- pure-JS deterministic PKZip archive and release manifest generation (`scripts/package-design.mjs`)
+- prompt, token, latency, and index scalability benchmarks (`scripts/measure-design.mjs`)
+- live acceptance protocol in real SillyTavern environment (`docs/LIVE_ACCEPTANCE.md`)
 
 Acceptance:
 
-- normal turn does no full-chat/full-world work
-- capture/evolution prompts remain compact
-- package is reproducible
-- live SillyTavern/provider acceptance documented separately
+- normal turn does no full-chat/full-world work (1000-record index retrieval scores $\le 16$ candidate records)
+- capture/evolution prompts remain compact (<24,000 characters)
+- evidence storage bounded across 1000 sequential updates (canonical evidence bounded to active record refs)
+- package archive and release manifest are 100% byte-reproducible (SHA-256 verified across repeat builds)
+- live SillyTavern/provider acceptance protocol documented in `docs/LIVE_ACCEPTANCE.md`
 
 ## Why this order differs slightly from the proposed nine phases
 

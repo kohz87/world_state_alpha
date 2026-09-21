@@ -1,5 +1,5 @@
 {
-  "stage": "phase7-coexistence-host",
+  "stage": "phase8-release-hardening",
   "hostEntrypoint": "bootstrap.js",
   "modules": [
     "constants.js",

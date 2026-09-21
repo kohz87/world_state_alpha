@@ -213,6 +213,7 @@ export function processCaptureResponse({
     acceptedCount: accepted.length,
     applied: reduced.applied,
     rejected,
+    indexDelta: reduced.indexDelta || { upsertedRecords: [], appendedLinks: [], corpusRecords: nextState.records.length },
   };
 }
 

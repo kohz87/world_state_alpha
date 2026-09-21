@@ -38,6 +38,28 @@ export function chatLineage(chat = []) {
   return out;
 }
 
+export function extendChatLineage(previous = [], chat = []) {
+  const prior = Array.isArray(previous) ? previous : [];
+  const rows = Array.isArray(chat) ? chat : [];
+  if (prior.length > rows.length) return null;
+  if (prior.length) {
+    const tail = prior[prior.length - 1];
+    if (!rows[prior.length - 1] || fingerprintMessage(rows[prior.length - 1]) !== tail?.fingerprint) return null;
+  }
+
+  let parentLineageKey = prior.length ? prior[prior.length - 1]?.lineageKey : 'root';
+  if (!parentLineageKey) return null;
+
+  const appended = [];
+  for (let messageId = prior.length; messageId < rows.length; messageId += 1) {
+    const fingerprint = fingerprintMessage(rows[messageId]);
+    const lineageKey = deterministicId('ln', [parentLineageKey, fingerprint]);
+    appended.push({ messageId, fingerprint, lineageKey, parentLineageKey });
+    parentLineageKey = lineageKey;
+  }
+  return appended;
+}
+
 export function firstLineageDivergence(previous = [], current = []) {
   const limit = Math.min(previous.length, current.length);
   for (let i = 0; i < limit; i += 1) {
@@ -78,7 +100,8 @@ function trimCheckpoints(state, maxCheckpoints) {
 }
 
 export function commitMutationBoundary(beforeState, afterState, chat, messageId, reason = 'mutation', options = {}) {
-  const lineage = chatLineage(chat);
+  const suppliedLineage = Array.isArray(options.lineage) ? options.lineage : null;
+  const lineage = suppliedLineage || chatLineage(chat);
   if (!Number.isInteger(messageId) || messageId < 0 || messageId >= lineage.length) {
     throw new Error('commit boundary must reference an existing raw message');
   }

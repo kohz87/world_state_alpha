@@ -11,7 +11,7 @@ World State Alpha models **change, not maps**. It has no required geography, pol
 
 ## Implementation status
 
-**Phases 1-7 are implemented as candidates: canonical state/rollback, immediate capture, local relevance/private injection, bounded lazy evolution, manual controls/rebuild, projection-only UI/evidence inspection, and a minimal isolated SillyTavern host/coexistence shell. Phase 8 remains gated until separately authorized.**
+**Phases 1-8 are implemented as candidates: canonical state/rollback, immediate capture, local relevance/private injection, bounded lazy evolution, manual controls/rebuild, projection-only UI/evidence inspection, minimal isolated SillyTavern host/coexistence shell, and performance/release hardening (ephemeral relevance indexing, unreferenced evidence compaction, deterministic packaging, and live acceptance protocol). Application version is synchronized to 0.8.0-alpha.1 while persisted schema, sidecar, bundle, and journal versions remain 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 
@@ -63,4 +63,4 @@ World State Alpha never rewrites source lore and never modifies Ukiyo.
 
 ## Repository rule
 
-Phases 1-7 authorize the canonical state/rollback substrate, bounded immediate capture, deterministic local relevance/private injection, targeted lazy evolution, manual inspection/correction/transfer/rebuild services, the browser-safe projection UI/evidence inspector, and a minimal World-State-only SillyTavern host shell. Phase 7 mounts settings/UI, owns only the `world_state_alpha` settings/storage/DOM/global namespace and `world_state_alpha_private_continuity` prompt key, and does not depend on or read NPC State Delta. Phase 8 performance/release hardening remains gated.
+Phases 1-8 authorize the canonical state/rollback substrate, bounded immediate capture, deterministic local relevance/private injection, targeted lazy evolution, manual inspection/correction/transfer/rebuild services, the browser-safe projection UI/evidence inspector, the minimal World-State-only SillyTavern host shell, and performance/release hardening. Phase 8 adds ephemeral per-chat relevance indexing, candidate cap saturation (128), unreferenced evidence compaction on mutation, deterministic byte-reproducible packaging, release manifests, and the live acceptance protocol. Persisted schema, sidecar, bundle, and rollback journal versions remain 1.

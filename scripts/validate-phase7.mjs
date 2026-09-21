@@ -15,7 +15,7 @@ const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
 const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
-if (inventory.stage !== 'phase7-coexistence-host') throw new Error('Phase 7 runtime inventory stage mismatch');
+if (!['phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage)) throw new Error('Phase 7 runtime inventory stage mismatch');
 if (inventory.hostEntrypoint !== 'bootstrap.js') throw new Error('Phase 7 host entrypoint must be bootstrap.js');
 if (!Array.isArray(inventory.hostFiles)
   || inventory.hostFiles.join(',') !== 'bootstrap.js,index.js,manifest.json') {
@@ -35,7 +35,7 @@ for (const file of inventory.modules) {
   await import(new URL('../' + file, import.meta.url));
 }
 
-if (pkg.version !== '0.7.0-alpha.1' || manifest.version !== pkg.version) {
+if (!['0.7.0-alpha.1', '0.8.0-alpha.1'].includes(pkg.version) || manifest.version !== pkg.version) {
   throw new Error('Phase 7 application version markers are inconsistent');
 }
 if (manifest.display_name !== 'World State Alpha'
@@ -82,8 +82,8 @@ for (const required of [
   'detectElapsedHintFromExchange(exchange)',
   'cancelWorldStateRequests({ chatKey })',
   'reconcileBranch(state, getContext().chat || [])',
-  "commitMutationBoundary(before, result.state, liveChat, messageId, 'capture')",
-  "commitMutationBoundary(before, prepared.state, liveChat, messageId, 'evolution')",
+  "commitMutationBoundary(before, result.state, liveChat, messageId, 'capture'",
+  "commitMutationBoundary(before, prepared.state, liveChat, messageId, 'evolution'",
   'previewWorldStateImport',
   'applyWorldStateImport',
   'previewWorldStateReset',
@@ -123,8 +123,13 @@ if (!/selectRelevantRecords\([\s\S]*maxRecords:\s*CAPTURE_LIMITS\.visibleRecords
 if (!hostStorage.includes('withWriterLock') || !hostStorage.includes('navigator?.locks')) {
   throw new Error('Phase 7 host sidecar writes are not serialized');
 }
-if ((index.match(/await persistState\(chatKey, committed\);\s*setCachedState\(chatKey, committed\);/g) || []).length !== 2) {
-  throw new Error('Phase 7 capture/evolution must persist before publishing canonical cache');
+for (const [reason, stateExpr] of [['capture', 'result.state'], ['evolution', 'prepared.state']]) {
+  const commitAt = index.indexOf("commitMutationBoundary(before, " + stateExpr + ", liveChat, messageId, '" + reason + "'");
+  const persistAt = index.indexOf('await persistState(chatKey, committed)', commitAt);
+  const publishAt = index.indexOf('setCachedState(chatKey, committed', persistAt);
+  if (!(commitAt >= 0 && persistAt > commitAt && publishAt > persistAt)) {
+    throw new Error('Phase 7 ' + reason + ' must persist before publishing canonical cache');
+  }
 }
 if ((index.match(/await persistState\(chatKey, next\);\s*setCachedState\(chatKey, next\);/g) || []).length !== 2) {
   throw new Error('Phase 7 import/reset must persist before publishing canonical cache');

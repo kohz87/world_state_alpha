@@ -73,11 +73,15 @@ function recordRecency(record, currentMessageId) {
 function prepareContext({ recentText = '', loreText = '', currentMessageId = null } = {}) {
   const recentNorm = normalizeText(recentText);
   const loreNorm = normalizeText(loreText);
+  const recentTokenList = tokens(recentNorm).slice(0, 96);
+  const loreTokenList = tokens(loreNorm).slice(0, 64);
   return {
     recentNorm,
     loreNorm,
-    recentTokens: tokenSet(recentNorm),
-    loreTokens: tokenSet(loreNorm),
+    recentTokenList,
+    loreTokenList,
+    recentTokens: new Set(recentTokenList),
+    loreTokens: new Set(loreTokenList),
     currentMessageId,
   };
 }
@@ -167,6 +171,280 @@ function rankedCompare(left, right) {
   return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
 }
 
+function addPosting(map, key, recordId) {
+  if (!key) return;
+  if (!map.has(key)) map.set(key, new Set());
+  map.get(key).add(recordId);
+}
+
+function deletePosting(map, key, recordId) {
+  const posting = map.get(key);
+  if (!posting) return;
+  posting.delete(recordId);
+  if (!posting.size) map.delete(key);
+}
+
+function nonAsciiBigrams(value, max = 64) {
+  const compact = normalizeText(value).replace(/\s+/g, '');
+  if (!/[^\x00-\x7F]/u.test(compact)) return [];
+  const chars = [...compact];
+  if (chars.length < 2) return chars.length ? [chars[0]] : [];
+  const out = [];
+  const seen = new Set();
+  for (let index = 0; index < chars.length - 1 && out.length < max; index += 1) {
+    const gram = chars[index] + chars[index + 1];
+    if (seen.has(gram)) continue;
+    seen.add(gram);
+    out.push(gram);
+  }
+  return out;
+}
+
+function indexRecordTerms(record, index) {
+  const owned = {
+    anchorPhrases: [],
+    anchorTokens: [],
+    anchorBigrams: [],
+    summaryTokens: [],
+  };
+  const seenPhrase = new Set();
+  const seenAnchorToken = new Set();
+  const seenBigram = new Set();
+  const seenSummaryToken = new Set();
+
+  for (const anchor of Array.isArray(record.anchors) ? record.anchors : []) {
+    const norm = normalizeText(anchor);
+    if (!norm) continue;
+    if (!seenPhrase.has(norm)) {
+      seenPhrase.add(norm);
+      owned.anchorPhrases.push(norm);
+      addPosting(index.anchorPhrases, norm, record.id);
+    }
+    for (const token of tokens(norm)) {
+      if (seenAnchorToken.has(token)) continue;
+      seenAnchorToken.add(token);
+      owned.anchorTokens.push(token);
+      addPosting(index.anchorTokens, token, record.id);
+    }
+    for (const gram of nonAsciiBigrams(norm)) {
+      if (seenBigram.has(gram)) continue;
+      seenBigram.add(gram);
+      owned.anchorBigrams.push(gram);
+      addPosting(index.anchorBigrams, gram, record.id);
+    }
+  }
+
+  for (const token of tokens(record.summary)) {
+    if (seenSummaryToken.has(token)) continue;
+    seenSummaryToken.add(token);
+    owned.summaryTokens.push(token);
+    addPosting(index.summaryTokens, token, record.id);
+  }
+  index.recordTerms.set(record.id, owned);
+}
+
+function removeRecordFromTerms(recordId, index) {
+  const owned = index.recordTerms.get(recordId);
+  if (!owned) return;
+  for (const key of owned.anchorPhrases || []) deletePosting(index.anchorPhrases, key, recordId);
+  for (const key of owned.anchorTokens || []) deletePosting(index.anchorTokens, key, recordId);
+  for (const key of owned.anchorBigrams || []) deletePosting(index.anchorBigrams, key, recordId);
+  for (const key of owned.summaryTokens || []) deletePosting(index.summaryTokens, key, recordId);
+  index.recordTerms.delete(recordId);
+}
+
+function clearRecordRelations(index, recordId) {
+  const previous = index.recordRelations.get(recordId);
+  if (!previous) return;
+  for (const targetId of previous) {
+    const reverse = index.reverseRecordRelations.get(targetId);
+    if (!reverse) continue;
+    reverse.delete(recordId);
+    if (!reverse.size) index.reverseRecordRelations.delete(targetId);
+  }
+  index.recordRelations.delete(recordId);
+}
+
+function setRecordRelations(index, record) {
+  clearRecordRelations(index, record.id);
+  if (record.status !== 'active') return;
+  const related = new Set(
+    [...(record.causedBy || []), ...(record.affects || [])]
+      .filter(id => id && id !== record.id),
+  );
+  if (!related.size) return;
+  index.recordRelations.set(record.id, related);
+  for (const targetId of related) {
+    if (!index.reverseRecordRelations.has(targetId)) index.reverseRecordRelations.set(targetId, new Set());
+    index.reverseRecordRelations.get(targetId).add(record.id);
+  }
+}
+
+function addExplicitLink(index, from, to) {
+  if (!from || !to || from === to) return;
+  if (!index.linkGraph.has(from)) index.linkGraph.set(from, new Set());
+  if (!index.linkGraph.has(to)) index.linkGraph.set(to, new Set());
+  index.linkGraph.get(from).add(to);
+  index.linkGraph.get(to).add(from);
+}
+
+function indexedNeighbors(index, recordId) {
+  const out = new Set();
+  for (const map of [index.linkGraph, index.recordRelations, index.reverseRecordRelations]) {
+    for (const id of map.get(recordId) || []) out.add(id);
+  }
+  out.delete(recordId);
+  return out;
+}
+
+export function buildRelevanceIndex(state) {
+  const records = activeRecords(state);
+  const index = {
+    byId: new Map(),
+    anchorPhrases: new Map(),
+    anchorTokens: new Map(),
+    anchorBigrams: new Map(),
+    summaryTokens: new Map(),
+    recordTerms: new Map(),
+    linkGraph: new Map(),
+    recordRelations: new Map(),
+    reverseRecordRelations: new Map(),
+    corpusRecords: Array.isArray(state?.records) ? state.records.length : 0,
+    activeCount: records.length,
+  };
+
+  for (const record of records) {
+    index.byId.set(record.id, record);
+    indexRecordTerms(record, index);
+    setRecordRelations(index, record);
+  }
+  for (const link of Array.isArray(state?.links) ? state.links : []) {
+    addExplicitLink(index, link?.from, link?.to);
+  }
+  return index;
+}
+
+export function updateRelevanceIndex(index, delta = {}) {
+  if (!index || typeof index !== 'object') return index;
+  const upserted = Array.isArray(delta.upsertedRecords) ? delta.upsertedRecords : [];
+  const removedIds = Array.isArray(delta.removedRecordIds) ? delta.removedRecordIds : [];
+  const appendedLinks = Array.isArray(delta.appendedLinks) ? delta.appendedLinks : [];
+
+  for (const id of removedIds) {
+    index.byId.delete(id);
+    removeRecordFromTerms(id, index);
+    clearRecordRelations(index, id);
+  }
+
+  for (const record of upserted) {
+    if (!record || !record.id) continue;
+    index.byId.delete(record.id);
+    removeRecordFromTerms(record.id, index);
+    clearRecordRelations(index, record.id);
+
+    if (record.status === 'active' && typeof record.summary === 'string' && record.summary.trim()) {
+      index.byId.set(record.id, record);
+      indexRecordTerms(record, index);
+      setRecordRelations(index, record);
+    }
+  }
+
+  for (const link of appendedLinks) addExplicitLink(index, link?.from, link?.to);
+
+  index.activeCount = index.byId.size;
+  if (typeof delta.corpusRecords === 'number') index.corpusRecords = delta.corpusRecords;
+  return index;
+}
+
+function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384) {
+  const out = [];
+  const seen = new Set();
+  for (let start = 0; start < tokenList.length && out.length < maxPhrases; start += 1) {
+    let phrase = '';
+    for (let width = 1; width <= maxWords && start + width <= tokenList.length; width += 1) {
+      phrase = width === 1 ? tokenList[start] : phrase + ' ' + tokenList[start + width - 1];
+      if (seen.has(phrase)) continue;
+      seen.add(phrase);
+      out.push(phrase);
+      if (out.length >= maxPhrases) break;
+    }
+  }
+  return out;
+}
+
+function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
+  const cap = boundedInt(candidateCap, 128, 1, 1024);
+  const poolCap = Math.max(cap, Math.min(4096, cap * 4));
+  const visitBudget = Math.max(64, Math.min(8192, cap * 12));
+  const candidateScores = new Map();
+  let postingVisits = 0;
+  let phraseLookups = 0;
+
+  const addScore = (recordId, score) => {
+    if (!index.byId.has(recordId)) return;
+    if (!candidateScores.has(recordId) && candidateScores.size >= poolCap) return;
+    candidateScores.set(recordId, (candidateScores.get(recordId) || 0) + score);
+  };
+
+  const visitPosting = (posting, score) => {
+    if (!posting || postingVisits >= visitBudget) return;
+    for (const id of posting) {
+      if (postingVisits >= visitBudget) break;
+      postingVisits += 1;
+      addScore(id, score);
+    }
+  };
+
+  for (const phrase of phraseCandidates(context.recentTokenList)) {
+    phraseLookups += 1;
+    visitPosting(index.anchorPhrases.get(phrase), 1000 + Math.min(100, phrase.length));
+  }
+  for (const phrase of phraseCandidates(context.loreTokenList, 6, 256)) {
+    phraseLookups += 1;
+    visitPosting(index.anchorPhrases.get(phrase), 400 + Math.min(100, phrase.length));
+  }
+
+  for (const gram of nonAsciiBigrams(context.recentNorm, 128)) {
+    visitPosting(index.anchorBigrams.get(gram), 350);
+  }
+  for (const gram of nonAsciiBigrams(context.loreNorm, 96)) {
+    visitPosting(index.anchorBigrams.get(gram), 120);
+  }
+
+  for (const token of context.recentTokens) visitPosting(index.anchorTokens.get(token), 300);
+  for (const token of context.loreTokens) visitPosting(index.anchorTokens.get(token), 100);
+
+  for (const token of context.recentTokens) {
+    visitPosting(index.summaryTokens.get(token), token.length >= 4 ? 10 : 2);
+  }
+  for (const token of context.loreTokens) {
+    visitPosting(index.summaryTokens.get(token), token.length >= 4 ? 4 : 1);
+  }
+
+  const candidateList = [];
+  for (const [id, score] of candidateScores.entries()) {
+    const record = index.byId.get(id);
+    if (record) candidateList.push({ record, candidateScore: score });
+  }
+  candidateList.sort((a, b) => {
+    if (b.candidateScore !== a.candidateScore) return b.candidateScore - a.candidateScore;
+    const bChanged = Number.isInteger(b.record.lastChangedMessage) ? b.record.lastChangedMessage : -1;
+    const aChanged = Number.isInteger(a.record.lastChangedMessage) ? a.record.lastChangedMessage : -1;
+    if (bChanged !== aChanged) return bChanged - aChanged;
+    const aId = String(a.record.id);
+    const bId = String(b.record.id);
+    return aId < bId ? -1 : aId > bId ? 1 : 0;
+  });
+
+  return {
+    records: candidateList.slice(0, cap).map(item => item.record),
+    postingVisits,
+    phraseLookups,
+    candidatePoolRecords: candidateScores.size,
+    visitBudget,
+  };
+}
+
 export function normalizeAnchor(value) {
   return normalizeText(value);
 }
@@ -197,6 +475,7 @@ export function scoreRecordRelevance(record, {
 }
 
 export function selectRelevantRecords(state, {
+  index = null,
   recentText = '',
   loreText = '',
   currentMessageId = null,
@@ -204,24 +483,69 @@ export function selectRelevantRecords(state, {
   minScore = 0.9,
   maxSeedExpansion = 4,
   maxNeighborsPerSeed = 3,
+  candidateCap = 128,
 } = {}) {
-  const records = activeRecords(state);
-  if (!records.length || (!String(recentText).trim() && !String(loreText).trim())) {
+  const isIndexed = Boolean(index && typeof index === 'object' && index.byId);
+  const totalCorpus = isIndexed
+    ? (index.corpusRecords ?? (Array.isArray(state?.records) ? state.records.length : index.byId.size))
+    : (Array.isArray(state?.records) ? state.records.length : 0);
+
+  if (!String(recentText).trim() && !String(loreText).trim()) {
     return {
       selected: [],
       metrics: {
-        scannedRecords: records.length,
+        corpusRecords: totalCorpus,
+        scannedRecords: 0,
+        candidateRecords: 0,
+        scoredRecords: 0,
         seedMatches: 0,
         linkedCandidates: 0,
         selectedRecords: 0,
+        indexUsed: isIndexed,
+        candidateCap: isIndexed ? boundedInt(candidateCap, 128, 1, 1024) : null,
+        postingVisits: 0,
+        phraseLookups: 0,
+        candidatePoolRecords: 0,
+        postingVisitBudget: isIndexed ? Math.max(64, Math.min(8192, boundedInt(candidateCap, 128, 1, 1024) * 12)) : null,
       },
     };
   }
 
-  const byId = new Map(records.map(record => [record.id, record]));
   const prepared = prepareContext({ recentText, loreText, currentMessageId });
+  let candidateRecords;
+  let indexWork = null;
+
+  if (isIndexed) {
+    indexWork = gatherCandidateRecords(index, prepared, { candidateCap });
+    candidateRecords = indexWork.records;
+  } else {
+    candidateRecords = activeRecords(state);
+  }
+
+  if (!candidateRecords.length) {
+    return {
+      selected: [],
+      metrics: {
+        corpusRecords: totalCorpus,
+        scannedRecords: 0,
+        candidateRecords: 0,
+        scoredRecords: 0,
+        seedMatches: 0,
+        linkedCandidates: 0,
+        selectedRecords: 0,
+        indexUsed: isIndexed,
+        candidateCap: isIndexed ? boundedInt(candidateCap, 128, 1, 1024) : null,
+        postingVisits: indexWork?.postingVisits || 0,
+        phraseLookups: indexWork?.phraseLookups || 0,
+        candidatePoolRecords: indexWork?.candidatePoolRecords || 0,
+        postingVisitBudget: indexWork?.visitBudget ?? null,
+      },
+    };
+  }
+
+  const byId = isIndexed ? index.byId : new Map(candidateRecords.map(record => [record.id, record]));
   const scored = [];
-  for (const record of records) {
+  for (const record of candidateRecords) {
     const result = baseRelevance(record, prepared);
     const score = Math.round(result.score * 1000) / 1000;
     if (score >= minScore) scored.push({ record, score, reasons: result.reasons, source: 'seed' });
@@ -229,17 +553,19 @@ export function selectRelevantRecords(state, {
   scored.sort(rankedCompare);
 
   const combined = new Map(scored.map(item => [item.record.id, item]));
-  const graph = adjacency(state, new Set(byId.keys()));
+  const graph = isIndexed ? null : adjacency(state, new Set(byId.keys()));
   let linkedCandidates = 0;
 
   const seedLimit = boundedInt(maxSeedExpansion, 4, 0, 16);
   const neighborLimit = boundedInt(maxNeighborsPerSeed, 3, 0, 12);
   for (const seed of scored.slice(0, seedLimit)) {
-    const neighbors = [...(graph.get(seed.record.id) || [])].sort().slice(0, neighborLimit);
+    const neighbors = [...(isIndexed ? indexedNeighbors(index, seed.record.id) : (graph.get(seed.record.id) || []))]
+      .sort()
+      .slice(0, neighborLimit);
     for (const id of neighbors) {
       if (combined.has(id)) continue;
       const record = byId.get(id);
-      if (!record) continue;
+      if (!record || record.status !== 'active') continue;
       linkedCandidates += 1;
       const recency = recordRecency(record, currentMessageId);
       const rawLinkedScore = Math.max(0.75, seed.score * 0.24) + recency;
@@ -262,10 +588,19 @@ export function selectRelevantRecords(state, {
   return {
     selected,
     metrics: {
-      scannedRecords: records.length,
+      corpusRecords: totalCorpus,
+      scannedRecords: candidateRecords.length,
+      candidateRecords: candidateRecords.length,
+      scoredRecords: candidateRecords.length,
       seedMatches: scored.length,
       linkedCandidates,
       selectedRecords: selected.length,
+      indexUsed: isIndexed,
+      candidateCap: isIndexed ? boundedInt(candidateCap, 128, 1, 1024) : null,
+      postingVisits: indexWork?.postingVisits || 0,
+      phraseLookups: indexWork?.phraseLookups || 0,
+      candidatePoolRecords: indexWork?.candidatePoolRecords || candidateRecords.length,
+      postingVisitBudget: indexWork?.visitBudget ?? null,
     },
   };
 }

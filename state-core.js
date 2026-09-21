@@ -294,21 +294,40 @@ function addEvidence(state, record, mutation, context, counter) {
   record.evidenceIds = boundedEvidenceRefs([...record.evidenceIds, ...added]);
 }
 
-function addRelatedLinks(state, record, mutation, context, counter) {
+function addRelatedLinks(state, record, mutation, context, counter, appendedLinks = null) {
   for (const relatedId of uniqueStrings(mutation.relatedRecordIds, LIMITS.linksPerRecord, 120)) {
     if (relatedId === record.id || !state.records.some(item => item.id === relatedId)) continue;
     counter.value += 1;
     const id = linkIdFor(state, relatedId, record.id, 'related', context);
     if (!state.links.some(link => link.id === id)) {
-      state.links.push(normalizeLink({
+      const link = normalizeLink({
         id,
         from: relatedId,
         to: record.id,
         type: 'related',
         sourceMessageId: context.messageId,
-      }));
+      });
+      state.links.push(link);
+      if (appendedLinks) appendedLinks.push(link);
     }
   }
+}
+
+export function compactEvidence(state) {
+  const referenced = new Set();
+  for (const record of state.records || []) {
+    for (const id of record.evidenceIds || []) {
+      referenced.add(id);
+    }
+  }
+  if (state.evidence && typeof state.evidence === 'object') {
+    for (const key of Object.keys(state.evidence)) {
+      if (!referenced.has(key)) {
+        delete state.evidence[key];
+      }
+    }
+  }
+  return state;
 }
 
 export function reduceMutations(inputState, batch) {
@@ -323,15 +342,23 @@ export function reduceMutations(inputState, batch) {
   const proposals = Array.isArray(batch?.mutations) ? batch.mutations : [];
   const applied = [];
   const rejected = [];
+  const upsertedRecords = [];
+  const appendedLinks = [];
   const evidenceCounter = { value: 0 };
   const linkCounter = { value: 0 };
 
   if (proposals.some(item => item?.action && item.action !== 'noop')
     && (context.messageId === null || !context.lineageKey)) {
-    return { state, undo: null, applied, rejected: proposals.map(mutation => ({
-      mutation,
-      reason: 'canonical mutation requires messageId and lineageKey',
-    })) };
+    return {
+      state,
+      undo: null,
+      applied,
+      rejected: proposals.map(mutation => ({
+        mutation,
+        reason: 'canonical mutation requires messageId and lineageKey',
+      })),
+      indexDelta: { upsertedRecords: [], appendedLinks: [], corpusRecords: state.records.length },
+    };
   }
 
   for (let index = 0; index < proposals.length; index += 1) {
@@ -373,8 +400,9 @@ export function reduceMutations(inputState, batch) {
       });
       state.records.push(record);
       addEvidence(state, record, mutation, context, evidenceCounter);
-      addRelatedLinks(state, record, mutation, context, linkCounter);
+      addRelatedLinks(state, record, mutation, context, linkCounter, appendedLinks);
       applied.push({ action, recordId: id });
+      upsertedRecords.push(clone(record));
       continue;
     }
 
@@ -422,7 +450,7 @@ export function reduceMutations(inputState, batch) {
     }
 
     addEvidence(state, record, mutation, context, evidenceCounter);
-    addRelatedLinks(state, record, mutation, context, linkCounter);
+    addRelatedLinks(state, record, mutation, context, linkCounter, appendedLinks);
     record.lastEvaluatedMessage = context.messageId;
     const nextDomain = stableStringify({
       summary: record.summary,
@@ -435,12 +463,25 @@ export function reduceMutations(inputState, batch) {
     });
     if (priorDomain !== nextDomain) record.lastChangedMessage = context.messageId;
     applied.push({ action, recordId: record.id });
+    upsertedRecords.push(clone(record));
   }
+
+  compactEvidence(state);
 
   if (context.operation === 'capture' && applied.some(item => item.action !== 'noop')) {
     state.lastCaptureMessage = context.messageId;
   }
-  return { state, undo: buildUndoPatch(before, state), applied, rejected };
+  return {
+    state,
+    undo: buildUndoPatch(before, state),
+    applied,
+    rejected,
+    indexDelta: {
+      upsertedRecords,
+      appendedLinks,
+      corpusRecords: state.records.length,
+    },
+  };
 }
 
 export function canonicalDomain(state) {

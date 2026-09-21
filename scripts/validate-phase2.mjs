@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import { buildCapturePrompt, CAPTURE_SYSTEM_PROMPT } from '../capture.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-const phase7Host = inventory.stage === 'phase7-coexistence-host';
-if (!phase7Host && inventory.hostEntrypoint !== null) throw new Error('Phase 2 substrate must remain host-neutral before the authorized host phase');
+const phaseHost = ['phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage);
+if (!phaseHost && inventory.hostEntrypoint !== null) throw new Error('Phase 2 substrate must remain host-neutral before the authorized host phase');
 
 const required = [
   'capture-wire.js',
