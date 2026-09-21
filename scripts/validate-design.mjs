@@ -33,6 +33,9 @@ for (const phrase of [
   'exact-boundary',
   'no full-world scan',
   'World State never edits the lorebook',
+  "Writer's Mind",
+  'those instructions are not inherited by capture or evolution',
+  'are narration concerns and are not evidence',
 ]) {
   if (!contract.toLowerCase().includes(phrase.toLowerCase())) {
     throw new Error('Core contract missing invariant: ' + phrase);

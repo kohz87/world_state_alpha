@@ -2,19 +2,20 @@
 
 ## Current gate
 
-Architecture is accepted. Phase 1 is authorized and later phases remain gated.
+Architecture is accepted. Phases 1-2 are authorized and later phases remain gated.
 
 Allowed in the current gate:
 
-- canonical state normalization/reducer
-- evidence and causal-link storage
-- deterministic IDs
-- per-chat sidecar persistence abstraction
-- exact branch/rollback journal and checkpoints
-- export/import/reset primitives
-- Phase 1 deterministic tests and validation
+- Phase 1 canonical state, persistence, transfer, and exact rollback substrate
+- one bounded immediate-capture request path
+- request-scoped default/Connection Profile routing
+- compact current-exchange capture prompt
+- wire/schema validation and source firewall
+- duplicate consolidation and stale-result rejection
+- bounded non-authoritative capture diagnostics
+- cumulative Phase 1-2 deterministic tests and validation
 
-Not yet authorized: scanner/provider calls, capture/evolution prompts, relevance/injection, UI, commands, or host event wiring.
+Not yet authorized: relevance/injection, elapsed-time evolution, UI, commands, rebuild runtime, or SillyTavern host event wiring.
 
 ## Standard engineering loop
 

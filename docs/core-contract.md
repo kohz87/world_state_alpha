@@ -1,6 +1,6 @@
 # World State Alpha - core contract
 
-Status: ARCHITECTURE ACCEPTED. Phase 1 core is implemented as a candidate; later runtime phases remain gated.
+Status: ARCHITECTURE ACCEPTED. Phases 1-2 are implemented as candidates; Phase 3+ runtime work remains gated.
 
 ## C01. Product purpose
 
@@ -83,6 +83,8 @@ Ambiguous narration, hypothetical language, plans, questions, predictions, and m
 ## C06. Capture
 
 Routine capture examines only the completed current exchange plus the minimum already-retrieved state/lore context required to interpret it.
+
+Default Alpha cadence is one eligible capture after each completed assistant exchange. A duplicate receipt for an already processed raw-message boundary must not issue a second automatic request. One automatic capture provider call is permitted per eligible boundary; malformed output is not automatically repaired with a second model call.
 
 If no material world change is established, capture returns no mutations.
 

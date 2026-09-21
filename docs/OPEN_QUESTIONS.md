@@ -2,19 +2,15 @@
 
 Only decisions that genuinely need user preference remain here.
 
-## 1. Automatic capture cadence default
+Resolved: Phase 2 automatic capture defaults to one eligible capture after each completed assistant exchange, with empty/system-only exchanges skipped cheaply and duplicate raw-message receipts suppressed.
 
-Recommended engineering default: capture after each completed assistant exchange, but skip cheaply when the exchange is empty/system-only and allow a user setting for every N exchanges.
-
-User decision before Phase 2: should the visible default be every exchange, or a less frequent cadence such as every 2 exchanges?
-
-## 2. Default injection budget
+## 1. Default injection budget
 
 Recommended initial engineering default: 700-900 tokens maximum with a much smaller typical output, because world state is supplementary to lore/NPC continuity.
 
 User decision before Phase 3: preferred default cap.
 
-## 3. Automatic lazy-evolution latency policy
+## 2. Automatic lazy-evolution latency policy
 
 Two valid product behaviors:
 

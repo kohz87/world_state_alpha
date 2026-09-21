@@ -25,6 +25,9 @@ test('core safety invariants are present', () => {
     /fail closed/i,
     /never edits the lorebook/i,
     /does not modify Ukiyo/i,
+    /Writer's Mind/i,
+    /those instructions are not inherited by capture or evolution/i,
+    /are narration concerns and are not evidence/i,
   ]) assert.match(contract, expected);
 });
 

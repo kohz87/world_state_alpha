@@ -11,7 +11,7 @@ World State Alpha models **change, not maps**. It has no required geography, pol
 
 ## Implementation status
 
-**Phase 1 core is implemented. Phases 2 and later remain unauthorized until separately reviewed.**
+**Phase 1 core and Phase 2 immediate-capture substrate are implemented. Phase 3 and later remain gated until separately authorized.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 
@@ -63,4 +63,4 @@ World State Alpha never rewrites source lore and never modifies Ukiyo.
 
 ## Repository rule
 
-Phase 1 authorizes only the canonical state, evidence, storage, transfer, and branch/rollback substrate. Scanner/provider logic, relevance/injection, UI, commands, and Ukiyo/NPC State integrations remain later-phase work.
+Phases 1-2 authorize the canonical state/rollback substrate plus the bounded immediate-capture path. Relevance/injection, elapsed-time evolution, UI, commands, rebuild runtime, and SillyTavern host event wiring remain later-phase work.

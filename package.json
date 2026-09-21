@@ -1,12 +1,12 @@
 {
   "name": "world_state_alpha",
-  "version": "0.1.0-alpha.1",
+  "version": "0.2.0-alpha.1",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24" },
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "validate": "node scripts/validate-design.mjs && node scripts/validate-phase1.mjs",
+    "validate": "node scripts/validate-design.mjs && node scripts/validate-phase1.mjs && node scripts/validate-phase2.mjs",
     "measure:prompts": "node scripts/measure-design.mjs",
     "package": "node scripts/package-design.mjs"
   }

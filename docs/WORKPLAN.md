@@ -1,6 +1,6 @@
 # World State Alpha staged workplan
 
-Status: architecture accepted. Phase 1 implemented candidate; Phases 2+ remain gated.
+Status: architecture accepted. Phases 1-2 implemented candidates; Phases 3+ remain gated.
 
 ## Phase 0 - architecture/bootstrap
 
@@ -43,7 +43,7 @@ Acceptance:
 - corruption/revision/retry tests pass
 - no `scope` field in schema
 
-## Phase 2 - immediate capture
+## Phase 2 - immediate capture [IMPLEMENTED CANDIDATE]
 
 Build:
 

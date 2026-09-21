@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-The design is accepted and **Phase 1 only** is currently authorized. The Phase 1 core may implement canonical state, evidence, sidecar persistence, transfer/reset, and branch/rollback primitives. Do not implement Phase 2+ scanner/provider, injection, evolution, UI, or command surfaces without a new explicit authorization.
+The design is accepted and **Phases 1-2 only** are currently authorized. Phase 2 may implement the bounded immediate-capture request path, provider routing, wire validation, source firewall, duplicate consolidation, stale-result rejection, and diagnostics. Do not implement Phase 3+ relevance/injection, evolution, UI, commands, or SillyTavern host event wiring without a new explicit authorization.
 
 ## Product boundary
 

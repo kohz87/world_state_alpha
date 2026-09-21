@@ -1,5 +1,5 @@
 {
-  "stage": "phase1-core",
+  "stage": "phase2-capture",
   "hostEntrypoint": null,
   "modules": [
     "constants.js",
@@ -7,6 +7,12 @@
     "state-core.js",
     "branch.js",
     "storage.js",
-    "transfer.js"
+    "transfer.js",
+    "capture-wire.js",
+    "source-firewall.js",
+    "duplicate.js",
+    "diagnostics.js",
+    "provider-routing.js",
+    "capture.js"
   ]
 }
