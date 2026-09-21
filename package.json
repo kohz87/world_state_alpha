@@ -1,0 +1,13 @@
+{
+  "name": "world_state_alpha",
+  "version": "0.0.0-design",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "validate": "node scripts/validate-design.mjs",
+    "measure:prompts": "node scripts/measure-design.mjs",
+    "package": "node scripts/package-design.mjs"
+  }
+}
