@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.4 retains the native SillyTavern settings drawer and hardens host ownership, deterministic sidecar recovery, delete/rename lifecycle handling, stale-work rejection, bounded runtime caches, and several Spatial identity/profile edge cases. Spatial Continuity remains a sibling to the unchanged Reality Core, and canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.5 retains the alpha.4 host/lifecycle hardening and strengthens immediate capture completeness so explicitly established persistent conditions are retained even when they are off-screen, ignored by the PC, or unrelated to the current objective. This stays inside the existing one-call capture budget and unchanged source firewall. Spatial Continuity remains a sibling to the unchanged Reality Core, and canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

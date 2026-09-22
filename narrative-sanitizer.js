@@ -1,6 +1,28 @@
+const NON_CANONICAL_ASSISTANT_BLOCKS = Object.freeze([
+  'writer_state',
+  'NPC_Inner_Chatter',
+  'CYOA',
+  'Skill_Mastery',
+  'Inventory',
+]);
+
+function stripTaggedBlock(text, tagName) {
+  const escaped = String(tagName).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const pattern = new RegExp(
+    '<' + escaped + '(?:\\s+[^>]*)?>[\\s\\S]*?(?:<\\/' + escaped + '>|$)',
+    'gi',
+  );
+  return text.replace(pattern, '');
+}
+
 export function sanitizeAssistantNarration(text) {
   if (typeof text !== 'string') return '';
-  return text.replace(/<writer_state(?:\s+[^>]*)?>[\s\S]*?(?:<\/writer_state>|$)/gi, '').trim();
+  let sanitized = text;
+  for (const tagName of NON_CANONICAL_ASSISTANT_BLOCKS) {
+    sanitized = stripTaggedBlock(sanitized, tagName);
+  }
+  sanitized = sanitized.replace(/<!--\s*INVENTORY_BLOCK[\s\S]*?(?:-->|$)/gi, '');
+  return sanitized.trim();
 }
 
 export function sanitizeExchangeMessage(message) {

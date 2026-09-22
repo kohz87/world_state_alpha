@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0-alpha.5 - Persistent capture completeness
+
+### Fixed
+
+- Capture now treats PC proximity, current objective, and player intervention as irrelevant to admission when the current exchange explicitly establishes a materially persistent world condition.
+- Added a bounded completeness sweep inside the existing single capture request so multiple independent persistent conditions may be captured together instead of stopping after the most scene-salient one.
+- Explicitly preserves ongoing conditions that continue independently after the PC leaves or ignores them, including off-screen developments already grounded by narration.
+- Tightened exclusions for transient scenery, momentary positions, ordinary one-off transactions, inventory/skill state, notices/offers/rumors, plans, planted seeds, CYOA options, inner chatter, and mere possibilities unless narration separately establishes the underlying condition as current reality.
+- Deterministically removes `writer_state`, `NPC_Inner_Chatter`, `CYOA`, `Skill_Mastery`, and inventory blocks from the assistant capture/evidence view while retaining narrated/current `World_State` summaries.
+- Added regression coverage for a Brackenford-style market extortion development being captured alongside a PC-adjacent trench-boar fact in one provider call.
+
+### Preserved
+
+- Automatic capture remains one provider request per eligible assistant boundary.
+- The source firewall still requires grounded current-exchange evidence for every mutation; no remote event may be invented merely to make the world feel active.
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+- Reality Core remains `fact` / `development` only and Spatial Continuity remains a sibling subsystem.
+
 ## 0.9.0-alpha.4 - Host identity and spatial hardening
 
 ### Fixed

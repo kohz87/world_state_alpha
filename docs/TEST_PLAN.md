@@ -77,7 +77,9 @@ No fixture may require schema code specific to its setting.
 45. Incremental index update produces identical retrieval output to an index rebuilt from scratch.
 46. 50+ sequential updates compact unreferenced evidence to <=32 entries while undo patch accurately rolls back prior state.
 47. Release package archive and manifest generation are 100% byte-reproducible with identical SHA-256 hashes across runs.
-48. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
+48. One exchange establishing both a PC-adjacent fact and a separate ongoing off-screen condition may capture both in the same provider call; PC proximity/current objective do not suppress the persistent development.
+49. A persistent condition explicitly shown continuing after the PC ignores or leaves it remains eligible for capture, while mere notices/rumors/plans/options remain non-canonical without separate current-reality evidence.
+50. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
 
 ## Additional safety tests
 
@@ -87,6 +89,8 @@ No fixture may require schema code specific to its setting.
 - timed-out request -> no mutation
 - stale request completes after branch change -> discard
 - duplicate assistant receipt -> no duplicate capture
+- exchange contains an ignored/off-screen extortion racket plus a nearby combat/hazard fact -> both grounded persistent conditions can coexist in one capture response
+- notice-board offer/rumor or planted seed appears beside a real ongoing development -> only independently established current reality is canonical
 - two canonical writes at same message -> coalesced rollback undo
 - exact parent missing on deep destructive edit -> fail closed
 - selected provider profile deleted -> clear recoverable failure, no fallback

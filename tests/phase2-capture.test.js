@@ -62,6 +62,96 @@ test('capture prompt explicitly rejects story-driving CoT as evidence', () => {
   assert.match(prompt.prompt, /never evidence of current occurrence/);
 });
 
+test('capture prompt requires persistent off-screen completeness instead of PC-only salience', () => {
+  assert.match(CAPTURE_SYSTEM_PROMPT, /bounded for completeness/i);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /PC proximity.*not admission criteria/i);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /after the PC leaves or ignores it/i);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /several independent persistent conditions/i);
+
+  const assistant = [
+    '<writer_state>world_motion: market stalls unpacking; boars concealed near the ditch.</writer_state>',
+    'A thick-necked carter named Orson blocks an elderly farmer\'s cart at Brackenford market.',
+    '"Two Aon for the cobbles. Pay it now. We do not want these crates tipped in the horse gutters."',
+    'Two other drovers stand behind him while watching whether the village watchman has left the gatehouse.',
+    'The traveler ignores the shakedown and continues south.',
+    'x'.repeat(7600),
+    '<Blocks><World_State>',
+    '**📡 Off-Screen:** Orson & Market Drovers — Harassing traders along the Brackenford stall rows',
+    '**🔥 Unresolved Threads:** Extortion at Brackenford market stalls by local carters went uninterrupted.',
+    '**🌱 Planted Seeds:** brush-thieves targeting cart wheels',
+    '</World_State></Blocks>',
+  ].join('\n');
+
+  const prompt = buildCapturePrompt({
+    exchange: withLineage([
+      { role: 'user', content: 'I tear down the boar bounty, rent a handcart, then leave town.' },
+      { role: 'assistant', content: assistant },
+    ]),
+  });
+
+  assert.match(prompt.prompt, /PERSISTENCE COMPLETENESS CHECK/);
+  assert.match(prompt.prompt, /Orson blocks an elderly farmer/);
+  assert.match(prompt.prompt, /Extortion at Brackenford market stalls by local carters went uninterrupted/);
+  assert.match(prompt.prompt, /off-screen, ignored by the PC/i);
+});
+
+test('established market extortion can coexist with a PC-adjacent capture in one bounded call', async () => {
+  const chatKey = 'persistent-offscreen';
+  const exchange = withLineage([
+    { role: 'user', content: 'I ignore the market trouble and head for the Applecross ditch.' },
+    {
+      role: 'assistant',
+      content: [
+        'At Brackenford market, Orson blocks an elderly farmer\'s handcart and demands an unauthorized two-Aon unloading fee.',
+        'Two other drovers back him while watching for the village watchman.',
+        'The traveler leaves the shakedown uninterrupted and reaches Applecross Culvert.',
+        'Seven trench-boars are bedded in an undercut hollow beneath the hornbeam roots.',
+      ].join(' '),
+    },
+  ]);
+
+  const response = JSON.stringify({
+    mutations: [
+      {
+        action: 'create',
+        kind: 'development',
+        summary: 'Orson and local carters are extorting Brackenford market traders for unauthorized unloading fees.',
+        trend: 'stable',
+        anchors: ['Brackenford', 'market', 'Orson', 'carters', 'traders'],
+        evidence: [{
+          sourceMessageId: 1,
+          claim: 'Orson blocks an elderly farmer\'s handcart and demands an unauthorized two-Aon unloading fee.',
+        }],
+      },
+      {
+        action: 'create',
+        kind: 'fact',
+        summary: 'Seven trench-boars are bedded beneath the hornbeam roots at Applecross Culvert.',
+        anchors: ['Applecross Culvert', 'trench-boars', 'hornbeam'],
+        evidence: [{
+          sourceMessageId: 1,
+          claim: 'Seven trench-boars are bedded in an undercut hollow beneath the hornbeam roots.',
+        }],
+      },
+    ],
+  });
+
+  const result = await runCaptureOperation({
+    ctx: ctxReturning(response),
+    state: existingState(chatKey),
+    exchange,
+    chatKey,
+    ...sourceBoundary(exchange),
+    isCurrent: () => true,
+  });
+
+  assert.equal(result.outcome, 'applied');
+  assert.equal(result.state.records.length, 2);
+  assert.equal(result.state.records.filter(record => record.kind === 'development').length, 1);
+  assert.match(result.state.records.find(record => record.kind === 'development').summary, /extorting Brackenford market traders/i);
+  assert.match(result.state.records.find(record => record.kind === 'fact').summary, /trench-boars/i);
+});
+
 test('direct established fact is captured in one provider call', async () => {
   const chatKey = 'direct';
   const exchange = withLineage([
