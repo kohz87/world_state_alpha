@@ -348,15 +348,22 @@ test('hydration and maintenance stay fail-closed and destructive actions preserv
 
 test('host settings mount reuses Phase 6 panel without a second UI framework or command surface', () => {
   const source = fs.readFileSync('index.js', 'utf8');
+  const css = fs.readFileSync('ui.css', 'utf8');
   assert.match(source, /#extensions_settings2/);
   assert.match(source, /#extensions_settings/);
   assert.match(source, /#extensionsMenu/);
   assert.match(source, /createWorldStateUiController\(\{/);
   assert.match(source, /panelRoot\.id\s*=\s*WORLD_STATE_PANEL_ROOT_ID/);
-  assert.match(source, /Connection profile <select id="world_state_alpha_connection_profile"/);
+  assert.match(source, /world-state-alpha-settings-group/);
+  assert.match(source, /world-state-alpha-field/);
+  assert.match(source, /<select id="world_state_alpha_connection_profile"/);
   assert.match(source, /worldStateProfileOptions\(connectionProfileUiContext\(\), selected\)/);
   assert.match(source, /addEventListener\('focusin'/);
   assert.doesNotMatch(source, /Connection Profile ID <input/);
+  assert.match(css, /world-state-alpha-settings-grid/);
+  assert.match(css, /background:\s*var\(--black50a/);
+  assert.match(css, /appearance:\s*textfield/);
+  assert.match(css, /#world_state_alpha_open\.world-state-alpha-open/);
   assert.doesNotMatch(source, /MutationObserver|pointerdown|pointermove|watchdog|registerSlash|SlashCommand/);
 });
 

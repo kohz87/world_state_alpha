@@ -698,45 +698,165 @@
 /* Phase 7 SillyTavern settings mount. Kept outside the panel namespace but World State-owned. */
 #world_state_alpha_settings.world-state-alpha-settings {
   display: grid;
-  gap: 9px;
-  padding: 12px;
-  margin: 10px 0;
-  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
-  border-radius: 10px;
+  gap: 14px;
+  padding: 16px;
+  margin: 12px 0;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.12));
+  border-radius: 12px;
   background: var(--black30a, rgba(0,0,0,.18));
+  color: var(--SmartThemeBodyColor, inherit);
+  line-height: 1.4;
 }
+
 #world_state_alpha_settings .world-state-alpha-settings-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 14px;
+  padding: 0 2px;
 }
-#world_state_alpha_settings .world-state-alpha-settings-head span {
-  opacity: .68;
-  font-size: .78rem;
+
+#world_state_alpha_settings .world-state-alpha-settings-head > div {
+  display: grid;
+  gap: 2px;
 }
-#world_state_alpha_settings label {
-  display: flex;
+
+#world_state_alpha_settings .world-state-alpha-settings-head strong {
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-head small,
+#world_state_alpha_settings .world-state-alpha-settings-head > span,
+#world_state_alpha_settings .world-state-alpha-settings-group-head span,
+#world_state_alpha_settings .world-state-alpha-field > span {
+  opacity: .66;
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-head small {
+  font-size: .76rem;
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-head > span {
+  flex: 0 0 auto;
+  font-size: .74rem;
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-group {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.10));
+  border-radius: 10px;
+  background: rgba(255,255,255,.025);
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-group-head {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 7px;
+  margin-bottom: 1px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.08));
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-group-head strong {
+  font-size: .9rem;
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-group-head span {
+  font-size: .76rem;
+}
+
+#world_state_alpha_settings .world-state-alpha-toggle {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: 34px;
+  padding: 3px 2px;
+  cursor: pointer;
 }
-#world_state_alpha_settings label > input[type="number"],
-#world_state_alpha_settings label > input[type="text"] {
+
+#world_state_alpha_settings .world-state-alpha-toggle input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+}
+
+#world_state_alpha_settings .world-state-alpha-toggle > span {
   min-width: 0;
-  margin-left: auto;
 }
-#world_state_alpha_open {
-  min-height: 40px;
+
+#world_state_alpha_settings .world-state-alpha-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
+
+#world_state_alpha_settings .world-state-alpha-field {
+  display: grid;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+  font-size: .82rem;
+}
+
+#world_state_alpha_settings .world-state-alpha-field > input[type="number"],
+#world_state_alpha_settings .world-state-alpha-field > select {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 7px 10px;
+  margin: 0;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+  border-radius: 8px;
+  background: var(--black50a, rgba(0,0,0,.28));
+  color: var(--SmartThemeBodyColor, inherit);
+  box-shadow: none;
+  font: inherit;
+}
+
+#world_state_alpha_settings .world-state-alpha-field > input[type="number"] {
+  appearance: textfield;
+}
+
+#world_state_alpha_settings .world-state-alpha-field > input[type="number"]::-webkit-inner-spin-button,
+#world_state_alpha_settings .world-state-alpha-field > input[type="number"]::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+#world_state_alpha_settings .world-state-alpha-field > select {
+  cursor: pointer;
+}
+
+#world_state_alpha_settings .world-state-alpha-field > input[type="number"]:focus,
+#world_state_alpha_settings .world-state-alpha-field > select:focus {
+  outline: none;
+  border-color: var(--SmartThemeQuoteColor, rgba(140,184,255,.72));
+  box-shadow: 0 0 0 2px rgba(140,184,255,.14);
+}
+
+#world_state_alpha_open.world-state-alpha-open {
+  width: 100%;
+  min-height: 42px;
+  margin: 0;
+  border-radius: 9px;
+}
+
 @media (max-width: 700px) {
-  #world_state_alpha_settings label {
-    flex-wrap: wrap;
+  #world_state_alpha_settings.world-state-alpha-settings {
+    padding: 13px;
   }
-  #world_state_alpha_settings label > input[type="number"],
-  #world_state_alpha_settings label > input[type="text"],
-  #world_state_alpha_open {
-    width: 100%;
+
+  #world_state_alpha_settings .world-state-alpha-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #world_state_alpha_settings .world-state-alpha-field > input[type="number"],
+  #world_state_alpha_settings .world-state-alpha-field > select,
+  #world_state_alpha_open.world-state-alpha-open {
     min-height: 44px;
   }
 }
