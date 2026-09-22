@@ -147,10 +147,12 @@ test('rejected lifecycle smuggling is atomic and cannot partially rewrite a reco
     recordId: id,
     summary: 'This summary must not leak.',
     status: 'resolved',
+    timeAnchor: 'This time anchor must not leak either.',
   });
   assert.equal(rejected.rejected.length, 1);
   assert.equal(rejected.state.records[0].status, 'active');
   assert.equal(rejected.state.records[0].summary, 'The protest is active.');
+  assert.equal(rejected.state.records[0].timeAnchor, '');
 });
 
 test('generic related links do not invent causal causedBy semantics', () => {

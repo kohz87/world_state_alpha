@@ -90,51 +90,21 @@ export function createSillyTavernWorldStateStorageAdapter({
     return readResponse(response);
   }
 
-  async function write({ path, expectedRevision = 0, body } = {}) {
-    const target = text(path);
-    if (!target) throw new Error('World State Alpha sidecar path is required.');
-
-    return withWriterLock(target, async () => {
-      const expected = Math.max(0, Math.trunc(Number(expectedRevision) || 0));
-
-      if (!isLogicalPath(target)) {
-      const currentText = await read(target);
-      if (currentText === null) {
-        if (expected !== 0) return { conflict: true };
-      } else {
-        let current;
-        try {
-          current = decodeSidecar(currentText);
-        } catch (error) {
-          error.retryable = false;
-          throw error;
-        }
-        if (Number(current.revision || 0) !== expected) return { conflict: true };
-      }
-    } else if (expected !== 0) {
-      return { conflict: true };
-    }
-
-    const decoded = decodeSidecar(body);
-    if (Number(decoded.revision || 0) !== expected + 1) {
-      const error = new Error('World State Alpha sidecar body revision does not follow the expected revision.');
-      error.retryable = false;
-      throw error;
-    }
-
-    const data = bytesToBase64(new TextEncoder().encode(String(body || '')));
+  async function uploadTextFile(filename, body) {
+    const targetName = worldStateHostFileName(filename);
+    const data = bytesToBase64(new TextEncoder().encode(String(body ?? '')));
     const response = await fetchFn('/api/files/upload', {
       method: 'POST',
       headers: headersValue(headers, headersFn),
       body: JSON.stringify({
-        name: worldStateHostFileName(target),
+        name: targetName,
         data,
       }),
     });
 
     if (!response?.ok) {
       const detail = typeof response?.text === 'function' ? await response.text() : '';
-      const error = new Error('World State Alpha sidecar write failed' + (detail ? ': ' + detail : '') + '.');
+      const error = new Error('World State Alpha file write failed' + (detail ? ': ' + detail : '') + '.');
       error.status = Number(response?.status || 0);
       error.retryable = [408, 425, 429].includes(error.status) || error.status >= 500 || !error.status;
       throw error;
@@ -143,13 +113,65 @@ export function createSillyTavernWorldStateStorageAdapter({
     const result = typeof response.json === 'function' ? await response.json() : {};
     const committedPath = text(result?.path);
     if (!committedPath) throw new Error('World State Alpha file endpoint returned no path.');
+    return { path: committedPath };
+  }
 
+  async function uploadJsonFile(filename, value) {
+    return uploadTextFile(filename, JSON.stringify(value));
+  }
+
+  async function fetchJsonFile(path) {
+    const raw = await read(path);
+    if (raw === null) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (cause) {
+      const error = new Error('World State Alpha JSON file is invalid.');
+      error.cause = cause;
+      error.retryable = false;
+      throw error;
+    }
+  }
+
+  async function write({ path, expectedRevision = 0, body } = {}) {
+    const target = text(path);
+    if (!target) throw new Error('World State Alpha sidecar path is required.');
+
+    return withWriterLock(target, async () => {
+      const expected = Math.max(0, Math.trunc(Number(expectedRevision) || 0));
+
+      if (!isLogicalPath(target)) {
+        const currentText = await read(target);
+        if (currentText === null) {
+          if (expected !== 0) return { conflict: true };
+        } else {
+          let current;
+          try {
+            current = decodeSidecar(currentText);
+          } catch (error) {
+            error.retryable = false;
+            throw error;
+          }
+          if (Number(current.revision || 0) !== expected) return { conflict: true };
+        }
+      } else if (expected !== 0) {
+        return { conflict: true };
+      }
+
+      const decoded = decodeSidecar(body);
+      if (Number(decoded.revision || 0) !== expected + 1) {
+        const error = new Error('World State Alpha sidecar body revision does not follow the expected revision.');
+        error.retryable = false;
+        throw error;
+      }
+
+      const uploaded = await uploadTextFile(target, body);
       return {
-        path: committedPath,
+        path: uploaded.path,
         revision: decoded.revision,
       };
     });
   }
 
-  return Object.freeze({ read, write });
+  return Object.freeze({ read, write, uploadJsonFile, fetchJsonFile });
 }

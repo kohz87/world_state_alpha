@@ -436,10 +436,6 @@ export function reduceMutations(inputState, batch) {
       affects: record.affects,
     });
 
-    if (Object.hasOwn(mutation, 'timeAnchor')) {
-      record.timeAnchor = boundedText(mutation.timeAnchor, 160);
-    }
-
     if (action === 'update') {
       if (Object.hasOwn(mutation, 'status') && mutation.status !== record.status) {
         rejected.push({ mutation, reason: 'update cannot change lifecycle status; use resolve or supersede' });
@@ -462,6 +458,10 @@ export function reduceMutations(inputState, batch) {
     } else if (action === 'supersede') {
       record.status = 'superseded';
       if (boundedText(mutation.summary, LIMITS.summaryChars)) record.summary = boundedText(mutation.summary, LIMITS.summaryChars);
+    }
+
+    if (Object.hasOwn(mutation, 'timeAnchor')) {
+      record.timeAnchor = boundedText(mutation.timeAnchor, 160);
     }
 
     addEvidence(state, record, mutation, context, evidenceCounter);

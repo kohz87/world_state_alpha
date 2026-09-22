@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.0-alpha.2 - Continuity hardening
+
+### Fixed
+
+- Made the World State extension settings card natively collapsible while preserving the calmer grouped dark-theme layout.
+- Added the production SillyTavern JSON file adapter methods required by Spatial base-map import and reload.
+- Fixed Spatial manual editing for rename, coordinate clearing, context/notes clearing, route-association replacement, and campaign overrides addressed by their stored override ID.
+- Prevented unresolved coordinates from being locked and required non-root manual Spatial edits to own the current raw-message boundary.
+- Restored reducer atomicity so a rejected Reality lifecycle-smuggling update cannot leak a new time anchor.
+- Isolated Reality evolution from Spatial-only injection and invalidated in-flight/queued work when routing or enablement settings change.
+- Serialized maintenance and Spatial manual mutations through the per-chat work queue and added post-await chat guards.
+- Added continuity migration for SillyTavern character/chat rename events and cleaned deleted character/chat/group-chat sidecar pointers from active ownership.
+- Removed sticky negative base-map caching, made Spatial rebuild fail closed when declared base authority is unavailable, and wired indexed Spatial context terms into retrieval.
+
+### Preserved
+
+- Reality Core and Spatial Continuity remain separate semantic reducers.
+- Base-map sources remain read-only and campaign overrides remain per-chat.
+- Existing source firewall, branch rollback, provider routing, and Story-Director boundaries remain intact.
+
 ## 0.9.0-alpha.1 - Spatial Continuity
 
 ### Added
