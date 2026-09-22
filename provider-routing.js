@@ -16,6 +16,29 @@ export function selectedWorldStateProfileId(ctx) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+export function worldStateProfileOptions(ctx, selected = selectedWorldStateProfileId(ctx)) {
+  const options = [{ id: '', name: 'Use current roleplay connection' }];
+  const service = ctx?.ConnectionManagerRequestService;
+  const profiles = ctx?.extensionSettings?.connectionManager?.profiles;
+  if (!connectionManagerDisabled(ctx) && Array.isArray(profiles)) {
+    for (const profile of profiles) {
+      if (typeof profile?.id !== 'string' || !profile.id.trim()) continue;
+      try {
+        if (typeof service?.isProfileSupported === 'function' && !service.isProfileSupported(profile)) continue;
+      } catch {
+        continue;
+      }
+      if (!options.some(option => option.id === profile.id)) {
+        options.push({ id: profile.id, name: String(profile.name || profile.id) });
+      }
+    }
+  }
+  if (selected && !options.some(option => option.id === selected)) {
+    options.push({ id: selected, name: `Unavailable profile (${selected})` });
+  }
+  return options;
+}
+
 export function configuredWorldStateMaxOutputTokens(ctx) {
   return normalizeWorldStateMaxOutputTokens(ctx?.extensionSettings?.world_state_alpha?.maxOutputTokens);
 }

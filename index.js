@@ -26,7 +26,7 @@ import {
   previewWorldStateImport,
   previewWorldStateReset,
 } from './manual.js';
-import { cancelWorldStateRequests } from './provider-routing.js';
+import { cancelWorldStateRequests, worldStateProfileOptions } from './provider-routing.js';
 import { runManualRebuild } from './rebuild.js';
 import { buildRelevanceIndex, selectRelevantRecords, updateRelevanceIndex } from './relevance.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
@@ -733,6 +733,30 @@ async function activateCurrentChat() {
   }
 }
 
+function connectionProfileUiContext() {
+  const ctx = getContext();
+  return {
+    extensionSettings: extension_settings,
+    ConnectionManagerRequestService: ctx?.ConnectionManagerRequestService,
+  };
+}
+
+function syncConnectionProfileControl(root, selected) {
+  const select = root?.querySelector?.('#world_state_alpha_connection_profile');
+  if (!select) return;
+  const doc = select.ownerDocument || globalThis.document;
+  if (!doc?.createElement) return;
+  const options = worldStateProfileOptions(connectionProfileUiContext(), selected);
+  select.replaceChildren();
+  for (const item of options) {
+    const option = doc.createElement('option');
+    option.value = item.id;
+    option.textContent = item.name;
+    select.appendChild(option);
+  }
+  select.value = String(selected || '');
+}
+
 function syncSettingsControls() {
   const settings = getWorldStateSettings();
   const root = globalThis.document?.getElementById?.(WORLD_STATE_SETTINGS_ID);
@@ -750,7 +774,7 @@ function syncSettingsControls() {
   assignChecked('world_state_alpha_inject', settings.inject);
   assignValue('world_state_alpha_inject_depth', settings.injectDepth);
   assignValue('world_state_alpha_inject_budget', settings.injectBudgetTokens);
-  assignValue('world_state_alpha_connection_profile', settings.connectionProfile);
+  syncConnectionProfileControl(root, settings.connectionProfile);
   assignChecked('world_state_alpha_spatial_enabled', settings.spatialEnabled);
   assignChecked('world_state_alpha_spatial_inject', settings.spatialInject);
   assignValue('world_state_alpha_spatial_inject_budget', settings.spatialInjectBudgetTokens);
@@ -767,7 +791,7 @@ function buildSettingsCard() {
     '<label><input id="world_state_alpha_inject" type="checkbox"> Inject private world continuity</label>',
     '<label>Injection depth <input id="world_state_alpha_inject_depth" type="number" min="0" max="20" step="1"></label>',
     '<label>Injection budget <input id="world_state_alpha_inject_budget" type="number" min="1" max="2400" step="1"></label>',
-    '<label>Connection Profile ID <input id="world_state_alpha_connection_profile" type="text" autocomplete="off" placeholder="Default host route"></label>',
+    '<label>Connection profile <select id="world_state_alpha_connection_profile" title="Choose a SillyTavern Connection Profile for World State requests"></select></label>',
     '<hr style="border:0;border-top:1px solid rgba(255,255,255,0.1);margin:4px 0;">',
     '<label><input id="world_state_alpha_spatial_enabled" type="checkbox"> Enable Spatial Continuity (Phase 9)</label>',
     '<label><input id="world_state_alpha_spatial_inject" type="checkbox"> Inject spatial continuity</label>',
@@ -804,6 +828,11 @@ function scheduleSettingsMount() {
 
 function bindSettingsEvents() {
   if (!globalThis.document?.addEventListener) return;
+  document.addEventListener('focusin', event => {
+    if (event.target?.id !== 'world_state_alpha_connection_profile') return;
+    const root = document.getElementById(WORLD_STATE_SETTINGS_ID);
+    if (root) syncConnectionProfileControl(root, getWorldStateSettings().connectionProfile);
+  });
   document.addEventListener('change', event => {
     const target = event.target;
     if (!target?.id?.startsWith('world_state_alpha_')) return;
