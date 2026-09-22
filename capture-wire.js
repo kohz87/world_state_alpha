@@ -134,9 +134,11 @@ function normalizeMutation(raw) {
 }
 
 export function parseCaptureJson(rawText) {
-  const raw = String(rawText ?? '').trim();
+  const input = String(rawText ?? '').trim();
+  const fenced = input.match(/^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i);
+  const raw = fenced ? fenced[1].trim() : input;
   if (!raw.startsWith('{') || !raw.endsWith('}')) {
-    throw new CaptureWireError('capture response must be one JSON object with no prose or markdown');
+    throw new CaptureWireError('capture response must be one JSON object, optionally wrapped in a single json code fence, with no surrounding prose');
   }
   let parsed;
   try {

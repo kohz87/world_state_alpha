@@ -8,9 +8,26 @@ import {
   processCaptureResponse,
   runCaptureOperation,
 } from '../capture.js';
+import { parseCaptureJson } from '../capture-wire.js';
 import { createDiagnosticStore } from '../diagnostics.js';
 import { createState, reduceMutations } from '../state-core.js';
 
+test('capture parser accepts one fenced JSON object but still rejects surrounding prose', () => {
+  const payload = '{"mutations":[],"spatialMutations":[]}';
+  const fence = '`' + '``';
+  assert.deepEqual(parseCaptureJson(payload), { mutations: [], spatialMutations: [] });
+  assert.deepEqual(parseCaptureJson(fence + 'json\n' + payload + '\n' + fence), { mutations: [], spatialMutations: [] });
+  assert.deepEqual(parseCaptureJson(fence + '\n' + payload + '\n' + fence), { mutations: [], spatialMutations: [] });
+
+  assert.throws(
+    () => parseCaptureJson('Here is the result:\n' + fence + 'json\n' + payload + '\n' + fence),
+    /one JSON object/i,
+  );
+  assert.throws(
+    () => parseCaptureJson(fence + 'json\n' + payload + '\n' + fence + '\nextra'),
+    /one JSON object/i,
+  );
+});
 function withLineage(chat) {
   const lineage = chatLineage(chat);
   return chat.map((message, messageId) => ({

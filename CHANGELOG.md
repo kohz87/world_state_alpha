@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0-alpha.9 - Fenced provider response interoperability
+
+### Fixed
+
+- Capture/rebuild response parsing now accepts exactly one JSON object either bare or wrapped in a single Markdown code fence (`json` language tag optional).
+- Surrounding prose before or after the fenced object, multiple objects, malformed JSON, and structural wire violations remain invalid and fail closed.
+- Added a five-boundary rebuild regression matching the live failure pattern where four successful Gemini responses were followed by a fenced fifth response; the rebuilt Current/Places state now commits instead of being discarded atomically at the final boundary.
+
+### Preserved
+
+- No second parse retry, provider retry, or permissive prose extraction path was added.
+- Rebuild remains atomic and source-firewalled.
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+
 ## 0.9.0-alpha.8 - Live rebuild interoperability
 
 ### Fixed
