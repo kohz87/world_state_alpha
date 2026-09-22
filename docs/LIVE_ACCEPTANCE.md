@@ -307,6 +307,21 @@ Run these focused live checks against 0.9.0-alpha.7:
 
 Record provider/model, timeout configuration, actual RP TTFT/request timing, and whether the recovered Applecross location survives reload/rollback. Deterministic tests establish the contract; this case remains the live SillyTavern/browser/provider acceptance boundary.
 
+### L24. Alpha.8 live rebuild interoperability
+
+Using the same provider/model that produced the live rebuild failure, reset a populated chat and run Rebuild from Chat. Verify:
+
+- a raw OpenAI-compatible provider envelope is reduced to `choices[0].message.content`; `reasoning_content` does not enter the capture parser
+- the rebuild immediately shows a started notification with the number of assistant boundaries
+- the Connection Profile may return either extracted text or the demonstrated raw OpenAI-compatible `choices[0].message.content` body; `reasoning_content` must never become capture output
+- a provider response using `category:"development"` and `description:"..."` is repaired to canonical `kind`/`summary`, but conflicting canonical/alias values fail closed
+- Current repopulates after full success
+- Brackenford, North Road, Northgate Stockyard, and Applecross Culvert can repopulate from the demonstrated live payload
+- unsupported optional relative metadata does not erase an otherwise grounded named place
+- Diagnostics retains per-boundary rebuild rows plus a final rebuild summary with safe failure/success detail, alias repair count, and processed/total boundaries
+- success notification reports boundary progress and resulting Current/Places counts; failure notification reports the failed message boundary and safe bounded reason
+- reload confirms the rebuilt state was persisted durably
+
 ## 3. Contractual bounds to verify live
 
 These are behavioral ceilings, not latency predictions:
@@ -359,6 +374,7 @@ L20 Spatial branch rollback/campaign isolation: PASS / FAIL / NOT RUN
 L21 Megumin World_State spatial continuity: PASS / FAIL / NOT RUN
 L22 Persistent off-screen capture completeness: PASS / FAIL / NOT RUN
 L23 Alpha.7 audit hardening: PASS / FAIL / NOT RUN
+L24 Alpha.8 live rebuild interoperability: PASS / FAIL / NOT RUN
 
 Measured:
 RP TTFT baseline:

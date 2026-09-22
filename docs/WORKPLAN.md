@@ -199,6 +199,7 @@ Deliverables:
 - v0.9.0-alpha.5 capture completeness: keep the one-call source-firewalled capture path, but require a whole-exchange sweep for each distinct materially persistent established condition, including ongoing off-screen conditions that continue independently after the PC leaves or ignores them
 - v0.9.0-alpha.6 Background Development Catch-up: meaningful elapsed-time boundaries may fill the existing one-call evolution batch with a bounded indexed sample of stale remote active developments; rebuild from chat recovers narrated persistent developments but never replays hidden evolution
 - v0.9.0-alpha.7 audit hardening: rebuild outcome/structural integrity, recovery prompt quarantine, sanitized chronology evidence, automatic Spatial authority parity, disabled-Spatial preservation, omission-preserving Reality updates, bounded tombstone admission, direct relation grounding, deterministic explicit current-location recovery, and non-blocking provider-backed user-send continuity
+- v0.9.0-alpha.8 live rebuild hardening: exact Reality output schema under Spatial mode, bounded provider alias compatibility, persistent shared rebuild diagnostics/status, named-place salvage when only optional relation precision is unsupported, and conservative compositional proper-place grounding
 
 Acceptance:
 

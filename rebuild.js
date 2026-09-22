@@ -193,6 +193,7 @@ export async function runManualRebuild({
   signal = undefined,
   isCurrent = undefined,
   dispatcher = undefined,
+  diagnostics = undefined,
   loreResolver = undefined,
   maxBoundaries = REBUILD_LIMITS.maxBoundaries,
   spatialEnabled = false,
@@ -303,6 +304,7 @@ export async function runManualRebuild({
       signal,
       isCurrent: () => current(),
       ...(dispatcher ? { dispatcher } : {}),
+      diagnostics,
       operation: 'rebuild',
       evidenceSourceClass: 'rebuild',
       label: 'rebuild',
@@ -313,13 +315,19 @@ export async function runManualRebuild({
     });
 
     providerCalls += result.providerCalls || 0;
+    const realityRejected = Array.isArray(result.rejected) ? result.rejected : [];
+    const spatialRejected = Array.isArray(result.spatial?.rejected) ? result.spatial.rejected : [];
+    const allRejected = [...realityRejected, ...spatialRejected];
+    const boundaryApplied = (Array.isArray(result.applied) ? result.applied.length : 0)
+      + (Array.isArray(result.spatial?.applied) ? result.spatial.applied.length : 0);
     receipts.push({
       messageId: window.messageId,
       outcome: result.outcome,
       providerCalls: result.providerCalls || 0,
-      applied: Array.isArray(result.applied) ? result.applied.length : 0,
-      rejected: Array.isArray(result.rejected) ? result.rejected.length : 0,
-      rejections: (Array.isArray(result.rejected) ? result.rejected : []).slice(0, 8).map(item => ({
+      applied: boundaryApplied,
+      rejected: allRejected.length,
+      aliasRepairs: Number(result.aliasRepairs) || 0,
+      rejections: allRejected.slice(0, 8).map(item => ({
         stage: String(item?.stage || '').slice(0, 40),
         code: String(item?.code || '').slice(0, 80),
         reason: String(item?.reason || '').slice(0, 240),

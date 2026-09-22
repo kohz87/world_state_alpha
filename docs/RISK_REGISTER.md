@@ -18,6 +18,9 @@
 | Rebuild divergence | rebuild creates different current reality | bounded assistant-boundary replay through capture firewall + semantic equivalence fixtures + atomic replacement only on full success | incremental-vs-rebuild |
 | Rebuild hidden simulation | recovery invents off-screen evolution not established in narration | rebuild never invokes lazy evolution; reconstruct only grounded chronological capture evidence | no-evolution rebuild fixture |
 | Rebuild partial-success overwrite | timeout/cancel/unexpected boundary or malformed row is treated as success and replaces good state with an incomplete candidate | explicit applied/no-change success allowlist; strict structural-row failure; atomic original-state fallback | first/later timeout, cancellation, malformed Reality/Spatial row fixtures |
+| Provider schema drift | model returns semantically obvious but noncanonical field names and strict rebuild rejects all useful state | exact prompt schema plus deterministic allowlisted alias repair only; conflicts stay invalid and repairs are counted | live Gemini category/description rebuild fixture |
+| Rebuild opacity | provider work fails or is rejected but UI looks idle/empty | shared per-chat diagnostics plus started/failure/completion notification with bounded reason and progress | host/UI rebuild telemetry fixtures |
+| Optional Spatial precision erases place | bad relative metadata causes a grounded proper named place to disappear | retain admissible named place with unknown position; reject only unsupported relation precision | Northgate Stockyard live-payload fixture |
 | Recovery prompt ghost | fail-closed branch state remains stored and is injected as current authority | recoveryRequired/dirty branch suppresses both Reality and Spatial injection while preserving recovery data | deep rollback + host injection guard fixtures |
 | Elapsed planning contamination | hidden planning, future scheduling, quotation, or hypothetical opens catch-up | shared sanitized evidence surface + established chronology-context gate | writer/timer/system/future/hypothetical/quote fixtures |
 | Rebuild Spatial authority bypass | provider reconstruction silently shadows/moves base or operator geography | rebuild classified as provider narrative for base/lock/rank/manual-metadata protections | rebuild base-conflict fixture |
@@ -50,7 +53,7 @@
 | Incremental index drift | In-memory relevance index becomes out of sync with mutated state | `reduceMutations` computes exact `indexDelta`; incremental delta tested against fresh index | incremental update fixture |
 | Compaction rollback corruption | Pruned evidence causes missing reference errors on branch swipe | `undo.evidence` retains compacted entries; undo patch restores uncompacted state | 50-step compaction rollback test |
 | Non-deterministic release zip | Zip bytes vary between builds due to archive timestamps or ordering | fixed DOS timestamps (2026-01-01) and alphabetical entry sorting | package hash reproducibility test |
-| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.7) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.8) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
 
 
 | Risk | Failure mode | Mitigation | Verification |

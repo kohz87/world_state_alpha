@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { chatLineage, commitMutationBoundary, seedRootCheckpoint } from '../branch.js';
 import { runCaptureOperation } from '../capture.js';
+import { createDiagnosticStore } from '../diagnostics.js';
 import {
   compareWorldStateSemantics,
   planChronologicalRebuild,
@@ -504,6 +505,96 @@ test('rebuild fails closed on timeout, cancellation, and a later-window timeout'
   assert.deepEqual(late.state, original);
 });
 
+test('rebuild repairs live Gemini category/description drift, restores Current and Places, and keeps diagnostics', async () => {
+  const chat = [{
+    role: 'assistant',
+    content: [
+      'Morning mist clung to the North Road as Brackenford came into view ahead.',
+      'Haulers guild carters in Brackenford are extorting fees from inbound farmers under threat of tipping their goods.',
+    ].join(' '),
+  }];
+  const diagnostics = createDiagnosticStore();
+  const result = await runManualRebuild({
+    ctx: {},
+    state: createState('rebuild-live-alias'),
+    chat,
+    chatKey: 'rebuild-live-alias',
+    spatialEnabled: true,
+    diagnostics,
+    operationId: 'rebuild-live',
+    isCurrent: () => true,
+    dispatcher: async () => ({
+      text: JSON.stringify({
+        mutations: [{
+          action: 'create',
+          category: 'development',
+          description: 'Haulers guild carters in Brackenford are extorting fees from inbound farmers.',
+          evidence: [{
+            sourceMessageId: 0,
+            claim: 'Haulers guild carters in Brackenford are extorting fees from inbound farmers under threat of tipping their goods.',
+          }],
+        }],
+        spatialMutations: [{
+          action: 'upsert_location',
+          name: 'Brackenford',
+          type: 'village',
+          context: 'Settlement beside the North Road',
+          admissionReason: 'named',
+          evidence: [{
+            sourceMessageId: 0,
+            claim: 'Morning mist clung to the North Road as Brackenford came into view ahead.',
+          }],
+        }],
+      }),
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: 'gemini-3.7-flash-high' },
+    }),
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.state.records.length, 1);
+  assert.equal(result.state.records[0].kind, 'development');
+  assert.match(result.state.records[0].summary, /extorting fees/i);
+  assert.equal(result.state.spatial.locations.some(item => item.name === 'Brackenford'), true);
+  assert.equal(result.receipts[0].aliasRepairs, 2);
+
+  const rows = diagnostics.records('rebuild-live-alias');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].label, 'rebuild');
+  assert.equal(rows[0].aliasRepairs, 2);
+  assert.equal(rows[0].code, 'WORLD_STATE_PROVIDER_ALIAS_REPAIRED');
+  assert.match(rows[0].detail, /Repaired 2 unambiguous provider field aliases/i);
+});
+
+test('rebuild alias repair remains fail-closed when canonical and alias fields conflict', async () => {
+  const chat = [{ role: 'assistant', content: 'A dock strike begins at Southport.' }];
+  const original = createState('rebuild-alias-conflict');
+  const result = await runManualRebuild({
+    ctx: {},
+    state: original,
+    chat,
+    chatKey: 'rebuild-alias-conflict',
+    isCurrent: () => true,
+    dispatcher: async () => ({
+      text: JSON.stringify({
+        mutations: [{
+          action: 'create',
+          kind: 'fact',
+          category: 'development',
+          summary: 'A dock strike is active at Southport.',
+          description: 'A dock strike is active at Southport.',
+          evidence: [{ sourceMessageId: 0, claim: 'A dock strike begins at Southport.' }],
+        }],
+      }),
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    }),
+  });
+
+  assert.equal(result.outcome, 'failure');
+  assert.equal(result.failedBoundary, 0);
+  assert.deepEqual(result.state, original);
+  assert.match(result.receipts[0].rejections[0].reason, /conflicting kind\/category provider fields/i);
+});
+
 test('rebuild aborts on a structurally malformed mutation row inside valid JSON', async () => {
   const chat = [
     { role: 'user', content: 'I arrive at Southport.' },
@@ -582,6 +673,163 @@ test('Reality-only rebuild preserves the disabled Spatial namespace', async () =
   assert.equal(result.state.spatial.baseMapRef?.id, 'base-test');
   assert.equal(result.state.spatial.profile?.unitKm, 5);
   assert.equal(result.state.spatial.locations.some(item => item.name === 'Saved Ford'), true);
+});
+
+
+test('live Gemini alias payload rebuild repopulates Current and Places after reset', async () => {
+  const chat = [
+    {
+      role: 'assistant',
+      content: "Morning mist clung to the North Road as Brackenford came into view ahead, chimney smoke rising beyond its low walls. Beside Brackenford's open gate stood a crowded notice board.",
+    },
+    { role: 'user', content: 'I accept the trench-boar work and head south.' },
+    {
+      role: 'assistant',
+      content: [
+        'Down the lane at the Northgate Stockyard, iron tires clattered against split-log ramps.',
+        '"Two Aon until dusk," Karr said, barely glancing up from his scraper as he pointed a blunt finger toward a row of two-wheeled handcarts lined beside the fencing. "Bring it back whole. Break the ash tongue, you owe thirty."',
+        'The handcart shoved deep into a screen of alder brush, the quarterstaff planted into the soggy bank.',
+        'South of Brackenford, the North Road dwindled into a sunken wagon track flanked by hazel hedges and deep run-off channels.',
+        'Half a league down the Applecross ditchline, the culvert opened into an overgrown gully choked with stinging nettles, wild rose briers, and black silt.',
+        'Six Aon per head. Sounder of seven trench-boars rooting the lower drainage culvert south of Applecross road.',
+        'Below the overhanging bank, tucked deep into a hollow under the very roots supporting the tree, dry leaves rustled with the low, wet grunting of heavy bodies shifting in the dirt.',
+        '"Every crate off that wagon touches village gravel, Garrow." The speaker was a thick-necked carter in a grease-stained leather vest, planted square before an elderly farmer\'s handcart ten paces inside the gate. "Gravel belongs to the haulers\' guild. Two Aon for the cobbles. Pay it now. We don\'t want these crates tipped in the horse gutters."',
+      ].join('\n'),
+    },
+  ];
+  const diagnostics = createDiagnosticStore();
+  let calls = 0;
+  const dispatcher = async (_ctx, options) => {
+    calls += 1;
+    if (options.prompt.includes('Morning mist clung to the North Road')) {
+      return {
+        text: JSON.stringify({
+          mutations: [],
+          spatialMutations: [
+            {
+              action: 'upsert_location',
+              name: 'Brackenford',
+              type: 'village',
+              context: 'Settlement with low walls and an open gate beside the North Road',
+              admissionReason: 'named',
+              evidence: [
+                { sourceMessageId: 0, claim: 'Morning mist clung to the North Road as Brackenford came into view ahead, chimney smoke rising beyond its low walls.' },
+                { sourceMessageId: 0, claim: "Beside Brackenford's open gate stood a crowded notice board." },
+              ],
+            },
+            {
+              action: 'upsert_location',
+              name: 'North Road',
+              type: 'road',
+              context: 'Road leading to Brackenford',
+              admissionReason: 'named',
+              evidence: [{ sourceMessageId: 0, claim: 'Morning mist clung to the North Road as Brackenford came into view ahead, chimney smoke rising beyond its low walls.' }],
+            },
+          ],
+        }),
+        receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: 'gemini-3.7-flash-high' },
+      };
+    }
+
+    const visibleMatch = options.prompt.match(/VISIBLE SPATIAL CONTINUITY \(current\/base authority; use only shown IDs\):\n(\[[^\n]*\])/);
+    const visible = visibleMatch ? JSON.parse(visibleMatch[1]) : [];
+    const brackenford = visible.find(item => item.name === 'Brackenford');
+    assert.ok(brackenford?.id, 'second rebuild boundary should see Brackenford from the first boundary');
+
+    return {
+      text: JSON.stringify({
+        mutations: [
+          {
+            action: 'create',
+            category: 'development',
+            description: 'A sounder of seven trench-boars is bedded down in a hollow beneath the roots of a hornbeam tree along the drainage culvert south of Applecross road.',
+            evidence: [
+              { sourceMessageId: 2, claim: 'Six Aon per head. Sounder of seven trench-boars rooting the lower drainage culvert south of Applecross road.' },
+              { sourceMessageId: 2, claim: 'Below the overhanging bank, tucked deep into a hollow under the very roots supporting the tree, dry leaves rustled with the low, wet grunting of heavy bodies shifting in the dirt.' },
+            ],
+          },
+          {
+            action: 'create',
+            category: 'development',
+            description: "A handcart rented from Karr at the Northgate Stockyard for two Aon until dusk is stashed in alder brush near the Applecross culvert, subject to a thirty-Aon penalty if damaged.",
+            evidence: [
+              { sourceMessageId: 2, claim: '"Two Aon until dusk," Karr said, barely glancing up from his scraper as he pointed a blunt finger toward a row of two-wheeled handcarts lined beside the fencing. "Bring it back whole. Break the ash tongue, you owe thirty."' },
+              { sourceMessageId: 2, claim: 'The handcart shoved deep into a screen of alder brush, the quarterstaff planted into the soggy bank.' },
+            ],
+          },
+          {
+            action: 'create',
+            category: 'development',
+            description: "Haulers' guild carters and drovers in Brackenford are extorting fees from inbound farmers and market stalls under threat of tipping their goods.",
+            evidence: [{
+              sourceMessageId: 2,
+              claim: '"Every crate off that wagon touches village gravel, Garrow." The speaker was a thick-necked carter in a grease-stained leather vest, planted square before an elderly farmer\'s handcart ten paces inside the gate. "Gravel belongs to the haulers\' guild. Two Aon for the cobbles. Pay it now. We don\'t want these crates tipped in the horse gutters."',
+            }],
+          },
+        ],
+        spatialMutations: [
+          {
+            action: 'upsert_location',
+            name: 'Northgate Stockyard',
+            type: 'yard',
+            context: 'Stockyard with timber racks, split-log ramps, and rental handcarts in Brackenford',
+            admissionReason: 'named',
+            relative: {
+              toLocationId: brackenford.id,
+              direction: 'unspecified',
+              distanceKm: null,
+              distanceMode: 'unspecified',
+            },
+            evidence: [{ sourceMessageId: 2, claim: 'Down the lane at the Northgate Stockyard, iron tires clattered against split-log ramps.' }],
+          },
+          {
+            action: 'upsert_location',
+            name: 'Applecross Culvert',
+            type: 'waterway',
+            context: 'Drainage culvert and overgrown gully along the ditchline south of Brackenford',
+            admissionReason: 'named',
+            relative: {
+              toLocationId: brackenford.id,
+              direction: 'south',
+              distanceKm: 2.5,
+              distanceMode: 'route',
+            },
+            evidence: [
+              { sourceMessageId: 2, claim: 'South of Brackenford, the North Road dwindled into a sunken wagon track flanked by hazel hedges and deep run-off channels.' },
+              { sourceMessageId: 2, claim: 'Half a league down the Applecross ditchline, the culvert opened into an overgrown gully choked with stinging nettles, wild rose briers, and black silt.' },
+            ],
+          },
+        ],
+      }),
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: 'gemini-3.7-flash-high' },
+    };
+  };
+
+  const result = await runManualRebuild({
+    ctx: {},
+    dispatcher,
+    diagnostics,
+    state: createState('live-gemini-rebuild'),
+    chat,
+    chatKey: 'live-gemini-rebuild',
+    spatialEnabled: true,
+    isCurrent: () => true,
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.equal(calls, 2);
+  assert.equal(result.state.records.filter(record => record.status === 'active').length, 3);
+  assert.equal(result.state.records.some(record => /trench-boars/i.test(record.summary)), true);
+  assert.equal(result.state.records.some(record => /extorting fees/i.test(record.summary)), true);
+  assert.equal(result.state.spatial.locations.some(location => location.name === 'Brackenford'), true);
+  assert.equal(result.state.spatial.locations.some(location => location.name === 'North Road'), true);
+  assert.equal(result.state.spatial.locations.some(location => location.name === 'Northgate Stockyard'), true);
+  assert.equal(result.state.spatial.locations.some(location => location.name === 'Applecross Culvert'), true);
+  assert.equal(result.receipts.reduce((sum, item) => sum + item.aliasRepairs, 0), 6);
+
+  const rows = diagnostics.records('live-gemini-rebuild');
+  assert.equal(rows.some(row => row.code === 'WORLD_STATE_PROVIDER_ALIAS_REPAIRED'), true);
+  assert.equal(rows.some(row => row.label === 'rebuild' && row.sourceMessageId === 2), true);
 });
 
 test('empty/no-assistant chat rebuild is local and does not require a provider guard', async () => {

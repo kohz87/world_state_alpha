@@ -62,6 +62,74 @@ test('capture prompt explicitly rejects story-driving CoT as evidence', () => {
   assert.match(prompt.prompt, /never evidence of current occurrence/);
 });
 
+test('spatial capture prompt keeps the exact Reality mutation schema and provider aliases repair deterministically', () => {
+  const prompt = buildCapturePrompt({
+    exchange: withLineage([
+      { role: 'assistant', content: 'Seven trench-boars remain at Applecross Culvert.' },
+    ]),
+    spatialEnabled: true,
+  });
+  assert.match(prompt.prompt, /"kind":"fact\|development-for-create"/);
+  assert.match(prompt.prompt, /"summary":"compact current state"/);
+  assert.doesNotMatch(prompt.prompt, /\.\.\.Reality mutations\.\.\./);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Never substitute category for kind or description for summary/);
+
+  const exchange = withLineage([
+    { role: 'assistant', content: 'Seven trench-boars remain at Applecross Culvert.' },
+  ]);
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        category: 'development',
+        description: 'Seven trench-boars remain at Applecross Culvert.',
+        evidence: [{ sourceMessageId: 0, claim: 'Seven trench-boars remain at Applecross Culvert.' }],
+      }],
+      spatialMutations: [],
+    }),
+    state: createState('provider-alias-repair'),
+    exchange,
+    chatKey: 'provider-alias-repair',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+    operation: 'rebuild',
+    evidenceSourceClass: 'rebuild',
+    spatialEnabled: true,
+  });
+
+  assert.equal(result.aliasRepairs, 2);
+  assert.equal(result.state.records.length, 1);
+  assert.equal(result.state.records[0].kind, 'development');
+  assert.equal(result.state.records[0].summary, 'Seven trench-boars remain at Applecross Culvert.');
+});
+
+test('conflicting provider aliases remain structurally invalid during rebuild', () => {
+  const exchange = withLineage([
+    { role: 'assistant', content: 'A dock strike begins at Southport.' },
+  ]);
+  assert.throws(
+    () => processCaptureResponse({
+      text: JSON.stringify({
+        mutations: [{
+          action: 'create',
+          kind: 'fact',
+          category: 'development',
+          summary: 'A dock strike begins at Southport.',
+          evidence: [{ sourceMessageId: 0, claim: 'A dock strike begins at Southport.' }],
+        }],
+      }),
+      state: createState('provider-alias-conflict'),
+      exchange,
+      chatKey: 'provider-alias-conflict',
+      sourceMessageId: 0,
+      sourceLineageKey: exchange[0].lineageKey,
+      operation: 'rebuild',
+    }),
+    error => error?.code === 'WORLD_STATE_REBUILD_REALITY_WIRE_INVALID'
+      && /conflicting kind\/category/i.test(error.message),
+  );
+});
+
 test('capture prompt requires persistent off-screen completeness instead of PC-only salience', () => {
   assert.match(CAPTURE_SYSTEM_PROMPT, /bounded for completeness/i);
   assert.match(CAPTURE_SYSTEM_PROMPT, /PC proximity.*not admission criteria/i);

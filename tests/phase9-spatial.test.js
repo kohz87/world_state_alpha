@@ -2113,6 +2113,55 @@ test('direct spatial relation requires grounded direction and distance fields', 
   assert.match(result.rejected[0]?.reason || '', /grounded direction|numeric distance/i);
 });
 
+test('grounded named place survives an unsupported optional relative block', () => {
+  const spatial = createSpatialState();
+  spatial.locations.push(normalizeSpatialLocation({
+    id: 'brackenford-visible',
+    name: 'Brackenford',
+    type: 'village',
+    coordinate: { x: null, y: null, authority: 'unknown' },
+  }));
+  const exchange = [{
+    messageId: 2,
+    lineageKey: 'ln2',
+    role: 'assistant',
+    content: 'Down the lane at the Northgate Stockyard, iron tires clattered against split-log ramps.',
+  }];
+
+  const result = processSpatialCapture({
+    rawSpatialMutations: [{
+      action: 'upsert_location',
+      name: 'Northgate Stockyard',
+      type: 'yard',
+      context: 'Stockyard with timber racks and rental handcarts',
+      admissionReason: 'named',
+      relative: {
+        toLocationId: 'brackenford-visible',
+        direction: 'unspecified',
+        distanceKm: null,
+        distanceMode: 'unspecified',
+      },
+      evidence: [{
+        sourceMessageId: 2,
+        claim: 'Down the lane at the Northgate Stockyard, iron tires clattered against split-log ramps.',
+      }],
+    }],
+    spatial,
+    exchange,
+    visibleLocations: spatial.locations,
+    chatKey: 'named-place-relative-drop',
+    sourceMessageId: 2,
+    sourceLineageKey: 'ln2',
+  });
+
+  assert.equal(result.spatial.locations.some(item => item.name === 'Northgate Stockyard'), true);
+  assert.equal(result.spatial.relations.length, 0);
+  assert.match(
+    result.rejected.find(item => item.stage === 'spatial-relative')?.reason || '',
+    /relative relation dropped.*named location retained/i,
+  );
+});
+
 test('direct spatial relation admits only the grounded precision actually narrated', () => {
   const spatial = createSpatialState();
   spatial.locations.push(

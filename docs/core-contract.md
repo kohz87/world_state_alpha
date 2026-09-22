@@ -453,7 +453,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 hardening release changes no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 and 0.9.0-alpha.8 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 
@@ -521,13 +521,13 @@ Coordinate authority is deterministic. The effective precedence is:
 7. relative-only location
 8. unknown
 
-A locked or higher-authority coordinate may not be silently moved by lower authority. Unlocking a manual coordinate explicitly permits a later grounded higher-ranked observation to correct it. Provider-authored rebuild mutations are narrative authority, not operator authority, and therefore obey the same base-map, lock, coordinate-rank, and manual-metadata restrictions as automatic capture.
+A locked or higher-authority coordinate may not be silently moved by lower authority. Unlocking a manual coordinate explicitly permits a later grounded higher-ranked observation to correct it. Provider-authored rebuild mutations are narrative authority, not operator authority, and therefore obey the same base-map, lock, coordinate-rank, and manual-metadata restrictions as automatic capture. Connection-profile transport extraction may accept either an already-extracted text/content string or the raw OpenAI-compatible `choices[0].message.content` field; hidden `reasoning_content` is never capture evidence or output. Provider wire compatibility may repair only deterministic, unambiguous field-name aliases whose values preserve the canonical meaning (currently `category` -> `kind` and `description` -> `summary`). Canonical and alias fields that conflict remain structurally invalid; compatibility repair must be counted in bounded diagnostics and must not weaken atomic rebuild failure.
 
 Precise X/Y must never be invented merely because a location exists. Relative-only and unknown are valid durable states.
 
 Deterministic derivation is allowed only from a known anchor plus grounded direction and grounded straight-line/direct distance under an explicit configured profile with a positive unit scale. Cardinal and diagonal vectors use that profile's declared north/east axes and unit scale. Vague distance and route/travel distance do not yield exact coordinates.
 
-When True North is locked, any stored direction whose endpoints both have known coordinates must agree with the coordinate delta. Direct relation proposals use the same grounding policy as relative-location proposals: accepted narration must ground the endpoint identities and any direction, numeric distance, or distance meaning that is persisted. Unsupported precision is removed or rejected rather than canonicalized.
+When True North is locked, any stored direction whose endpoints both have known coordinates must agree with the coordinate delta. Direct relation proposals use the same grounding policy as relative-location proposals: accepted narration must ground the endpoint identities and any direction, numeric distance, or distance meaning that is persisted. Unsupported precision is removed or rejected rather than canonicalized. For an otherwise grounded proper named location, failure of optional relative-position metadata may drop only that unsupported relation while retaining the location with unknown position; generic scenery does not receive this salvage.
 
 ### C24.4 Admission and evidence firewall
 
@@ -535,7 +535,7 @@ Generated-location admission is conservative. A place may be retained when groun
 
 Spatial automatic capture shares the existing eligible Reality capture request. It may add a bounded `spatialMutations` envelope to that response, but it does not create a second automatic provider call.
 
-Every automatic Spatial mutation passes its own source/evidence firewall and reducer. `writer_state`, planning blocks, anticipated events, and model-only hypotheses are not evidence. Rebuild uses the same sanitized evidence view. Within the bounded current exchange only, deterministic parsing may supplement a successful model response from an explicit `World_State` current-location header by proposing the named place and unambiguous same-header X/Y pair through the ordinary Spatial admission/reducer path. It may merge with a matching model proposal, but ambiguous/conflicting associations fail closed; it never directly writes state or bypasses base-map authority, currentness, journaling, rollback, or Spatial disablement.
+Every automatic Spatial mutation passes its own source/evidence firewall and reducer. A multi-token proper generated place name may be admitted compositionally only when every normalized name token occurs together in one accepted evidence claim; this is a bounded grounding rule, not fuzzy name inference. `writer_state`, planning blocks, anticipated events, and model-only hypotheses are not evidence. Rebuild uses the same sanitized evidence view. Within the bounded current exchange only, deterministic parsing may supplement a successful model response from an explicit `World_State` current-location header by proposing the named place and unambiguous same-header X/Y pair through the ordinary Spatial admission/reducer path. It may merge with a matching model proposal, but ambiguous/conflicting associations fail closed; it never directly writes state or bypasses base-map authority, currentness, journaling, rollback, or Spatial disablement.
 
 ### C24.5 Manual authority and UI
 

@@ -271,3 +271,11 @@ Performance/injection:
 93. Deterministic current-location supplementation deduplicates a matching model proposal, fails closed on conflicting/ambiguous pairs, obeys Spatial disabled mode, and rolls back through the ordinary branch journal.
 94. Coordinate parser accepts signed bracket/parenthesis pairs plus signed/Markdown/pipe/quoted-axis X/Y formats and rejects malformed/ambiguous pairs.
 95. Provider-backed background continuity is detached from awaited MESSAGE_SENT while remaining on the single per-chat writer queue with stale/currentness guards.
+96. Connection-profile transport accepts the raw OpenAI-compatible `choices[0].message.content` shape and ignores `reasoning_content`.
+97. Live Gemini rebuild payload using `category`/`description` aliases reconstructs Current plus Brackenford / North Road / Northgate Stockyard / Applecross Culvert after reset.
+96. Spatial-enabled capture/rebuild prompt renders the exact Reality schema rather than an ellipsis placeholder.
+97. Live Gemini `category`/`description` aliases repair deterministically to `kind`/`summary`; conflicting aliases remain invalid.
+98. Reset -> rebuild using the captured Gemini payload restores three Current developments plus Brackenford, North Road, Northgate Stockyard and Applecross Culvert.
+99. Rebuild uses the host per-chat diagnostic store and exposes safe start/failure/completion progress without raw prompts/provider payloads.
+100. Grounded proper named locations survive unsupported optional relative metadata while the relation is dropped; generic scenery still fails admission.
+101. Compositional proper-place grounding requires every normalized name token in one accepted evidence claim and does not permit arbitrary fuzzy matching.
