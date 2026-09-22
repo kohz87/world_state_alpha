@@ -16,7 +16,7 @@ Resolved: Phase 7 uses a minimal settings-card host with no separate launcher/wa
 
 Resolved: Phase 8 uses an ephemeral per-chat relevance index with a 128 candidate cap, unreferenced evidence compaction on mutation with undo-patch preservation, application version 0.8.0-alpha.1 with immutable schema version 1, pure JS PKZip packaging with fixed timestamps, and a live acceptance protocol (`docs/LIVE_ACCEPTANCE.md`).
 
-There are currently no unresolved design questions for Phases 1-9. Live SillyTavern/provider/browser acceptance, real Ternia registry import, Megumin display continuity, and live Spatial branch/edit workflows are tracked via `docs/LIVE_ACCEPTANCE.md`.
+There are currently no unresolved design questions for Phases 1-9. The 0.9.0-alpha.7 audit hardening is deterministic-test complete. Live SillyTavern/provider/browser acceptance, including timeout/cancel rebuild behavior, user-send timing, real Ternia registry import, Megumin display continuity, and explicit World_State coordinate extraction quality, is tracked via `docs/LIVE_ACCEPTANCE.md`.
 
 
 Resolved for Phase 9:

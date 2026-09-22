@@ -9,7 +9,7 @@
 | Branch ghosts | abandoned branch mutation survives | message-owned undo + exact lineage recovery | swipe/delete/edit tests |
 | State explosion | tiny observations become records | materiality gate + derived-record cap + prefer update | long-campaign growth test |
 | Injection bloat | whole DB reaches RP prompt | deterministic top-k + hard budget | 500-record test |
-| Excess latency | capture/evolution delays normal RP | one bounded capture; batched triggered evolution only; local retrieval | measured TTFT/requests |
+| Excess latency | capture/evolution delays normal RP | one bounded capture; batched triggered evolution only; local retrieval; provider-backed continuity detached from awaited MESSAGE_SENT while retaining serialized commit | measured request bounds + host event tests + live TTFT acceptance |
 | Player-knowledge leakage | PC knows remote fact magically | explicit private-continuity header; no epistemology inference | remote-knowledge scenario |
 | NPC State conflict | duplicate ownership/namespaces | strict world_state_alpha namespace + dossier boundary | co-install test |
 | Provider inconsistency | model emits malformed/overcreative output | compact schema validator, retry policy bounded, reducer owns truth | multi-route acceptance |
@@ -17,6 +17,15 @@
 | Wrong time inference | fictional calendar misparsed | message chronology mandatory, opaque time anchors optional | no-calendar fixture |
 | Rebuild divergence | rebuild creates different current reality | bounded assistant-boundary replay through capture firewall + semantic equivalence fixtures + atomic replacement only on full success | incremental-vs-rebuild |
 | Rebuild hidden simulation | recovery invents off-screen evolution not established in narration | rebuild never invokes lazy evolution; reconstruct only grounded chronological capture evidence | no-evolution rebuild fixture |
+| Rebuild partial-success overwrite | timeout/cancel/unexpected boundary or malformed row is treated as success and replaces good state with an incomplete candidate | explicit applied/no-change success allowlist; strict structural-row failure; atomic original-state fallback | first/later timeout, cancellation, malformed Reality/Spatial row fixtures |
+| Recovery prompt ghost | fail-closed branch state remains stored and is injected as current authority | recoveryRequired/dirty branch suppresses both Reality and Spatial injection while preserving recovery data | deep rollback + host injection guard fixtures |
+| Elapsed planning contamination | hidden planning, future scheduling, quotation, or hypothetical opens catch-up | shared sanitized evidence surface + established chronology-context gate | writer/timer/system/future/hypothetical/quote fixtures |
+| Rebuild Spatial authority bypass | provider reconstruction silently shadows/moves base or operator geography | rebuild classified as provider narrative for base/lock/rank/manual-metadata protections | rebuild base-conflict fixture |
+| Disabled-Spatial rebuild loss | Reality-only rebuild clears saved Spatial profile/base/campaign state | preserve disabled sibling namespace wholesale | disable -> rebuild -> retain fixture |
+| Update omission erasure | omitted anchors/trend become synthetic empty/null replacements | wire layer preserves property omission; explicit clear remains distinct | summary-only/trend-only/explicit-clear fixtures |
+| Tombstone admission blind spot | ordinary capture cannot see a resolved predecessor and bypasses new-episode gating | separate bounded tombstone posting index for admission only | 500-record resolved recurrence fixture |
+| Spatial relation false precision | direct relation stores unsupported direction/distance/mode | shared field-grounding policy for endpoint names, direction, distance, and meaning | invented 900km reject + grounded route fixture |
+| Explicit header omission | model omits a clear current place/coordinate and geography is lost | bounded deterministic World_State header supplement through ordinary Spatial reducer | Applecross omission/dedupe/rollback/format fixtures |
 | Repeated background drain | one elapsed-time phrase triggers new remote batches across following turns while still present in bounded context | ephemeral elapsed-boundary guard permits at most one background sweep per detected elapsed evidence boundary | repeated-same-skip background fixture |
 | Manual provenance drift | operator edit attaches to stale/other branch | current-head + exact-lineage guard + manual evidence + ordinary rollback journal | manual branch/head fixtures |
 | Approximate rollback corruption | older snapshot used as parent | exact-boundary only, fail closed | missing-parent fixture |
@@ -41,14 +50,14 @@
 | Incremental index drift | In-memory relevance index becomes out of sync with mutated state | `reduceMutations` computes exact `indexDelta`; incremental delta tested against fresh index | incremental update fixture |
 | Compaction rollback corruption | Pruned evidence causes missing reference errors on branch swipe | `undo.evidence` retains compacted entries; undo patch restores uncompacted state | 50-step compaction rollback test |
 | Non-deterministic release zip | Zip bytes vary between builds due to archive timestamps or ordering | fixed DOS timestamps (2026-01-01) and alphabetical entry sorting | package hash reproducibility test |
-| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.6) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.7) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
 
 
 | Risk | Failure mode | Mitigation | Verification |
 |---|---|---|---|
 | Spatial authority drift | lower-authority narration silently moves canonical/manual place | authority rank + lock checks in Spatial reducer | authority/lock tests |
 | Geographic confetti | every clearing/ditch becomes durable state | named/persistent admission gate + bounded prompt | admission fixtures |
-| Writer-plan contamination | hidden writer_state establishes place/route | deterministic evidence-view sanitizer before capture/rebuild | writer_state + rebuild tests |
+| Writer-plan contamination | hidden planning/timer/arc state establishes reality, geography, or elapsed time | deterministic shared evidence-view sanitizer before capture/rebuild/elapsed detection | writer_state/timer/rebuild/elapsed tests |
 | False precision | model invents X/Y for relative/unknown place | coordinate firewall; exact derivation only from grounded straight-line inputs | coordinate firewall tests |
 | Route displacement error | winding route length treated as Cartesian delta | distanceMode separates straight_line / route / unspecified | derivation tests |
 | True North drift | prose relation contradicts coordinate axes | reducer-level direction-vs-delta validation | True North tests |

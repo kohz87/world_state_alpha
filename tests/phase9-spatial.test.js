@@ -2001,6 +2001,347 @@ test('writer_state planning cannot move an established location or create a rout
   assert.equal(result.rejected.length, 2);
 });
 
+test('rebuild cannot shadow a base-map location through narrative coordinate authority', async () => {
+  const baseMap = parseBaseMap(fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8'));
+  const halmere = baseMap.locations.find(item => item.name === 'Halmere');
+  assert.ok(halmere);
+
+  const state = createState('rebuild-base-authority');
+  state.spatial.profile = baseMap.profile;
+  state.spatial.baseMapRef = {
+    id: baseMap.id,
+    digest: baseMap.digest,
+    adapter: baseMap.adapter,
+  };
+  const chat = [
+    { role: 'user', content: 'I check the map.' },
+    { role: 'assistant', content: 'Halmere is at (99, 88).' },
+  ];
+  const result = await runManualRebuild({
+    ctx: {},
+    state,
+    chat,
+    chatKey: 'rebuild-base-authority',
+    spatialEnabled: true,
+    baseMap,
+    spatialProfile: baseMap.profile,
+    isCurrent: () => true,
+    dispatcher: async () => ({
+      text: JSON.stringify({
+        mutations: [],
+        spatialMutations: [{
+          action: 'upsert_location',
+          locationId: halmere.id,
+          name: 'Halmere',
+          type: halmere.type,
+          admissionReason: 'explicit_coordinate',
+          coordinate: { x: 99, y: 88, authority: 'narrative_explicit' },
+          evidence: [{ sourceMessageId: 1, claim: 'Halmere is at (99, 88).' }],
+        }],
+      }),
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    }),
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.state.spatial.locations.length, 0, 'rebuild must not create a campaign shadow of base authority');
+  const effective = resolveEffectiveLocations(result.state.spatial, baseMap).find(item => item.id === halmere.id);
+  assert.equal(effective.coordinate.x, halmere.coordinate.x);
+  assert.equal(effective.coordinate.y, halmere.coordinate.y);
+});
+
+test('rebuild aborts on a structurally malformed Spatial mutation row', async () => {
+  const chat = [
+    { role: 'user', content: 'I arrive.' },
+    { role: 'assistant', content: 'Applecross Culvert is visible.' },
+  ];
+  const original = createState('rebuild-spatial-wire');
+  original.spatial.locations.push(normalizeSpatialLocation({
+    id: 'wsloc_existing',
+    name: 'Existing Place',
+    coordinate: { x: 1, y: 2, authority: 'narrative_explicit', locked: false },
+  }));
+  const result = await runManualRebuild({
+    ctx: {},
+    state: original,
+    chat,
+    chatKey: 'rebuild-spatial-wire',
+    spatialEnabled: true,
+    isCurrent: () => true,
+    dispatcher: async () => ({
+      text: JSON.stringify({
+        mutations: [],
+        spatialMutations: [{ action: 'upsert_location', name: 'Applecross Culvert' }],
+      }),
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    }),
+  });
+  assert.equal(result.outcome, 'failure');
+  assert.deepEqual(result.state, normalizeState(original, { chatKey: 'rebuild-spatial-wire' }));
+});
+
+test('direct spatial relation requires grounded direction and distance fields', () => {
+  const spatial = createSpatialState();
+  spatial.locations.push(
+    normalizeSpatialLocation({ id: 'oakford', name: 'Oakford', coordinate: { x: null, y: null, authority: 'unknown' } }),
+    normalizeSpatialLocation({ id: 'pineford', name: 'Pineford', coordinate: { x: null, y: null, authority: 'unknown' } }),
+  );
+  const exchange = [{
+    messageId: 4,
+    lineageKey: 'ln4',
+    role: 'assistant',
+    content: 'Oakford and Pineford are both quiet today.',
+  }];
+  const result = processSpatialCapture({
+    rawSpatialMutations: [{
+      action: 'upsert_relation',
+      fromId: 'oakford',
+      toId: 'pineford',
+      direction: 'north',
+      distanceKm: 900,
+      distanceMode: 'straight_line',
+      evidence: [{ sourceMessageId: 4, claim: 'Oakford and Pineford are both quiet today.' }],
+    }],
+    spatial,
+    exchange,
+    visibleLocations: spatial.locations,
+    chatKey: 'relation-grounding',
+    sourceMessageId: 4,
+    sourceLineageKey: 'ln4',
+  });
+  assert.equal(result.spatial.relations.length, 0);
+  assert.match(result.rejected[0]?.reason || '', /grounded direction|numeric distance/i);
+});
+
+test('direct spatial relation admits only the grounded precision actually narrated', () => {
+  const spatial = createSpatialState();
+  spatial.locations.push(
+    normalizeSpatialLocation({ id: 'oakford-grounded', name: 'Oakford', coordinate: { x: null, y: null, authority: 'unknown' } }),
+    normalizeSpatialLocation({ id: 'pineford-grounded', name: 'Pineford', coordinate: { x: null, y: null, authority: 'unknown' } }),
+  );
+  const exchange = [{
+    messageId: 5,
+    lineageKey: 'ln5',
+    role: 'assistant',
+    content: 'Pineford lies 10 km north of Oakford by road.',
+  }];
+  const result = processSpatialCapture({
+    rawSpatialMutations: [{
+      action: 'upsert_relation',
+      fromId: 'oakford-grounded',
+      toId: 'pineford-grounded',
+      direction: 'north',
+      distanceKm: 10,
+      distanceMode: 'straight_line',
+      evidence: [{ sourceMessageId: 5, claim: 'Pineford lies 10 km north of Oakford by road.' }],
+    }],
+    spatial,
+    exchange,
+    visibleLocations: spatial.locations,
+    chatKey: 'relation-grounded',
+    sourceMessageId: 5,
+    sourceLineageKey: 'ln5',
+  });
+  assert.equal(result.spatial.relations.length, 1);
+  assert.equal(result.spatial.relations[0].direction, 'north');
+  assert.equal(result.spatial.relations[0].distanceKm, 10);
+  assert.equal(result.spatial.relations[0].distanceMode, 'route', 'model straight-line precision must be downgraded to narrated road distance');
+});
+
+test('explicit World_State current-location header recovers Applecross coordinates without model Spatial output', async () => {
+  const exchange = [{
+    messageId: 1,
+    lineageKey: 'ln1',
+    role: 'assistant',
+    content: '<Blocks>\n<World_State>\n**📅 Time:** CY 327, 07:29 am | **🌤 Loc:** Applecross Culvert | South of Brackenford | [31.4, 163.6] | **🌡 Wx:** Overcast, steady drizzle, 11°C, low wind\n</World_State>\n</Blocks>',
+  }];
+  const state = createState('applecross-header');
+  const result = await runCaptureOperation({
+    ctx: {},
+    dispatcher: async () => ({
+      text: '{"mutations":[],"spatialMutations":[]}',
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    }),
+    state,
+    exchange,
+    chatKey: 'applecross-header',
+    sourceMessageId: 1,
+    sourceLineageKey: 'ln1',
+    spatialEnabled: true,
+    visibleLocations: [],
+    isCurrent: () => true,
+  });
+  assert.equal(result.outcome, 'applied');
+  assert.equal(result.state.spatial.locations.length, 1);
+  const place = result.state.spatial.locations[0];
+  assert.equal(place.name, 'Applecross Culvert');
+  assert.equal(place.coordinate.x, 31.4);
+  assert.equal(place.coordinate.y, 163.6);
+  assert.equal(place.coordinate.authority, 'narrative_explicit');
+  assert.match(place.context, /South of Brackenford/);
+});
+
+test('deterministically recovered World_State location uses ordinary rollback ownership', async () => {
+  const chat = [{
+    role: 'assistant',
+    content: '<World_State>\n**Loc:** Applecross Culvert | South of Brackenford | [31.4, 163.6]\n</World_State>',
+  }];
+  const lineage = chatLineage(chat);
+  const exchange = [{ ...chat[0], messageId: 0, lineageKey: lineage[0].lineageKey }];
+  const before = seedRootCheckpoint(createState('applecross-rollback'));
+  const captured = await runCaptureOperation({
+    ctx: {},
+    dispatcher: async () => ({
+      text: '{"mutations":[],"spatialMutations":[]}',
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    }),
+    state: before,
+    exchange,
+    chatKey: 'applecross-rollback',
+    sourceMessageId: 0,
+    sourceLineageKey: lineage[0].lineageKey,
+    spatialEnabled: true,
+    visibleLocations: [],
+    isCurrent: () => true,
+  });
+  const committed = commitMutationBoundary(before, captured.state, chat, 0, 'capture');
+  assert.equal(committed.spatial.locations.some(item => item.name === 'Applecross Culvert'), true);
+
+  const rolled = reconcileBranch(committed, []);
+  assert.equal(rolled.failClosed, false);
+  assert.equal(rolled.state.spatial.locations.some(item => item.name === 'Applecross Culvert'), false);
+});
+
+test('Spatial-disabled capture does not apply deterministic World_State header extraction', async () => {
+  const exchange = [{
+    messageId: 1,
+    lineageKey: 'ln1',
+    role: 'assistant',
+    content: '<World_State>\n**Loc:** Applecross Culvert | [31.4, 163.6]\n</World_State>',
+  }];
+  const result = await runCaptureOperation({
+    ctx: {},
+    dispatcher: async () => ({
+      text: '{"mutations":[]}',
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    }),
+    state: createState('applecross-disabled'),
+    exchange,
+    chatKey: 'applecross-disabled',
+    sourceMessageId: 1,
+    sourceLineageKey: 'ln1',
+    spatialEnabled: false,
+    isCurrent: () => true,
+  });
+  assert.equal(result.state.spatial.locations.length, 0);
+});
+
+test('explicit World_State header supplements matching model proposal without duplicating it', () => {
+  const spatial = createSpatialState();
+  const exchange = [{
+    messageId: 2,
+    lineageKey: 'ln2',
+    role: 'assistant',
+    content: '<World_State>\n**Loc:** Applecross Culvert | South of Brackenford | [31.4, 163.6]\n</World_State>',
+  }];
+  const result = processSpatialCapture({
+    rawSpatialMutations: [{
+      action: 'upsert_location',
+      name: 'Applecross Culvert',
+      type: 'culvert',
+      context: 'South of Brackenford',
+      admissionReason: 'explicit_position',
+      evidence: [{ sourceMessageId: 2, claim: 'Applecross Culvert | South of Brackenford' }],
+    }],
+    spatial,
+    exchange,
+    visibleLocations: [],
+    chatKey: 'applecross-dedupe',
+    sourceMessageId: 2,
+    sourceLineageKey: 'ln2',
+  });
+  assert.equal(result.spatial.locations.length, 1);
+  assert.equal(result.spatial.locations[0].coordinate.x, 31.4);
+  assert.equal(result.spatial.locations[0].coordinate.y, 163.6);
+});
+
+test('rebuild recovers explicit World_State location header when provider omits Spatial mutation', async () => {
+  const chat = [
+    { role: 'user', content: 'I look around.' },
+    {
+      role: 'assistant',
+      content: '<World_State>\n**Loc:** Applecross Culvert | South of Brackenford | [31.4, 163.6]\n</World_State>',
+    },
+  ];
+  const result = await runManualRebuild({
+    ctx: {},
+    state: createState('applecross-rebuild'),
+    chat,
+    chatKey: 'applecross-rebuild',
+    spatialEnabled: true,
+    isCurrent: () => true,
+    dispatcher: async () => ({
+      text: '{"mutations":[],"spatialMutations":[]}',
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    }),
+  });
+  assert.equal(result.outcome, 'completed');
+  const place = result.state.spatial.locations.find(item => item.name === 'Applecross Culvert');
+  assert.ok(place);
+  assert.equal(place.coordinate.x, 31.4);
+  assert.equal(place.coordinate.y, 163.6);
+});
+
+test('explicit current-location coordinate parser accepts signed, Markdown, pipe, and quoted-axis forms', () => {
+  const forms = [
+    '[+12.4, +45.0]',
+    '(+12.4, +45.0)',
+    'X: +12.4, Y: +45.0',
+    'X: +12.4 | Y: +45.0',
+    '**X:** +12.4 | **Y:** +45.0',
+    '"X": +12.4, "Y": +45.0',
+  ];
+  for (let index = 0; index < forms.length; index += 1) {
+    const name = 'Coordinate Marker ' + index;
+    const result = processSpatialCapture({
+      rawSpatialMutations: [],
+      spatial: createSpatialState(),
+      exchange: [{
+        messageId: index,
+        lineageKey: 'ln' + index,
+        role: 'assistant',
+        content: '<World_State>\n**Loc:** ' + name + ' | ' + forms[index] + '\n</World_State>',
+      }],
+      visibleLocations: [],
+      chatKey: 'coordinate-format-' + index,
+      sourceMessageId: index,
+      sourceLineageKey: 'ln' + index,
+    });
+    assert.equal(result.spatial.locations.length, 1, forms[index]);
+    assert.equal(result.spatial.locations[0].coordinate.x, 12.4, forms[index]);
+    assert.equal(result.spatial.locations[0].coordinate.y, 45, forms[index]);
+  }
+});
+
+test('conflicting explicit current-location coordinates fail closed without a Spatial write', () => {
+  const result = processSpatialCapture({
+    rawSpatialMutations: [],
+    spatial: createSpatialState(),
+    exchange: [{
+      messageId: 3,
+      lineageKey: 'ln3',
+      role: 'assistant',
+      content: '<World_State>\n**Loc:** Ambiguous Ford | [1, 2] | [3, 4]\n</World_State>',
+    }],
+    visibleLocations: [],
+    chatKey: 'coordinate-conflict',
+    sourceMessageId: 3,
+    sourceLineageKey: 'ln3',
+  });
+  assert.equal(result.spatial.locations.length, 0);
+  assert.match(result.rejected[0]?.reason || '', /conflicting coordinate pairs/i);
+});
+
 test('Manual Spatial API always records operator provenance even without a custom note', () => {
   const state = createState('chat:test:manual-provenance');
   const result = applySpatialManualMutation({

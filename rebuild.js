@@ -230,6 +230,9 @@ export async function runManualRebuild({
   if (spatialEnabled) {
     candidate.spatial.profile = spatialProfile || original.spatial?.profile || null;
     candidate.spatial.baseMapRef = original.spatial?.baseMapRef || null;
+  } else {
+    // Reality-only rebuild must never erase the disabled sibling subsystem.
+    candidate.spatial = clone(original.spatial);
   }
   let providerCalls = 0;
   let processedBoundaries = 0;
@@ -324,7 +327,8 @@ export async function runManualRebuild({
       })),
     });
 
-    if (['failure', 'invalid-response', 'stale'].includes(result.outcome)) {
+    const successfulBoundary = result.outcome === 'applied' || result.outcome === 'no-change';
+    if (!successfulBoundary) {
       return {
         outcome: result.outcome === 'stale' ? 'stale' : 'failure',
         state: clone(original),
@@ -334,11 +338,11 @@ export async function runManualRebuild({
         snapshotToken,
         failedBoundary: window.messageId,
         receipts,
-        errorCode: result.errorCode || '',
+        errorCode: result.errorCode || `WORLD_STATE_REBUILD_BOUNDARY_${String(result.outcome || 'UNKNOWN').toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
       };
     }
 
-    if (result.outcome !== 'skipped') {
+    {
       candidate = commitMutationBoundary(
         beforeStep,
         result.state,

@@ -636,6 +636,89 @@ test('low-information evidence excerpt cannot ground a mutation', async () => {
   assert.equal(result.rejected[0].stage, 'source-firewall');
 });
 
+test('summary-only capture update preserves omitted anchors and trend while explicit replacement still works', () => {
+  let state = reduceMutations(createState('omission-semantics'), {
+    chatKey: 'omission-semantics',
+    messageId: 0,
+    lineageKey: 'ln0',
+    mutations: [{
+      action: 'create',
+      kind: 'development',
+      summary: 'The Southport dock strike is active.',
+      anchors: ['Southport', 'dock strike'],
+      trend: 'rising',
+    }],
+  }).state;
+  const record = state.records[0];
+  const exchange = withLineage([
+    { role: 'assistant', content: 'The Southport dock strike remains active while talks continue.' },
+  ]);
+
+  const summaryOnly = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'update',
+        recordId: record.id,
+        summary: 'The Southport dock strike remains active while talks continue.',
+        evidence: [{ sourceMessageId: 0, claim: 'The Southport dock strike remains active while talks continue.' }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [record],
+    chatKey: 'omission-semantics',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+  assert.deepEqual(summaryOnly.state.records[0].anchors, ['Southport', 'dock strike']);
+  assert.equal(summaryOnly.state.records[0].trend, 'rising');
+
+  state = summaryOnly.state;
+  const trendOnlyExchange = withLineage([
+    { role: 'assistant', content: 'The Southport dock strike is easing.' },
+  ]);
+  const trendOnly = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'update',
+        recordId: record.id,
+        trend: 'falling',
+        evidence: [{ sourceMessageId: 0, claim: 'The Southport dock strike is easing.' }],
+      }],
+    }),
+    state,
+    exchange: trendOnlyExchange,
+    visibleRecords: [state.records[0]],
+    chatKey: 'omission-semantics',
+    sourceMessageId: 0,
+    sourceLineageKey: trendOnlyExchange[0].lineageKey,
+  });
+  assert.equal(trendOnly.state.records[0].trend, 'falling');
+  assert.deepEqual(trendOnly.state.records[0].anchors, ['Southport', 'dock strike']);
+  assert.equal(trendOnly.state.records[0].summary, 'The Southport dock strike remains active while talks continue.');
+
+  state = trendOnly.state;
+  const replaced = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'update',
+        recordId: record.id,
+        anchors: [],
+        trend: null,
+        evidence: [{ sourceMessageId: 0, claim: 'The Southport dock strike remains active while talks continue.' }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [state.records[0]],
+    chatKey: 'omission-semantics',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+  assert.deepEqual(replaced.state.records[0].anchors, []);
+  assert.equal(replaced.state.records[0].trend, null);
+});
+
 test('diagnostics are allowlisted and never retain prompt, story, or provider response', async () => {
   const secretStory = 'PRIVATE_STORY_PAYLOAD_91827';
   const exchange = withLineage([

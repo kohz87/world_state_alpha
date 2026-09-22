@@ -225,7 +225,10 @@ test('stable catch-up advances evaluation provenance without changing current wo
   assert.equal(after.lastChangedMessage, before.lastChangedMessage);
   assert.equal(after.lastEvaluatedMessage, 1);
   assert.equal(result.state.lastCaptureMessage, 0);
-  assert.ok(Object.values(result.state.evidence).some(item => item.sourceClass === 'elapsed_hint'));
+  const elapsedEvidence = Object.values(result.state.evidence).find(item => item.sourceClass === 'elapsed_hint');
+  assert.ok(elapsedEvidence);
+  assert.match(elapsedEvidence.claim, /Five weeks later/);
+  assert.match(elapsedEvidence.claim, /Kesselpass|freight|returns|later/i);
 });
 
 test('time alone may not admit a changed outcome', async () => {

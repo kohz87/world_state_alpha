@@ -1,3 +1,5 @@
+import { sanitizeExchangeMessage } from './narrative-sanitizer.js';
+
 const WORD_NUMBERS = Object.freeze({
   one: 1,
   two: 2,
@@ -67,6 +69,7 @@ function hint(raw, {
   sourceMessageId = null,
   lineageKey = '',
   source = 'detected',
+  context = '',
 } = {}) {
   const clean = text(raw);
   if (!clean) return null;
@@ -78,6 +81,7 @@ function hint(raw, {
     sourceMessageId: Number.isInteger(sourceMessageId) && sourceMessageId >= 0 ? sourceMessageId : null,
     lineageKey: text(lineageKey, 80),
     source,
+    context: text(context, 400),
   };
 }
 
@@ -99,6 +103,7 @@ export function normalizeElapsedHint(input, defaults = {}) {
     sourceMessageId: input.sourceMessageId ?? defaults.sourceMessageId,
     lineageKey: input.lineageKey ?? defaults.lineageKey,
     source: input.source || defaults.source || 'explicit',
+    context: input.context || defaults.context || '',
   });
 }
 
@@ -155,6 +160,12 @@ export function extractElapsedHint(textValue, defaults = {}) {
   return null;
 }
 
+function messageRole(message) {
+  if (message?.role === 'user' || message?.is_user === true) return 'user';
+  if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
+  return 'system';
+}
+
 function messageText(message) {
   if (typeof message?.content === 'string') return message.content;
   if (typeof message?.mes === 'string') return message.mes;
@@ -162,16 +173,75 @@ function messageText(message) {
   return '';
 }
 
+function sentenceAround(textValue, phrase) {
+  const source = String(textValue || '');
+  const lower = source.toLocaleLowerCase();
+  const needle = String(phrase || '').toLocaleLowerCase();
+  const at = lower.indexOf(needle);
+  if (at < 0) return source.slice(0, 400).trim();
+  const beforeBreak = Math.max(
+    source.lastIndexOf('\n', at - 1),
+    source.lastIndexOf('.', at - 1),
+    source.lastIndexOf('!', at - 1),
+    source.lastIndexOf('?', at - 1),
+  );
+  const starts = beforeBreak < 0 ? 0 : beforeBreak + 1;
+  const endCandidates = [
+    source.indexOf('\n', at + needle.length),
+    source.indexOf('.', at + needle.length),
+    source.indexOf('!', at + needle.length),
+    source.indexOf('?', at + needle.length),
+  ].filter(value => value >= 0);
+  const ends = endCandidates.length ? Math.min(...endCandidates) + 1 : Math.min(source.length, at + needle.length + 220);
+  return source.slice(Math.max(0, starts), Math.min(source.length, ends)).trim().slice(0, 400);
+}
+
+function phraseInsideQuotation(textValue, phrase) {
+  const source = String(textValue || '');
+  const lower = source.toLocaleLowerCase();
+  const at = lower.indexOf(String(phrase || '').toLocaleLowerCase());
+  if (at < 0) return false;
+  const prefix = source.slice(0, at);
+  const straight = (prefix.match(/"/g) || []).length % 2 === 1;
+  const curlyOpen = (prefix.match(/“/g) || []).length;
+  const curlyClose = (prefix.match(/”/g) || []).length;
+  return straight || curlyOpen > curlyClose;
+}
+
+function establishedElapsedContext(source, found) {
+  if (!found?.raw) return null;
+  const context = sentenceAround(source, found.raw);
+  if (!context) return null;
+  if (phraseInsideQuotation(source, found.raw)) return null;
+
+  const normalized = context.toLocaleLowerCase();
+  const raw = String(found.raw || '').toLocaleLowerCase().trim();
+  // Bare "next week/month/..." is inherently prospective without stronger
+  // chronology evidence. Prefer explicit "N weeks later/after/passed" forms.
+  if (/^next\s+(?:day|week|month|year|term|semester|season|cycle)\b/u.test(raw)) return null;
+  const prospective = /\b(?:will|would|could|might|should|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|appointment|proposal|hypothetical(?:ly)?)\b/u;
+  const conditional = /\bif\b[^.!?\n]{0,160}\b(?:later|after|next|following|passed)\b/u;
+  if (prospective.test(normalized) || conditional.test(normalized)) return null;
+
+  return context;
+}
+
 export function detectElapsedHintFromExchange(exchange = []) {
   const rows = Array.isArray(exchange) ? exchange : [];
   for (let index = rows.length - 1; index >= 0; index -= 1) {
-    const message = rows[index];
-    if (!Number.isInteger(message?.messageId) || message.messageId < 0) continue;
-    const found = extractElapsedHint(messageText(message), {
-      sourceMessageId: message.messageId,
-      lineageKey: typeof message.lineageKey === 'string' ? message.lineageKey : '',
+    const rawMessage = rows[index];
+    if (!Number.isInteger(rawMessage?.messageId) || rawMessage.messageId < 0) continue;
+    if (messageRole(rawMessage) === 'system') continue;
+    const message = sanitizeExchangeMessage(rawMessage);
+    const source = messageText(message);
+    const found = extractElapsedHint(source, {
+      sourceMessageId: rawMessage.messageId,
+      lineageKey: typeof rawMessage.lineageKey === 'string' ? rawMessage.lineageKey : '',
     });
-    if (found) return found;
+    if (!found) continue;
+    const context = establishedElapsedContext(source, found);
+    if (!context) continue;
+    return { ...found, context };
   }
   return null;
 }

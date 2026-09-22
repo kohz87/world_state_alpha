@@ -61,12 +61,16 @@ function normalizeMutation(raw) {
   const mutation = {
     action,
     summary: text(raw.summary, LIMITS.summaryChars),
-    anchors: uniqueStrings(raw.anchors, LIMITS.anchorsPerRecord, LIMITS.anchorChars),
-    trend: RECORD_TRENDS.includes(raw.trend) ? raw.trend : null,
     reason: text(raw.reason, CAPTURE_WIRE_LIMITS.reasonChars),
     evidence: evidenceRaw.map(evidenceItem),
     relatedRecordIds: uniqueStrings(raw.relatedRecordIds, CAPTURE_WIRE_LIMITS.relatedRecordIds),
   };
+  if (raw.anchors !== undefined) {
+    mutation.anchors = uniqueStrings(raw.anchors, LIMITS.anchorsPerRecord, LIMITS.anchorChars);
+  }
+  if (raw.trend !== undefined) {
+    mutation.trend = raw.trend === null ? null : (RECORD_TRENDS.includes(raw.trend) ? raw.trend : null);
+  }
 
   if (action === 'create') {
     if (!RECORD_KINDS.includes(raw.kind)) throw new CaptureWireError('create mutation requires kind=fact|development');

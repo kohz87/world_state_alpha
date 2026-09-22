@@ -35,7 +35,7 @@ for (const file of inventory.modules) {
   await import(new URL('../' + file, import.meta.url));
 }
 
-if (!['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6'].includes(pkg.version) || manifest.version !== pkg.version) {
+if (!['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7'].includes(pkg.version) || manifest.version !== pkg.version) {
   throw new Error('Phase 7 application version markers are inconsistent');
 }
 if (manifest.display_name !== 'World State Alpha'
@@ -90,6 +90,10 @@ for (const required of [
   'applyWorldStateReset',
   "if (actionId === 'rebuild')",
   'window.confirm',
+  'continuityInjectionBlocked(state, { branchDirty: branchDirtyChats.has(chatKey) })',
+  'selectRelevantTombstones(index, {',
+  'void queueChatWork(chatKey, async () => {',
+  "background continuity failed safely",
 ]) {
   if (!index.includes(required)) throw new Error('Phase 7 host invariant missing: ' + required);
 }
@@ -110,6 +114,15 @@ for (const event of [
 ]) {
   if (!index.includes(event)) throw new Error('Phase 7 host event missing: ' + event);
 }
+const userHandlerStart = index.indexOf('async function handleUserMessage(messageId)');
+const userHandlerEnd = index.indexOf('async function handleBranchChange()', userHandlerStart);
+const userHandlerSource = index.slice(userHandlerStart, userHandlerEnd);
+if (/await\s+queueChatWork\(/.test(userHandlerSource)
+  || !/updatePrivateInjection\(\);[\s\S]*void queueChatWork\(chatKey, async \(\) =>/.test(userHandlerSource)
+  || !/void queueChatWork\(chatKey, async \(\) =>[\s\S]*prepareWorldStateContinuity\(/.test(userHandlerSource)) {
+  throw new Error('Phase 7 MESSAGE_SENT must publish committed continuity before detached provider-backed catch-up');
+}
+
 if ((index.match(/runCaptureOperation\s*\(\s*\{/g) || []).length !== 1) {
   throw new Error('Phase 7 automatic capture must have exactly one host dispatch path');
 }

@@ -292,6 +292,21 @@ Observe:
 
 This is the primary live acceptance case for 0.9.0-alpha.5.
 
+### L23. Alpha.7 audit hardening
+
+Run these focused live checks against 0.9.0-alpha.7:
+
+- force a rebuild provider timeout/cancel on the first and a later chunk; the prior canonical state must remain intact and the UI must not report success
+- trigger a deep edit/swipe for which exact rollback proof is unavailable; retained recovery state may remain inspectable, but neither Reality nor Spatial abandoned-state continuity may reach the RP prompt
+- place `Five weeks later` only in writer/timer/planning text and separately say `I will return next week`; neither case may trigger catch-up, while explicit narrated passage such as `Five weeks later, the caravan returns` may
+- with a locked/base location attached, narrate a conflicting coordinate during rebuild; provider narration must not shadow the base location
+- disable Spatial, run a Reality rebuild, then re-enable Spatial; the saved profile, base attachment and campaign locations must still exist
+- use the exact Applecross Culvert `World_State` header with `[31.4, 163.6]`; successful model output that omits the coordinate or returns `spatialMutations:[]` must still recover one Applecross Culvert at that coordinate through the normal Spatial reducer
+- narrate two unknown-coordinate places without direction/distance, while the provider proposes an exact relation; unsupported precision must not be stored
+- run with deliberately slow background catch-up and compare user-send/RP preparation timing; `MESSAGE_SENT` must not remain open for provider latency, and the later result must appear only after serialized durable commit
+
+Record provider/model, timeout configuration, actual RP TTFT/request timing, and whether the recovered Applecross location survives reload/rollback. Deterministic tests establish the contract; this case remains the live SillyTavern/browser/provider acceptance boundary.
+
 ## 3. Contractual bounds to verify live
 
 These are behavioral ceilings, not latency predictions:
@@ -305,6 +320,7 @@ These are behavioral ceilings, not latency predictions:
 - Spatial disabled adds zero Spatial injection and no second automatic capture call
 - Spatial enabled still uses at most the existing one automatic capture call per eligible completed assistant exchange
 - normal Spatial retrieval is bounded and does not dump/scan the complete map
+- provider-backed catch-up does not hold awaited MESSAGE_SENT preparation open; its result is eligible only after serialized durable commit
 
 ## 4. Results template
 
@@ -342,6 +358,7 @@ L19 Writer-state Spatial firewall: PASS / FAIL / NOT RUN
 L20 Spatial branch rollback/campaign isolation: PASS / FAIL / NOT RUN
 L21 Megumin World_State spatial continuity: PASS / FAIL / NOT RUN
 L22 Persistent off-screen capture completeness: PASS / FAIL / NOT RUN
+L23 Alpha.7 audit hardening: PASS / FAIL / NOT RUN
 
 Measured:
 RP TTFT baseline:

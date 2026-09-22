@@ -162,6 +162,7 @@ On swipe/delete/edit/truncation/branch:
 - abandoned suffix mutations are removed
 - no older approximate checkpoint may substitute for a missing parent
 - if exact recovery cannot be proven, fail closed and preserve canonical state while marking targeted rebuild/rescan need
+- while branch ownership is unresolved or `recoveryRequired` is set, retain state only for recovery/inspection and suppress both Reality and Spatial private continuity injection
 
 No ghost state may survive an abandoned branch.
 
@@ -316,7 +317,9 @@ The Phase 5 rebuild contract is:
 - surface relevant resolved/superseded tombstones during reconstruction so passive historical similarity cannot resurrect an old episode
 - allow a genuinely new related episode only through explicit new-episode semantics
 - do not replay lazy evolution or run hidden off-screen simulation during rebuild
-- discard the entire candidate on stale scope, malformed response, provider failure, or supporting-context failure
+- allowlist only explicit successful capture boundary outcomes (`applied` / `no-change`); timeout, cancellation, skipped/unexpected outcomes, stale scope, malformed response, provider failure, or supporting-context failure discard the entire candidate
+- a structurally malformed Reality or Spatial mutation row inside an otherwise valid envelope invalidates the rebuild boundary; semantic admission rejections such as duplicate/resurrection blocking may still produce a valid no-change boundary
+- a Reality-only rebuild preserves the disabled Spatial namespace instead of interpreting disabled extraction as deletion
 - atomically replace canonical state only after the complete chronological pass succeeds
 - support controlled semantic comparison between incremental and rebuilt current state even when evidence source classes differ
 
@@ -332,7 +335,7 @@ Story-driving principles such as autonomous world motion, scene variation, chanc
 
 World State records or evolves state only from its own grounded evidence and causal contract.
 
-Writer State, narrative plans, Story Director output, anticipated events, and spatial hypotheses are not canonical World State evidence. Before Reality Core capture, Spatial capture, rebuild, or evidence validation evaluates assistant narration, `<writer_state>...</writer_state>` planning blocks are removed from the evidence view only. Raw chat storage, raw-message ownership, lineage fingerprints, and branch history remain unchanged.
+Writer State, narrative plans, Story Director output, anticipated events, consequence timers, arc/scene planning, and spatial hypotheses are not canonical World State evidence. Before Reality Core capture, Spatial capture, rebuild, elapsed-time detection, or evidence validation evaluates assistant narration, planning-only tagged blocks are removed from the evidence view only. Raw chat storage, raw-message ownership, lineage fingerprints, and branch history remain unchanged. Elapsed-time catch-up additionally requires an established chronology transition: system messages, quotations, hypotheticals, future plans/appointments, and bare prospective `next ...` phrases are not elapsed evidence. Accepted elapsed support retains a bounded surrounding narrative sentence rather than only the matched time phrase.
 
 Spatial state changes only from trusted base geography, grounded user/assistant narrative evidence, deterministic derivation from already-established spatial facts, or explicit user/manual authority.
 
@@ -388,14 +391,14 @@ The host uses an owner-qualified per-chat key so equal chat filenames belonging 
 Normal lifecycle ownership:
 
 - completed assistant message -> reconcile exact branch -> at most one eligible capture request -> canonical reducer result -> branch journal ownership -> sidecar persistence
-- user message before the next generation -> reconcile exact branch -> local relevance + optional meaningful elapsed-time catch-up -> compact private injection
+- user message before the next generation -> hydrate/prepare from the last durably committed branch-safe state -> compact private injection immediately -> serialize optional provider-backed meaningful elapsed-time/background catch-up on the existing chat writer queue for later injections
 - chat load/change -> cancel World State in-flight work, hydrate/reconcile current owned state, then refresh only the World State prompt/UI
 - edit/delete/swipe lifecycle -> cancel World State requests and run exact `reconcileBranch`; never preserve abandoned-branch state
 - character/chat rename -> migrate the owner-qualified World State key and pointer only after the new owned sidecar is durably written; host historical-name rewrites rebase proven lineage keys without rolling current world truth backward
 - chat/group-chat/character delete -> resolve exact owner ownership, neutralize the retired sidecar when possible, persist a lifecycle tombstone, then remove active pointer/cache ownership; ambiguity preserves data fail-closed
 - routing/enablement setting changes -> advance the state epoch and cancel matching provider work before new settings take effect
 
-All asynchronous provider-backed work is guarded by current chat identity, exact raw-message lineage, and local state epoch. Host ownership-changing operations additionally use an ownership epoch so stale hydration or persistence completion cannot repopulate a renamed/deleted owner. Stale completion is discarded. Provider-backed automatic work and operator maintenance/Spatial mutations for one chat are serialized through the same per-chat work queue. Automatic assistant capture must not keep SillyTavern's awaited `MESSAGE_RECEIVED` render/save event open; it is dispatched in the background and remains protected by the same per-chat queue/currentness guards.
+All asynchronous provider-backed work is guarded by current chat identity, exact raw-message lineage, and local state epoch. Host ownership-changing operations additionally use an ownership epoch so stale hydration or persistence completion cannot repopulate a renamed/deleted owner. Stale completion is discarded. Provider-backed automatic work and operator maintenance/Spatial mutations for one chat are serialized through the same per-chat work queue. Automatic assistant capture must not keep SillyTavern's awaited `MESSAGE_RECEIVED` render/save event open. Provider-backed continuity/evolution must likewise not keep the awaited `MESSAGE_SENT` preparation path open: that event publishes only the last durably committed safe state for the current generation, then queues remote completeness work whose committed result is eligible for later injections.
 
 The host calls `setExtensionPrompt` only for `world_state_alpha_private_continuity`, SYSTEM / `IN_CHAT`, at the configured shallow depth. Disabling, leaving a chat, or failing hydration clears only that World State key. The host never mutates global RP provider/model/preset settings.
 
@@ -438,7 +441,7 @@ The Phase 8 index is ephemeral and non-canonical. It must not be serialized or t
 
 Normal indexed retrieval must not iterate the complete record corpus, the complete exact-anchor dictionary, or every posting list. Query terms drive bounded posting-list lookups. Posting traversal and candidate scoring have hard deterministic caps. Exact/anchor evidence receives priority over weak common summary-token evidence before candidate truncation.
 
-Once admitted to the candidate set, records use the existing relevance scoring and one-hop expansion rules. A non-indexed compatibility path may remain for host-neutral/manual regression use, but the real normal-turn host path supplies the index.
+Once admitted to the candidate set, active records use the existing relevance scoring and one-hop expansion rules. A separate ephemeral bounded tombstone posting index may surface at most a tiny resolved/superseded admission slice to ordinary capture so recurrence can pass the existing new-episode/resurrection gate; tombstones remain excluded from current-state injection. A non-indexed compatibility path may remain for host-neutral/manual regression use, but the real normal-turn host path supplies the index.
 
 Full index rebuild is restricted to hydration and whole-state replacement/recovery paths. Routine canonical mutations update the cached index using small non-persisted reducer deltas. Incremental refresh must preserve generic persisted relation edges as well as causedBy/affects adjacency.
 
@@ -450,7 +453,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added; sidecar, bundle, and rollback-journal envelope formats remain version 1.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 hardening release changes no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 
@@ -518,13 +521,13 @@ Coordinate authority is deterministic. The effective precedence is:
 7. relative-only location
 8. unknown
 
-A locked or higher-authority coordinate may not be silently moved by lower authority. Unlocking a manual coordinate explicitly permits a later grounded higher-ranked observation to correct it.
+A locked or higher-authority coordinate may not be silently moved by lower authority. Unlocking a manual coordinate explicitly permits a later grounded higher-ranked observation to correct it. Provider-authored rebuild mutations are narrative authority, not operator authority, and therefore obey the same base-map, lock, coordinate-rank, and manual-metadata restrictions as automatic capture.
 
 Precise X/Y must never be invented merely because a location exists. Relative-only and unknown are valid durable states.
 
 Deterministic derivation is allowed only from a known anchor plus grounded direction and grounded straight-line/direct distance under an explicit configured profile with a positive unit scale. Cardinal and diagonal vectors use that profile's declared north/east axes and unit scale. Vague distance and route/travel distance do not yield exact coordinates.
 
-When True North is locked, any stored direction whose endpoints both have known coordinates must agree with the coordinate delta.
+When True North is locked, any stored direction whose endpoints both have known coordinates must agree with the coordinate delta. Direct relation proposals use the same grounding policy as relative-location proposals: accepted narration must ground the endpoint identities and any direction, numeric distance, or distance meaning that is persisted. Unsupported precision is removed or rejected rather than canonicalized.
 
 ### C24.4 Admission and evidence firewall
 
@@ -532,7 +535,7 @@ Generated-location admission is conservative. A place may be retained when groun
 
 Spatial automatic capture shares the existing eligible Reality capture request. It may add a bounded `spatialMutations` envelope to that response, but it does not create a second automatic provider call.
 
-Every automatic Spatial mutation passes its own source/evidence firewall and reducer. `writer_state`, planning blocks, anticipated events, and model-only hypotheses are not evidence. Rebuild uses the same sanitized evidence view.
+Every automatic Spatial mutation passes its own source/evidence firewall and reducer. `writer_state`, planning blocks, anticipated events, and model-only hypotheses are not evidence. Rebuild uses the same sanitized evidence view. Within the bounded current exchange only, deterministic parsing may supplement a successful model response from an explicit `World_State` current-location header by proposing the named place and unambiguous same-header X/Y pair through the ordinary Spatial admission/reducer path. It may merge with a matching model proposal, but ambiguous/conflicting associations fail closed; it never directly writes state or bypasses base-map authority, currentness, journaling, rollback, or Spatial disablement.
 
 ### C24.5 Manual authority and UI
 
@@ -559,7 +562,7 @@ Spatial undo data participates in the same branch journal and checkpoints as Rea
 
 Export/import carries campaign Spatial state. Foreign import clears false local spatial message/lineage provenance. Base-map source files remain separate read-only references identified by campaign `baseMapRef`; foreign import preserves source identity/digest but clears the machine-local source path so the target host must rebind or reattach the read-only source.
 
-Explicit rebuild reconstructs generated Spatial state from the same chronological sanitized evidence stream, retains the attached base-map reference/profile, and atomically replaces state only after complete success.
+Explicit rebuild reconstructs generated Spatial state from the same chronological sanitized evidence stream when Spatial reconstruction is enabled, retains the attached base-map reference/profile, and atomically replaces state only after complete success. A Reality-only rebuild preserves the disabled Spatial sibling wholesale rather than treating disabled extraction as deletion.
 
 ### C24.7 Bounded retrieval and private injection
 

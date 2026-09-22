@@ -451,6 +451,139 @@ test('rebuild refuses provider work without a currentness guard', async () => {
   assert.equal(calls.count, 0);
 });
 
+test('rebuild fails closed on timeout, cancellation, and a later-window timeout', async () => {
+  const chat = fixtureChat();
+  const original = reduceMutations(createState('rebuild-provider-outcome'), {
+    chatKey: 'rebuild-provider-outcome',
+    messageId: 0,
+    lineageKey: chatLineage(chat)[0].lineageKey,
+    mutations: [{ action: 'create', kind: 'fact', summary: 'Preexisting state must survive rebuild failure.' }],
+  }).state;
+
+  for (const outcome of ['timeout', 'cancelled']) {
+    const dispatcher = async () => {
+      const error = new Error(outcome);
+      error.code = outcome === 'timeout' ? 'WORLD_STATE_ROUTE_TIMEOUT' : 'WORLD_STATE_ROUTE_CANCELLED';
+      error.receipt = { dispatched: true, outcome, route: 'test', profileId: '' };
+      throw error;
+    };
+    const result = await runManualRebuild({
+      ctx: {},
+      dispatcher,
+      state: original,
+      chat,
+      chatKey: 'rebuild-provider-outcome',
+      isCurrent: () => true,
+    });
+    assert.equal(result.outcome, 'failure');
+    assert.equal(result.failedBoundary, 1);
+    assert.deepEqual(result.state, original);
+  }
+
+  let calls = 0;
+  const dispatcher = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return { text: '{"mutations":[]}', receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' } };
+    }
+    const error = new Error('late timeout');
+    error.code = 'WORLD_STATE_ROUTE_TIMEOUT';
+    error.receipt = { dispatched: true, outcome: 'timeout', route: 'test', profileId: '' };
+    throw error;
+  };
+  const late = await runManualRebuild({
+    ctx: {},
+    dispatcher,
+    state: original,
+    chat,
+    chatKey: 'rebuild-provider-outcome',
+    isCurrent: () => true,
+  });
+  assert.equal(late.outcome, 'failure');
+  assert.equal(late.failedBoundary, 3);
+  assert.deepEqual(late.state, original);
+});
+
+test('rebuild aborts on a structurally malformed mutation row inside valid JSON', async () => {
+  const chat = [
+    { role: 'user', content: 'I arrive at Southport.' },
+    { role: 'assistant', content: 'A dock strike begins at Southport.' },
+  ];
+  const original = reduceMutations(createState('rebuild-strict-wire'), {
+    chatKey: 'rebuild-strict-wire',
+    messageId: 0,
+    lineageKey: chatLineage(chat)[0].lineageKey,
+    mutations: [{ action: 'create', kind: 'fact', summary: 'Original state survives malformed rebuild output.' }],
+  }).state;
+  const result = await runManualRebuild({
+    ctx: {},
+    state: original,
+    chat,
+    chatKey: 'rebuild-strict-wire',
+    isCurrent: () => true,
+    dispatcher: async () => ({
+      text: JSON.stringify({
+        mutations: [{ action: 'create', kind: 'development', summary: 'Dock strike is active.' }],
+      }),
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    }),
+  });
+  assert.equal(result.outcome, 'failure');
+  assert.equal(result.failedBoundary, 1);
+  assert.deepEqual(result.state, original);
+  assert.match(result.receipts[0].rejections[0].reason, /structurally invalid Reality mutation row|requires evidence/i);
+});
+
+test('Reality-only rebuild preserves the disabled Spatial namespace', async () => {
+  const chat = [
+    { role: 'user', content: 'I stay in town.' },
+    { role: 'assistant', content: 'Nothing material changes.' },
+  ];
+  const original = createState('rebuild-spatial-disabled');
+  original.spatial.profile = {
+    system: 'cartesian2d',
+    northAxis: '+y',
+    eastAxis: '+x',
+    unitKm: 5,
+    decimalStep: 0.1,
+    bounds: { minX: -500, maxX: 500, minY: -500, maxY: 500 },
+    trueNorthLocked: true,
+  };
+  original.spatial.baseMapRef = { id: 'base-test', digest: 'digest-test', adapter: 'generic_cartesian' };
+  original.spatial.locations.push({
+    id: 'wsloc_saved',
+    name: 'Saved Ford',
+    type: 'ford',
+    status: 'active',
+    coordinate: { x: 4, y: 9, authority: 'narrative_explicit', locked: false },
+    context: 'Saved campaign place',
+    relative: null,
+    routeRefs: [],
+    createdAtMessage: 0,
+    lastChangedMessage: 0,
+    evidenceIds: [],
+    notes: '',
+  });
+
+  const result = await runManualRebuild({
+    ctx: {},
+    state: original,
+    chat,
+    chatKey: 'rebuild-spatial-disabled',
+    spatialEnabled: false,
+    isCurrent: () => true,
+    dispatcher: async () => ({
+      text: '{"mutations":[]}',
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    }),
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.state.spatial.baseMapRef?.id, 'base-test');
+  assert.equal(result.state.spatial.profile?.unitKm, 5);
+  assert.equal(result.state.spatial.locations.some(item => item.name === 'Saved Ford'), true);
+});
+
 test('empty/no-assistant chat rebuild is local and does not require a provider guard', async () => {
   const state = reduceMutations(createState('empty-rebuild'), {
     chatKey: 'empty-rebuild',

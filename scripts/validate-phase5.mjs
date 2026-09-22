@@ -46,6 +46,8 @@ for (const required of [
   "evidenceSourceClass: 'rebuild'",
   "'WORLD_STATE_REBUILD_BOUNDARY_LIMIT'",
   "'WORLD_STATE_REBUILD_CURRENT_GUARD_REQUIRED'",
+  "result.outcome === 'applied' || result.outcome === 'no-change'",
+  "candidate.spatial = clone(original.spatial)",
 ]) {
   if (!rebuildSource.includes(required)) throw new Error(`rebuild missing invariant: ${required}`);
 }

@@ -467,21 +467,26 @@ snapshot canonical state + exact current chat lineage
    |
 plan bounded assistant-completed exchange windows
    |
-start isolated empty/root-checkpoint candidate
+start isolated root-checkpoint Reality candidate
+   + reconstruct Spatial only when enabled
+   + otherwise preserve the disabled Spatial sibling unchanged
    |
 for each window in chronology:
    existing capture prompt + persistent-condition completeness sweep + source firewall
    + relevant active records
    + relevant resolved/superseded tombstones
    -> one bounded capture-style request
+   -> structurally malformed Reality/Spatial row? fail whole rebuild
+   -> provider-authored Spatial uses the same automatic base/lock/authority guards as capture
    -> evidence reclassified as rebuild provenance
    -> reducer + exact-message journal on candidate only
    |
 never replay lazy evolution / never simulate missing off-screen motion
    |
-stale / malformed / provider/context failure?
- yes -> discard whole candidate, canonical state unchanged
- no  -> finish full lineage
+outcome is applied/no-change?
+ no (timeout/cancel/stale/skipped/unexpected/malformed/provider/context failure)
+    -> discard whole candidate, canonical state unchanged
+ yes -> finish full lineage
    |
 compare controlled current-state semantics where requested
    |
@@ -589,7 +594,9 @@ The host builds/rebuilds the full index only when a whole canonical state is hyd
 
 Candidate discovery is query-driven rather than corpus-driven. It performs bounded exact anchor phrase lookups, bounded non-ASCII bigram lookups, anchor-token lookups, and summary-token lookups. Posting traversal has a hard budget derived from `candidateCap`, and the scored candidate set is capped before the existing relevance scorer runs. It must not iterate every record, every anchor phrase, or every posting list on an ordinary turn.
 
-Exact anchor evidence is processed before weaker token evidence. Once a record enters the candidate set, the existing relevance scoring/ranking semantics remain authoritative. One-hop expansion then uses the indexed generic/causal relation maps.
+Exact anchor evidence is processed before weaker token evidence. Once an active record enters the candidate set, the existing relevance scoring/ranking semantics remain authoritative. One-hop expansion then uses the indexed generic/causal relation maps.
+
+A separate ephemeral tombstone posting index is built during the same already-authorized full state index construction and maintained by incremental deltas. Ordinary capture may query at most a bounded 32-candidate slice and surface at most two relevant resolved/superseded records for duplicate/new-episode admission. Tombstones never enter current-state injection.
 
 The legacy no-index path remains for host-neutral services and regression comparison. The real SillyTavern normal-turn host path supplies the index.
 
@@ -616,7 +623,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; and the current Background Development Catch-up candidate is `0.9.0-alpha.6`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
+Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; Background Development Catch-up landed in `0.9.0-alpha.6`; and the current recovery/evidence/Spatial hardening candidate is `0.9.0-alpha.7`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 
@@ -660,19 +667,23 @@ The two domains share ownership and transaction infrastructure, not reducers. Re
 
 When Spatial is enabled, the ordinary eligible capture request asks for one JSON object containing both Reality `mutations` and optional `spatialMutations`. This preserves the Phase 8 request budget: Spatial does not add a second automatic model request.
 
-Before prompt construction and evidence validation, assistant narration passes through `narrative-sanitizer.js`, which removes `<writer_state>...</writer_state>` blocks only from the evidence surface. Raw stored chat and lineage fingerprints remain untouched.
+Before prompt construction and evidence validation, assistant narration passes through `narrative-sanitizer.js`, which removes planning-only tagged blocks such as writer state, inner chatter, CYOA/inventory/skill state, planted seeds, consequence timers, and arc/scene planning only from the evidence surface. Raw stored chat and lineage fingerprints remain untouched. Elapsed-time detection uses the same sanitized surface and additionally rejects system text, quotations, hypotheticals, future plans/appointments, and bare prospective `next ...` phrases.
 
 Spatial proposals then pass:
 
 ```text
 wire validation
+ -> optional bounded deterministic supplement from explicit current World_State location header
  -> grounded sanitized evidence
  -> generated-place admission
  -> explicit-coordinate / relative-position firewall
+ -> direct relation field grounding
  -> True North validation
  -> spatial reducer
  -> shared branch journal
 ```
+
+The deterministic current-location supplement is not a writer. It binds only an unambiguous place name and same-header coordinate pair from the bounded current exchange, merges with a matching model proposal when possible, and otherwise emits one ordinary Spatial proposal. Conflicts/ambiguity fail closed. Base-map authority, currentness, rollback, and Spatial enablement still apply.
 
 ### 24.2 Base map adapter boundary
 
@@ -731,4 +742,4 @@ Schema 1 normalizes to schema 2 by adding an empty Spatial namespace. Existing R
 
 Spatial undo patches are nested in the same journal boundary as Reality undo. Whole-state checkpoint restore normalizes legacy snapshots before use.
 
-Rebuild starts from a clean schema-2 candidate, retains the attached profile/base-map reference, replays the same sanitized chronological capture surface, and remains atomic/fail-closed.
+Rebuild starts from a clean schema-2 Reality candidate. When Spatial reconstruction is enabled it retains the attached profile/base-map reference and rebuilds generated Spatial state through the same sanitized/authority-guarded pipeline; when Spatial is disabled it preserves the existing Spatial sibling wholesale. Rebuild remains atomic/fail-closed.

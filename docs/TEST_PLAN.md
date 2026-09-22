@@ -103,8 +103,9 @@ No fixture may require schema code specific to its setting.
 - import from another chat -> source message IDs rebased/cleared, not trusted as local
 - manual mutation against non-head or divergent lineage -> reject
 - rebuild boundary limit exceeded -> reject before provider work
-- rebuild provider fails on a later chunk -> original canonical state unchanged
+- rebuild provider fails, times out, cancels, or returns an unexpected outcome on the first or a later chunk -> original canonical state unchanged
 - rebuild currentness changes mid-run -> discard whole candidate
+- rebuild valid JSON contains a structurally invalid Reality/Spatial mutation row -> discard whole candidate with bounded rejection detail
 - rebuild passive duplicate of resolved episode -> reject
 - rebuild explicit new related episode -> create new record, retain tombstone
 - rebuild historical exchange contains an ignored persistent off-screen condition -> recover it as current development with `rebuild` evidence, without replaying hidden evolution
@@ -129,6 +130,8 @@ No fixture may require schema code specific to its setting.
 - delete/rename ownership retirement -> lifecycle tombstone plus neutralized sidecar prevents stale-state resurrection after settings-save crash
 - World State panel opened on chat A then navigation to chat B -> stale panel closes and cannot mutate chat B
 - MESSAGE_RECEIVED capture -> listener returns without awaiting provider work; per-chat queue/currentness still serialize commit
+- MESSAGE_SENT -> current generation uses last durably committed safe injection without awaiting queued provider-backed continuity; later committed result remains serialized/currentness-guarded
+- fail-closed recoveryRequired/dirty branch -> both Reality and Spatial private prompt content are suppressed until recovery clears
 - chat/branch changes during capture/evolution/rebuild -> stale result discarded
 - Alpha + Delta pinned namespace fixture -> no settings/prompt/DOM/global/file/load-order collision
 - disabling Alpha/injection -> clear only `world_state_alpha_private_continuity`
@@ -255,3 +258,16 @@ Performance/injection:
 80. 1000-location campaign/base projection retrieves a bounded candidate subset.
 81. Injection remains budgeted and does not dump the map.
 82. Normal turns do not reparse the base source or scan every route/polyline.
+83. Rebuild provider timeout/cancellation/unexpected outcome on first and later boundaries leaves original canonical state unchanged.
+84. Structurally malformed Reality or Spatial row inside valid rebuild JSON invalidates the reconstruction; semantic duplicate/new-episode rejection remains distinguishable.
+85. Fail-closed deep rollback retains recovery data but emits no Reality or Spatial continuity prompt.
+86. Elapsed detector rejects writer/timer/planning blocks, system messages, quotations, hypotheticals, future appointments and bare prospective next-week language; established elapsed narration remains accepted with bounded context.
+87. Rebuild narration cannot shadow a locked/base canonical location or inherit operator Spatial privileges.
+88. Disable Spatial -> Reality rebuild -> re-enable preserves saved profile, base-map reference and campaign locations.
+89. Summary-only and trend-only Reality updates preserve omitted fields; explicit supported clear/replacement remains possible.
+90. Bounded ordinary capture tombstone admission retrieves a relevant resolved predecessor without placing it into current-state injection or scanning the full record set.
+91. Direct Spatial relation stores only grounded endpoint/direction/distance/mode; unsupported 900 km precision is rejected and narrated road distance cannot become straight-line precision.
+92. Exact Applecross-style World_State current-location header recovers name/context/X/Y when successful model output omits coordinate or the entire Spatial mutation.
+93. Deterministic current-location supplementation deduplicates a matching model proposal, fails closed on conflicting/ambiguous pairs, obeys Spatial disabled mode, and rolls back through the ordinary branch journal.
+94. Coordinate parser accepts signed bracket/parenthesis pairs plus signed/Markdown/pipe/quoted-axis X/Y formats and rejects malformed/ambiguous pairs.
+95. Provider-backed background continuity is detached from awaited MESSAGE_SENT while remaining on the single per-chat writer queue with stale/currentness guards.
