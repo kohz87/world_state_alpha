@@ -33,11 +33,11 @@ const transferSource = fs.readFileSync('transfer.js', 'utf8');
 if (inventory.stage !== 'phase9-spatial-continuity') {
   throw new Error('Phase 9 runtime inventory stage mismatch: ' + inventory.stage);
 }
-if (pkg.version !== '0.9.0-alpha.2' || manifest.version !== pkg.version) {
-  throw new Error('Phase 9 application version markers must be synchronized to 0.9.0-alpha.2');
+if (pkg.version !== '0.9.0-alpha.3' || manifest.version !== pkg.version) {
+  throw new Error('Phase 9 application version markers must be synchronized to 0.9.0-alpha.3');
 }
-if (!indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.2'")) {
-  throw new Error('Phase 9 index.js version marker not synchronized to 0.9.0-alpha.2');
+if (!indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.3'")) {
+  throw new Error('Phase 9 index.js version marker not synchronized to 0.9.0-alpha.3');
 }
 
 // 2. Canonical schema version 2 for durable spatial state
@@ -210,4 +210,4 @@ if (migrated.schemaVersion !== 2 || !migrated.spatial || !Array.isArray(migrated
   throw new Error('Phase 9 schema1 migration did not produce valid schema2 spatial state');
 }
 
-console.log('World State Alpha Phase 9 validation passed: version 0.9.0-alpha.2 synchronized, schemaVersion 2 durable, spatial base map adapter verified, authority firewall validated, narrative sanitizer working, and spatial relevance indexing bounded.');
+console.log('World State Alpha Phase 9 validation passed: version 0.9.0-alpha.3 synchronized, schemaVersion 2 durable, spatial base map adapter verified, authority firewall validated, narrative sanitizer working, and spatial relevance indexing bounded.');

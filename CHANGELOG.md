@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0-alpha.3 - Standard settings drawer
+
+### Changed
+
+- Replaced the custom `<details>/<summary>` settings collapse with SillyTavern's native `extension_container > inline-drawer > inline-drawer-toggle/inline-drawer-content` pattern, matching NPC State Delta and other standard extension drawers.
+- Uses SillyTavern's standard circular chevron, full header click target, and host drawer behavior while preserving the grouped low-glare World State controls inside the expanded panel.
+
+### Preserved
+
+- No World State capture, persistence, provider-routing, Reality Core, or Spatial Continuity semantics changed.
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+
 ## 0.9.0-alpha.2 - Continuity hardening
 
 ### Fixed
