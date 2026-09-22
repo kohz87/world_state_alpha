@@ -1,6 +1,7 @@
 import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { clone, normalizeState } from './state-core.js';
+import { resolveEffectiveLocations, resolveEffectiveRoutes } from './spatial-core.js';
 
 export const WORLD_STATE_UI_NAMESPACE = 'world_state_alpha_ui';
 
@@ -9,6 +10,7 @@ export const WORLD_STATE_UI_LIMITS = Object.freeze({
   recentRecords: 40,
   resolvedRecords: 80,
   searchRecords: 100,
+  spatialLocations: 200,
   diagnostics: 40,
   evidence: 32,
   relations: 24,
@@ -18,6 +20,7 @@ export const WORLD_STATE_UI_TABS = Object.freeze([
   'current',
   'recent',
   'resolved',
+  'spatial',
   'search',
   'diagnostics',
   'maintenance',
@@ -73,6 +76,7 @@ function reasonLabel(value) {
   if (reason === 'capture') return 'Captured from story';
   if (reason === 'evolution') return 'Updated by grounded catch-up';
   if (reason === 'manual') return 'Manual correction';
+  if (reason === 'spatial-manual') return 'Manual spatial edit';
   if (reason === 'rebuild') return 'Rebuilt from chat';
   return titleWords(reason);
 }
@@ -89,6 +93,33 @@ function sourceLabel(value) {
     case 'foreign_import': return 'Imported data';
     default: return 'Recorded evidence';
   }
+}
+
+function authorityLabel(auth, locked = false) {
+  const lockIcon = locked ? ' 🔒' : '';
+  switch (auth) {
+    case 'base_canonical': return 'Base Canonical' + lockIcon;
+    case 'campaign_override': return 'Campaign Override' + lockIcon;
+    case 'manual': return 'Manual' + lockIcon;
+    case 'narrative_explicit': return 'Narrative Explicit' + lockIcon;
+    case 'derived': return 'Derived' + lockIcon;
+    case 'relative': return 'Relative' + lockIcon;
+    default: return 'Unknown' + lockIcon;
+  }
+}
+
+function inverseDirection(value) {
+  const map = {
+    north: 'south',
+    northeast: 'southwest',
+    east: 'west',
+    southeast: 'northwest',
+    south: 'north',
+    southwest: 'northeast',
+    west: 'east',
+    northwest: 'southeast',
+  };
+  return map[clean(value, 30).toLowerCase()] || clean(value, 30).toLowerCase();
 }
 
 function recordSort(left, right) {
@@ -210,11 +241,102 @@ function projectDiagnostics(rows) {
     });
 }
 
+function projectSpatialLocation(loc, key) {
+  const coord = loc.coordinate || {};
+  const hasCoord = Number.isFinite(coord.x) && Number.isFinite(coord.y);
+  return {
+    key,
+    id: loc.id,
+    overrideId: loc.overrideId || null,
+    baseRefId: loc.baseRefId || null,
+    name: clean(loc.name, 120),
+    type: clean(loc.type, 60) || 'place',
+    isBase: Boolean(loc.isBase),
+    isOverridden: Boolean(loc.isOverridden),
+    hasCoord,
+    coordText: hasCoord ? `[${coord.x}, ${coord.y}]` : '(no coord)',
+    x: Number.isFinite(coord.x) ? coord.x : '',
+    y: Number.isFinite(coord.y) ? coord.y : '',
+    authority: clean(coord.authority, 30) || 'unknown',
+    authorityLabel: authorityLabel(coord.authority, coord.locked),
+    locked: Boolean(coord.locked),
+    context: clean(loc.context, 600),
+    routeRefs: Array.isArray(loc.routeRefs) ? loc.routeRefs.map(r => clean(r, 120)).filter(Boolean) : [],
+    notes: clean(loc.notes, 400),
+    status: loc.status || 'active',
+  };
+}
+
+function projectSpatialDetail(spatialState, loc, baseMap, key) {
+  const base = projectSpatialLocation(loc, key);
+  const evidence = (loc.evidenceIds || [])
+    .map(evId => spatialState?.evidence?.[evId])
+    .filter(Boolean)
+    .slice(-WORLD_STATE_UI_LIMITS.evidence)
+    .reverse()
+    .map(item => ({
+      source: sourceLabel(item?.sourceClass),
+      sourceMessageId: integer(item?.sourceMessageId),
+      claim: clean(item?.claim, 500),
+    }));
+
+  const allEffective = resolveEffectiveLocations(spatialState, baseMap);
+  const locMap = new Map(allEffective.map(item => [item.id, item]));
+  const campaignId = loc.overrideId || loc.id;
+
+  const relations = (spatialState?.relations || [])
+    .filter(r => r.fromId === loc.id || r.toId === loc.id
+      || r.fromId === campaignId || r.toId === campaignId)
+    .slice(0, WORLD_STATE_UI_LIMITS.relations)
+    .map(rel => {
+      const selectedIsTarget = rel.toId === loc.id || rel.toId === campaignId;
+      const otherId = selectedIsTarget ? rel.fromId : rel.toId;
+      const other = locMap.get(otherId);
+      const selectedDirection = selectedIsTarget ? rel.direction : inverseDirection(rel.direction);
+      const distText = Number.isFinite(rel.distanceKm) ? ` (${rel.distanceKm} km)` : '';
+      return {
+        id: clean(rel.id, 140),
+        anchorId: clean(otherId, 120),
+        anchorName: clean(other?.name, 120) || 'known place',
+        direction: clean(selectedDirection, 30),
+        distanceKm: Number.isFinite(rel.distanceKm) ? rel.distanceKm : null,
+        distanceMode: clean(rel.distanceMode, 30) || 'unspecified',
+        summary: `${selectedDirection || 'connected'} relative to ${other?.name || 'known place'}${distText}`,
+        notes: clean(rel.notes, 200),
+      };
+    });
+
+  const primaryRelation = relations[0] || {
+    id: '',
+    anchorId: '',
+    anchorName: '',
+    direction: '',
+    distanceKm: null,
+    distanceMode: 'unspecified',
+    summary: '',
+    notes: '',
+  };
+
+  return {
+    ...base,
+    evidence,
+    relations,
+    primaryRelation,
+    locationOptions: allEffective
+      .filter(item => item.id !== loc.id)
+      .slice(0, WORLD_STATE_UI_LIMITS.spatialLocations)
+      .map(item => ({ id: clean(item.id, 120), name: clean(item.name, 120) })),
+  };
+}
+
 export function buildWorldStateUiModel(state, {
   diagnostics = [],
   query = '',
   selectedRecordId = '',
   activeView = 'current',
+  baseMap = null,
+  selectedSpatialKey = '',
+  spatialSearch = '',
 } = {}) {
   const normalized = normalizeState(clone(state));
   const reasons = latestReasonByMessage(normalized);
@@ -247,6 +369,31 @@ export function buildWorldStateUiModel(state, {
   const detailRecordId = key ? recordIdByUiKey.get(key) : '';
   const detail = detailRecordId ? projectDetail(normalized, detailRecordId, reasons, key) : null;
 
+  // Spatial Projection
+  const effectiveLocations = resolveEffectiveLocations(normalized.spatial, baseMap);
+  const spatialKeyByLocId = new Map(effectiveLocations.map((loc, index) => [loc.id, 'sloc-' + index]));
+  const locBySpatialKey = new Map(effectiveLocations.map((loc, index) => ['sloc-' + index, loc]));
+
+  const spatialNeedle = clean(spatialSearch, 120).toLowerCase();
+  const allSpatialProjected = effectiveLocations.map((loc, index) =>
+    projectSpatialLocation(loc, 'sloc-' + index),
+  );
+
+  const filteredSpatial = spatialNeedle
+    ? allSpatialProjected.filter(l => l.name.toLowerCase().includes(spatialNeedle)
+      || l.type.toLowerCase().includes(spatialNeedle)
+      || l.context.toLowerCase().includes(spatialNeedle))
+    : allSpatialProjected;
+
+  const boundedSpatial = filteredSpatial.slice(0, WORLD_STATE_UI_LIMITS.spatialLocations);
+
+  const activeSpatialKey = selectedSpatialKey && locBySpatialKey.has(selectedSpatialKey)
+    ? selectedSpatialKey
+    : boundedSpatial[0]?.key || '';
+
+  const selectedLoc = activeSpatialKey ? locBySpatialKey.get(activeSpatialKey) : null;
+  const spatialDetail = selectedLoc ? projectSpatialDetail(normalized.spatial, selectedLoc, baseMap, activeSpatialKey) : null;
+
   return {
     namespace: WORLD_STATE_UI_NAMESPACE,
     counts: {
@@ -256,13 +403,29 @@ export function buildWorldStateUiModel(state, {
       superseded: resolvedAll.filter(record => record.status === 'superseded').length,
       evidence: Object.keys(normalized.evidence).length,
       links: normalized.links.length,
+      spatialLocations: effectiveLocations.length,
+      spatialCampaign: normalized.spatial.locations.length,
+      spatialBase: baseMap ? (baseMap.locations?.length || 0) : 0,
     },
     views: { current, recent, resolved, search: searched },
+    spatial: {
+      locations: boundedSpatial,
+      totalCount: effectiveLocations.length,
+      filteredCount: filteredSpatial.length,
+      search: spatialSearch,
+      selectedKey: activeSpatialKey,
+      detail: spatialDetail,
+      baseMapName: baseMap?.name || normalized.spatial.baseMapRef?.name || 'None',
+      baseMapVersion: baseMap?.version || normalized.spatial.baseMapRef?.version || '',
+      hasBaseMap: Boolean(baseMap || normalized.spatial.baseMapRef),
+      profile: normalized.spatial.profile,
+    },
     truncation: {
       current: Math.max(0, currentAll.length - current.length),
       recent: Math.max(0, recentAll.length - recent.length),
       resolved: Math.max(0, resolvedAll.length - resolved.length),
       search: Math.max(0, searchResult.totalMatched - searched.length),
+      spatial: Math.max(0, filteredSpatial.length - boundedSpatial.length),
     },
     search: {
       query: searchQuery,
@@ -301,6 +464,25 @@ function recordCard(record, selected, index) {
     '<span class="wsa-record-meta">' + meta + '</span>' +
     '<strong>' + escapeHtml(record.summary || 'Untitled world state') + '</strong>' +
     changed +
+    '</button>';
+}
+
+function spatialCard(loc, selected, key) {
+  const sourcePill = loc.isBase
+    ? (loc.isOverridden ? pill('Override', 'wsa-source-override') : pill('Base', 'wsa-source-base'))
+    : pill('Campaign', 'wsa-source-campaign');
+
+  const meta = [
+    pill(loc.type, 'wsa-kind'),
+    sourcePill,
+    pill(loc.authorityLabel, 'wsa-auth'),
+  ].join('');
+
+  return '<button type="button" class="wsa-record' + (selected ? ' is-selected' : '') +
+    '" data-wsa-spatial-key="' + escapeHtml(key) + '" aria-pressed="' + (selected ? 'true' : 'false') + '">' +
+    '<span class="wsa-record-meta">' + meta + '</span>' +
+    '<strong>' + escapeHtml(loc.name) + '</strong>' +
+    '<small>' + escapeHtml(loc.coordText) + (loc.context ? ' · ' + escapeHtml(loc.context.slice(0, 80)) : '') + '</small>' +
     '</button>';
 }
 
@@ -368,6 +550,141 @@ function detailHtml(detail) {
     '<section><h3>Evidence</h3>' + evidence + '</section>' +
     '<section><h3>Connections</h3>' + relations + '</section>' +
     '</article>';
+}
+
+function spatialDetailHtml(detail) {
+  if (!detail) return emptyState('No location selected', 'Choose a location from the list or add a new place.');
+
+  const sourcePill = detail.isBase
+    ? (detail.isOverridden ? pill('Campaign Override', 'wsa-source-override') : pill('Base Canonical (Read-only)', 'wsa-source-base'))
+    : pill('Campaign Location', 'wsa-source-campaign');
+
+  const routeChips = detail.routeRefs.length
+    ? '<div class="wsa-chip-row">' + detail.routeRefs.map(r => '<span class="wsa-chip">' + escapeHtml(r) + '</span>').join('') + '</div>'
+    : '<p class="wsa-muted">No route associations.</p>';
+
+  const evidence = detail.evidence.length
+    ? '<div class="wsa-evidence-list">' + detail.evidence.map(item => {
+      const sourceMessage = item.sourceMessageId === null ? 'No local message' : 'Message ' + item.sourceMessageId;
+      return '<article class="wsa-evidence">' +
+        '<div class="wsa-evidence-head"><strong>' + escapeHtml(item.source) + '</strong><span>' + sourceMessage + '</span></div>' +
+        '<p>' + escapeHtml(item.claim || 'Evidence excerpt.') + '</p>' +
+        '</article>';
+    }).join('') + '</div>'
+    : '<p class="wsa-muted">No evidence attached.</p>';
+
+  const relations = detail.relations.length
+    ? '<ul class="wsa-relations">' + detail.relations.map(item =>
+      '<li><b>Connection</b><span>' + escapeHtml(item.summary) + '</span></li>'
+    ).join('') + '</ul>'
+    : '<p class="wsa-muted">No spatial relations recorded.</p>';
+
+  let actionButtons = '';
+  if (detail.isBase && !detail.isOverridden) {
+    actionButtons = '<button type="button" class="wsa-btn wsa-btn-accent" data-wsa-spatial-action="create_override">Create Campaign Override</button>';
+  } else {
+    actionButtons = [
+      '<button type="button" class="wsa-btn wsa-btn-primary" data-wsa-spatial-action="save_location">Save</button>',
+      '<button type="button" class="wsa-btn" data-wsa-spatial-action="toggle_lock">' + (detail.locked ? 'Unlock Coord' : 'Lock Coord') + '</button>',
+      '<button type="button" class="wsa-btn" data-wsa-spatial-action="archive_location">Archive</button>',
+      '<button type="button" class="wsa-btn" data-wsa-spatial-action="merge_location">Merge Duplicate</button>',
+      '<button type="button" class="wsa-btn wsa-btn-danger" data-wsa-spatial-action="delete_location">Delete</button>',
+    ].join(' ');
+  }
+
+  const isEditable = !detail.isBase || detail.isOverridden;
+  const readonlyAttr = isEditable ? '' : ' readonly';
+  const disabledAttr = isEditable ? '' : ' disabled';
+  const editableAuthorities = ['manual', 'narrative_explicit', 'derived', 'relative', 'unknown'];
+  const authorityChoices = editableAuthorities.includes(detail.authority)
+    ? editableAuthorities
+    : [detail.authority, ...editableAuthorities].filter(Boolean);
+  const authorityOptions = authorityChoices.map(value =>
+    '<option value="' + value + '"' + (detail.authority === value ? ' selected' : '') + '>' +
+    escapeHtml(authorityLabel(value, false)) + '</option>'
+  ).join('');
+  const directionChoices = ['', 'north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
+  const directionOptions = directionChoices.map(value =>
+    '<option value="' + value + '"' + (detail.primaryRelation.direction === value ? ' selected' : '') + '>' +
+    escapeHtml(value ? titleWords(value) : 'Unspecified') + '</option>'
+  ).join('');
+  const distanceModes = ['unspecified', 'straight_line', 'route'];
+  const distanceOptions = distanceModes.map(value =>
+    '<option value="' + value + '"' + (detail.primaryRelation.distanceMode === value ? ' selected' : '') + '>' +
+    escapeHtml(value === 'straight_line' ? 'Straight-line' : value === 'route' ? 'Route / travel' : 'Unspecified') + '</option>'
+  ).join('');
+  const locationOptions = (detail.locationOptions || []).map(item =>
+    '<option value="' + escapeHtml(item.name) + '"></option>'
+  ).join('');
+
+  return '<article class="wsa-detail-card">' +
+    '<div class="wsa-detail-head">' +
+    '<div class="wsa-record-meta">' +
+    pill(detail.type, 'wsa-kind') +
+    sourcePill +
+    pill(detail.authorityLabel, 'wsa-auth') +
+    '</div>' +
+    '<h2>' + escapeHtml(detail.name) + '</h2>' +
+    '<p class="wsa-change-reason">Coordinates: ' + escapeHtml(detail.coordText) + '</p>' +
+    '</div>' +
+    '<form class="wsa-spatial-form" onsubmit="return false;">' +
+    '<section><h3>Location Details</h3>' +
+    '<div class="wsa-form-grid">' +
+    '<label><span>Name</span><input type="text" data-wsa-field="name" value="' + escapeHtml(detail.name) + '"' + readonlyAttr + '></label>' +
+    '<label><span>Type</span><input type="text" data-wsa-field="type" value="' + escapeHtml(detail.type) + '"' + readonlyAttr + '></label>' +
+    '<label><span>Coord X</span><input type="number" step="0.1" data-wsa-field="x" value="' + escapeHtml(detail.x) + '"' + readonlyAttr + '></label>' +
+    '<label><span>Coord Y</span><input type="number" step="0.1" data-wsa-field="y" value="' + escapeHtml(detail.y) + '"' + readonlyAttr + '></label>' +
+    '<label><span>Authority</span><select data-wsa-field="authority"' + disabledAttr + '>' + authorityOptions + '</select></label>' +
+    '<label><span>Coordinate locked</span><input type="checkbox" data-wsa-field="locked"' + (detail.locked ? ' checked' : '') + disabledAttr + '></label>' +
+    '</div>' +
+    '<label class="wsa-form-full"><span>Region / Context</span><textarea data-wsa-field="context" rows="2"' + readonlyAttr + '>' + escapeHtml(detail.context) + '</textarea></label>' +
+    '<label class="wsa-form-full"><span>Route Associations (comma-separated)</span><input type="text" data-wsa-field="routeRefs" value="' + escapeHtml(detail.routeRefs.join(', ')) + '"' + readonlyAttr + '></label>' +
+    '<label class="wsa-form-full"><span>Notes / Operator provenance</span><input type="text" data-wsa-field="notes" value="' + escapeHtml(detail.notes) + '"' + readonlyAttr + '></label>' +
+    '<h3>Relative Position</h3>' +
+    '<datalist id="wsa-spatial-location-options">' + locationOptions + '</datalist>' +
+    '<div class="wsa-form-grid">' +
+    '<label><span>Relative anchor</span><input type="text" list="wsa-spatial-location-options" data-wsa-field="relativeAnchor" value="' + escapeHtml(detail.primaryRelation.anchorName) + '"' + readonlyAttr + '></label>' +
+    '<label><span>Direction / bearing</span><select data-wsa-field="direction"' + disabledAttr + '>' + directionOptions + '</select></label>' +
+    '<label><span>Distance (km)</span><input type="number" min="0" step="0.1" data-wsa-field="distanceKm" value="' + escapeHtml(detail.primaryRelation.distanceKm ?? '') + '"' + readonlyAttr + '></label>' +
+    '<label><span>Distance meaning</span><select data-wsa-field="distanceMode"' + disabledAttr + '>' + distanceOptions + '</select></label>' +
+    '</div>' +
+    '<div class="wsa-form-actions">' + actionButtons + '</div>' +
+    '</section>' +
+    '</form>' +
+    '<section><h3>Associated Routes</h3>' + routeChips + '</section>' +
+    '<section><h3>Connections &amp; Relations</h3>' + relations + '</section>' +
+    '<section><h3>Provenance &amp; Evidence</h3>' + evidence + '</section>' +
+    '</article>';
+}
+
+function spatialViewHtml(model) {
+  const sp = model.spatial;
+  const listRows = sp.locations.length
+    ? sp.locations.map(loc => spatialCard(loc, loc.key === sp.selectedKey, loc.key)).join('')
+    : emptyState('No locations found', 'No spatial locations match the search criteria.');
+
+  const truncated = model.truncation.spatial > 0
+    ? '<p class="wsa-list-note">' + model.truncation.spatial + ' additional locations hidden. Narrow search to view.</p>'
+    : '';
+
+  const baseMapStatus = sp.hasBaseMap
+    ? '<div class="wsa-spatial-banner"><span>Base map: <strong>' + escapeHtml(sp.baseMapName) + '</strong> (v' + escapeHtml(sp.baseMapVersion) + ')</span>' +
+      '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-spatial-action="detach_base_map">Detach</button></div>'
+    : '<div class="wsa-spatial-banner"><span>No base map attached.</span><button type="button" class="wsa-btn wsa-btn-sm wsa-btn-accent" data-wsa-spatial-action="import_base_map">Import Base Map</button></div>';
+
+  return '<section class="wsa-view" aria-label="Spatial continuity">' +
+    baseMapStatus +
+    '<div class="wsa-spatial-toolbar">' +
+    '<label class="wsa-search"><span>Search locations</span><input type="search" data-wsa-spatial-search value="' +
+    escapeHtml(sp.search) + '" autocomplete="off" spellcheck="false" placeholder="e.g. Brackenford, Halmere"></label>' +
+    '<button type="button" class="wsa-btn wsa-btn-primary" data-wsa-spatial-action="add_location_modal">+ Add Location</button>' +
+    '</div>' +
+    '<div class="wsa-two-pane">' +
+    '<aside class="wsa-list-pane"><h2>Locations (' + sp.filteredCount + ')</h2>' +
+    '<div class="wsa-record-list" role="list">' + listRows + truncated + '</div>' +
+    '</aside>' +
+    '<div class="wsa-detail-pane">' + spatialDetailHtml(sp.detail) + '</div>' +
+    '</div></section>';
 }
 
 function recordsViewHtml(model, tab) {
@@ -469,7 +786,7 @@ function maintenanceHtml(model) {
     '<div class="wsa-stat-grid">' +
     '<div><b>' + model.counts.total + '</b><span>Total records</span></div>' +
     '<div><b>' + model.counts.current + '</b><span>Current</span></div>' +
-    '<div><b>' + model.counts.resolved + '</b><span>Resolved</span></div>' +
+    '<div><b>' + model.counts.spatialLocations + '</b><span>Places</span></div>' +
     '<div><b>' + model.counts.evidence + '</b><span>Evidence items</span></div>' +
     '</div>' +
     '<div class="wsa-maintenance-grid">' + actions + '</div>' +
@@ -480,6 +797,7 @@ function tabLabel(tab) {
   if (tab === 'current') return 'Current';
   if (tab === 'recent') return 'Recent';
   if (tab === 'resolved') return 'Resolved';
+  if (tab === 'spatial') return 'Spatial';
   if (tab === 'search') return 'Search';
   if (tab === 'diagnostics') return 'Diagnostics';
   return 'Data';
@@ -494,7 +812,8 @@ export function renderWorldStatePanel(model, { activeTab = 'current' } = {}) {
   ).join('');
 
   let body;
-  if (tab === 'diagnostics') body = diagnosticsHtml(model);
+  if (tab === 'spatial') body = spatialViewHtml(model);
+  else if (tab === 'diagnostics') body = diagnosticsHtml(model);
   else if (tab === 'maintenance') body = maintenanceHtml(model);
   else body = recordsViewHtml(model, tab);
 
@@ -503,7 +822,7 @@ export function renderWorldStatePanel(model, { activeTab = 'current' } = {}) {
     '<section class="wsa-panel" role="dialog" aria-modal="true" aria-label="World State">' +
     '<header class="wsa-header"><div>' +
     '<p class="wsa-eyebrow">World State Alpha</p><h1>World continuity</h1>' +
-    '<span>' + model.counts.current + ' current · ' + (model.counts.resolved + model.counts.superseded) + ' historical</span>' +
+    '<span>' + model.counts.current + ' current · ' + (model.counts.resolved + model.counts.superseded) + ' historical · ' + model.counts.spatialLocations + ' places</span>' +
     '</div><button type="button" class="wsa-close" data-wsa-close aria-label="Close World State">×</button></header>' +
     '<nav class="wsa-tabs" role="tablist" aria-label="World State views">' + tabs + '</nav>' +
     '<main class="wsa-body">' + body + '</main>' +
@@ -513,8 +832,10 @@ export function renderWorldStatePanel(model, { activeTab = 'current' } = {}) {
 export function createWorldStateUiController({
   root,
   getState,
+  getBaseMap = () => null,
   getDiagnostics = () => [],
   onMaintenanceAction = null,
+  onSpatialAction = null,
   onClose = null,
   initialTab = 'current',
 } = {}) {
@@ -525,6 +846,8 @@ export function createWorldStateUiController({
     activeTab: WORLD_STATE_UI_TABS.includes(initialTab) ? initialTab : 'current',
     query: '',
     selectedRecordId: '',
+    selectedSpatialKey: '',
+    spatialSearch: '',
     destroyed: false,
   };
 
@@ -534,16 +857,29 @@ export function createWorldStateUiController({
       query: ui.query,
       selectedRecordId: ui.selectedRecordId,
       activeView: ui.activeTab,
+      baseMap: typeof getBaseMap === 'function' ? getBaseMap() : null,
+      selectedSpatialKey: ui.selectedSpatialKey,
+      spatialSearch: ui.spatialSearch,
     });
   }
 
-  function refresh({ restoreSearchFocus = false } = {}) {
+  function refresh({ restoreSearchFocus = false, restoreSpatialFocus = false } = {}) {
     if (ui.destroyed) return null;
     const next = model();
     ui.selectedRecordId = next.selectedRecordId;
+    ui.selectedSpatialKey = next.spatial.selectedKey;
     root.innerHTML = renderWorldStatePanel(next, { activeTab: ui.activeTab });
+
     if (restoreSearchFocus && ui.activeTab === 'search') {
       const input = root.querySelector?.('[data-wsa-search]');
+      input?.focus?.();
+      if (input && typeof input.setSelectionRange === 'function') {
+        const length = String(input.value || '').length;
+        input.setSelectionRange(length, length);
+      }
+    }
+    if (restoreSpatialFocus && ui.activeTab === 'spatial') {
+      const input = root.querySelector?.('[data-wsa-spatial-search]');
       input?.focus?.();
       if (input && typeof input.setSelectionRange === 'function') {
         const length = String(input.value || '').length;
@@ -591,6 +927,52 @@ export function createWorldStateUiController({
       return;
     }
 
+    const spatialBtn = closest(event.target, '[data-wsa-spatial-key]');
+    if (spatialBtn) {
+      const key = spatialBtn.dataset?.wsaSpatialKey;
+      if (key) {
+        ui.selectedSpatialKey = key;
+        refresh();
+      }
+      return;
+    }
+
+    const spatialAction = closest(event.target, '[data-wsa-spatial-action]');
+    if (spatialAction && typeof onSpatialAction === 'function') {
+      const action = clean(spatialAction.dataset?.wsaSpatialAction, 40);
+      const currentModel = model();
+      const currentLoc = currentModel.spatial.detail;
+
+      // Extract form fields if available
+      const form = root.querySelector?.('.wsa-spatial-form');
+      const getVal = field => form?.querySelector?.(`[data-wsa-field="${field}"]`)?.value;
+      const lockedInput = form?.querySelector?.('[data-wsa-field="locked"]');
+      const formData = {
+        name: getVal('name') || currentLoc?.name || '',
+        type: getVal('type') || currentLoc?.type || '',
+        x: getVal('x') !== undefined && getVal('x') !== '' ? Number(getVal('x')) : null,
+        y: getVal('y') !== undefined && getVal('y') !== '' ? Number(getVal('y')) : null,
+        authority: getVal('authority') || currentLoc?.authority || 'manual',
+        locked: Boolean(lockedInput?.checked),
+        context: getVal('context') || currentLoc?.context || '',
+        routeRefs: (getVal('routeRefs') || '').split(',').map(s => s.trim()).filter(Boolean),
+        notes: getVal('notes') || currentLoc?.notes || '',
+        relativeAnchor: getVal('relativeAnchor') || '',
+        direction: getVal('direction') || '',
+        distanceKm: getVal('distanceKm') !== undefined && getVal('distanceKm') !== '' ? Number(getVal('distanceKm')) : null,
+        distanceMode: getVal('distanceMode') || 'unspecified',
+        relationId: currentLoc?.primaryRelation?.id || '',
+      };
+
+      await onSpatialAction(action, {
+        location: currentLoc,
+        formData,
+        spatialModel: currentModel.spatial,
+      });
+      refresh();
+      return;
+    }
+
     const action = closest(event.target, '[data-wsa-action]');
     if (action && typeof onMaintenanceAction === 'function') {
       const actionId = clean(action.dataset?.wsaAction, 32);
@@ -607,9 +989,17 @@ export function createWorldStateUiController({
 
   function input(event) {
     const search = closest(event.target, '[data-wsa-search]');
-    if (!search) return;
-    ui.query = clean(search.value, 500);
-    refresh({ restoreSearchFocus: true });
+    if (search) {
+      ui.query = clean(search.value, 500);
+      refresh({ restoreSearchFocus: true });
+      return;
+    }
+
+    const spatialSearch = closest(event.target, '[data-wsa-spatial-search]');
+    if (spatialSearch) {
+      ui.spatialSearch = clean(spatialSearch.value, 120);
+      refresh({ restoreSpatialFocus: true });
+    }
   }
 
   root.addEventListener('click', click);
@@ -622,7 +1012,9 @@ export function createWorldStateUiController({
       return {
         activeTab: ui.activeTab,
         query: ui.query,
+        spatialSearch: ui.spatialSearch,
         hasSelection: Boolean(ui.selectedRecordId),
+        hasSpatialSelection: Boolean(ui.selectedSpatialKey),
         destroyed: ui.destroyed,
       };
     },

@@ -176,3 +176,65 @@ Added latency:
 Injection tokens:
 Notes:
 ```
+
+
+## Phase 9 Spatial Continuity coverage
+
+Coordinate/profile:
+
+43. +Y north, -Y south, +X east, -X west.
+44. Decimal coordinates and configured bounds are enforced.
+45. Unit conversion and straight-line distance use the profile scale.
+46. Cardinal and diagonal deterministic displacement produce correct vectors.
+47. Route/travel distance does not become Cartesian displacement without explicit straight-line evidence.
+48. Unknown anchor or vague distance remains relative/unknown.
+
+Authority:
+
+49. Locked manual coordinate blocks automatic narrative movement.
+50. Unlocked manual coordinate may be corrected only by a higher-ranked grounded authority.
+51. Base canonical coordinate blocks lower-authority automatic proposals.
+52. Campaign override shadows base without mutating the base source.
+53. Manual editing of an override may retain manual coordinate authority while override identity remains.
+54. True North rejects relation directions inconsistent with known coordinate deltas.
+
+Admission/evidence:
+
+55. Named/persistent generated place is admitted; generic unnamed scenery is rejected.
+56. Model-proposed precise coordinate without narrative support is stripped/rejected.
+57. Relative-only location remains durable without fabricated X/Y.
+58. Same-name generated location consolidates rather than multiplying.
+59. `writer_state` cannot create/move a location or route.
+60. Same sanitation applies to manual rebuild; accepted narration can establish the place.
+
+Ownership/branch:
+
+61. Same generated name in different chats produces different campaign IDs/state.
+62. Spatial manual mutation journals on current raw-message boundary.
+63. Edit/delete/swipe rollback restores Spatial and Reality to one exact boundary.
+64. Stale automatic completion cannot persist Spatial changes.
+65. Schema-1 state/checkpoint migrates to schema 2 with empty Spatial state.
+66. Export/import preserves Spatial semantics while foreign import clears false local chronology.
+
+Base map:
+
+67. Generic Cartesian base map parses without Ternia-specific code path.
+68. Ternia v0.9.10 adapter reads profile, major locations and route anchors from the supplied registry shape.
+69. Base source remains immutable and campaign overrides remain per-chat.
+70. Route draw/path geometry is never treated as straight-line displacement.
+
+Manual/UI:
+
+71. Spatial panel exposes add/save/authority/lock/archive/delete/merge/override/relative/distance/route fields.
+72. Delete removes dangling relations/route references.
+73. Merge rewires relations/routes and archives the duplicate source.
+74. Base location is read-only until Create Campaign Override.
+75. Provenance/evidence is visible without exposing mutable canonical references.
+
+Performance/injection:
+
+76. Disabled Spatial produces no Spatial injection and no extra provider call.
+77. Reality + Spatial extraction shares one eligible capture request.
+78. 1000-location campaign/base projection retrieves a bounded candidate subset.
+79. Injection remains budgeted and does not dump the map.
+80. Normal turns do not reparse the base source or scan every route/polyline.

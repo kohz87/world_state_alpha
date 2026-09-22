@@ -1,6 +1,6 @@
 # World State Alpha minimum data model
 
-Status: IMPLEMENTED CANDIDATE (Phases 1-8).
+Status: IMPLEMENTED CANDIDATE (Phases 1-9).
 
 ## Canonical record
 
@@ -204,14 +204,124 @@ The reducer exposes a non-persisted `indexDelta` with changed record snapshots, 
 
 The persisted lineage representation is unchanged. Phase 8 only changes how ordinary append-only messages are processed: the host verifies the cached lineage tail and computes lineage rows for the newly appended suffix. Exact full-history reconciliation remains the recovery authority for destructive branch changes.
 
-### Versioning invariants
+### Phase 8 historical versioning note
 
-```javascript
-export const WORLD_STATE_ALPHA_VERSION = '0.8.0-alpha.1';
-export const SCHEMA_VERSION = 1;
-export const SIDECAR_FORMAT_VERSION = 1;
-export const BUNDLE_VERSION = 1;
-export const ROLLBACK_JOURNAL_VERSION = 1;
+Phase 8 / 0.8.x used canonical schema version 1. Phase 9 intentionally bumps only the canonical schema to version 2 for durable Spatial state. The sidecar, bundle, and rollback-journal envelope formats remain version 1.
+
+
+## Phase 9 durable Spatial namespace
+
+Canonical state schema version is now `2`.
+
+```js
+{
+  schemaVersion: 2,
+  records: [...],          // unchanged Reality Core fact/development records
+  evidence: {...},
+  links: [...],
+
+  spatial: {
+    profile: {
+      system: 'cartesian2d',
+      northAxis: '+y',
+      eastAxis: '+x',
+      unitKm: number | null,
+      bounds: { xMin, xMax, yMin, yMax } | null,
+      decimalStep: 0.1,
+      trueNorthLocked: true
+    } | null,
+
+    baseMapRef: {
+      id,
+      name,
+      version,
+      adapter,
+      digest,
+      path
+    } | null,
+
+    locations: [{
+      id,
+      name,
+      type,
+      status: 'active' | 'archived',
+      baseRefId: string | null,
+      coordinate: {
+        x: number | null,
+        y: number | null,
+        authority:
+          'manual' |
+          'campaign_override' |
+          'base_canonical' |
+          'narrative_explicit' |
+          'derived' |
+          'relative' |
+          'unknown',
+        locked: boolean
+      },
+      context,
+      routeRefs: [],
+      createdAtMessage,
+      lastChangedMessage,
+      evidenceIds: [],
+      notes
+    }],
+
+    relations: [{
+      id,
+      fromId,
+      toId,
+      direction: string | null,
+      distanceKm: number | null,
+      distanceMode: 'straight_line' | 'route' | 'unspecified',
+      notes,
+      evidenceIds: []
+    }],
+
+    routes: [{
+      id,
+      name,
+      type,
+      endpoints: [],
+      waypoints: [],
+      context,
+      evidenceIds: []
+    }],
+
+    evidence: {...},
+    lastCaptureMessage
+  },
+
+  lineage: [...],
+  rollbackJournal: [...],
+  checkpoints: [...]
+}
 ```
 
-The application release changes without invalidating persisted format version 1.
+No Spatial entity is stored in `records[]`.
+
+A null profile is a supported state. It carries no implicit Ternia scale/bounds/orientation. A configured profile may also omit `unitKm`; that leaves scale-dependent distance conversion disabled. Exact coordinates may still be stored when explicitly established, but distance-to-coordinate derivation requires a positive configured `unitKm`, and locked cardinal validation requires an explicit profile.
+
+### Base maps are not duplicated into campaign state
+
+A loaded base map is an immutable external/reference projection. Campaign state stores `baseMapRef`, not a copy of every base location. `resolveEffectiveLocations()` overlays campaign entries/overrides on the loaded base map. On foreign import, `baseMapRef.path` is cleared while source identity/digest is retained; the host may rebind the same source by digest or require explicit reattachment.
+
+### Authority is coordinate provenance, not location type
+
+`baseRefId` identifies an override source relationship. `coordinate.authority` describes the coordinate itself. A campaign override may therefore contain a later manual coordinate without losing its override identity.
+
+### Migration
+
+`normalizeState(..., { strictSchema: true })` accepts schema version 1 and current schema version 2. Schema-1 payloads receive `createSpatialState()`; Reality records/evidence/links are preserved.
+
+Envelope format versions remain:
+
+- sidecar = 1
+- export bundle = 1
+- rollback journal = 1
+
+The envelope readers already normalize the contained canonical state, so their wire formats do not require a version bump.
+
+### Foreign import
+
+When importing into another chat, Spatial location message boundaries and Spatial evidence lineage/source-message provenance are cleared in parallel with Reality provenance. Base-map references and campaign semantic geography are retained.

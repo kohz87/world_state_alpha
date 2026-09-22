@@ -1,6 +1,6 @@
 # World State Alpha architecture
 
-Status: ARCHITECTURE & RUNTIME ACCEPTED (Phases 1-8 implemented candidate).
+Status: ARCHITECTURE & RUNTIME ACCEPTED (Phases 1-9 implemented candidate).
 
 ## 1. Recommended core
 
@@ -615,7 +615,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Application version is `0.8.0-alpha.1`. Persisted format versions remain at 1.
+Phase 8 used application version `0.8.0-alpha.1`. Phase 9 uses `0.9.0-alpha.1`; canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 
@@ -633,3 +633,101 @@ Two package runs from an unchanged tree must produce byte-identical archive and 
 Phase 8 deterministic measurements report prompt sizes, request budgets, indexed candidate/scoring work, posting-visit bounds, injection size, long-run evidence/storage growth, rollback-window bytes, and package hash/size.
 
 These local/synthetic measurements are not TTFT measurements. Actual provider latency, TTFT, browser event timing, real SillyTavern storage behavior, responsive UI behavior, and simultaneous live Delta/Ukiyo/Megumin operation are acceptance observations recorded separately in `docs/LIVE_ACCEPTANCE.md`.
+
+
+## 24. Spatial Continuity architecture
+
+Spatial Continuity is a sibling domain inside the same per-chat canonical state envelope:
+
+```text
+state
+|-- records/evidence/links        # Reality Core
+|-- spatial                      # Spatial Continuity
+|   |-- profile
+|   |-- baseMapRef
+|   |-- locations
+|   |-- relations
+|   |-- routes
+|   |-- evidence
+|   `-- lastCaptureMessage
+|-- lineage / rollback / checkpoints
+```
+
+The two domains share ownership and transaction infrastructure, not reducers. Reality mutations remain owned by `state-core.js`; Spatial mutations remain owned by `spatial-core.js`.
+
+### 24.1 Capture flow
+
+When Spatial is enabled, the ordinary eligible capture request asks for one JSON object containing both Reality `mutations` and optional `spatialMutations`. This preserves the Phase 8 request budget: Spatial does not add a second automatic model request.
+
+Before prompt construction and evidence validation, assistant narration passes through `narrative-sanitizer.js`, which removes `<writer_state>...</writer_state>` blocks only from the evidence surface. Raw stored chat and lineage fingerprints remain untouched.
+
+Spatial proposals then pass:
+
+```text
+wire validation
+ -> grounded sanitized evidence
+ -> generated-place admission
+ -> explicit-coordinate / relative-position firewall
+ -> True North validation
+ -> spatial reducer
+ -> shared branch journal
+```
+
+### 24.2 Base map adapter boundary
+
+`spatial-base-map.js` has a generic Cartesian adapter and an explicit Ternia v0.9.10 adapter.
+
+The generic adapter accepts a compact map document containing a profile/coordinate system, locations and optional routes. It does not depend on Ternia fields.
+
+The Ternia adapter additionally understands the supplied registry layers such as top-level locations, starting-area/local features, Wild Zones, geographic features, major-route anchors and route metadata. Route draw geometry is not imported as Cartesian displacement. Base-map parsing creates an immutable runtime projection and a deterministic digest.
+
+The original source file is never modified. `host-base-map.js` stores a read-only normalized source payload and the campaign sidecar stores only `baseMapRef`. Base-map authority is preloaded when a chat hydrates. If an attached source is unavailable, Spatial automatic capture/injection pauses rather than presenting a partial generated-only map as authoritative.
+
+### 24.3 Effective geography
+
+Effective locations are a projection:
+
+```text
+base canonical locations
+  + campaign overrides shadowing matching base ids
+  + campaign-generated locations
+```
+
+A campaign override is a source-layer fact (`baseRefId` / `isOverridden`), not necessarily the coordinate authority itself. A manually edited override may therefore remain a Campaign Override while its coordinate authority is `manual`.
+
+### 24.4 Coordinate model
+
+Spatial profile is setting-agnostic Cartesian 2D:
+
+- `northAxis`
+- `eastAxis`
+- `unitKm`
+- optional rectangular bounds
+- decimal step
+- True North lock
+
+Coordinates support exact known X/Y or unresolved X/Y. Authority and lock are separate.
+
+The absence of a profile is meaningful: Spatial may still remember named places, explicit X/Y, and relative relations, but it does not assume Ternia's scale, bounds, or compass transform. A profile may also omit unit scale; in that case scale-dependent derivation remains disabled. A configured profile may orient north/east along any perpendicular signed Cartesian axes.
+
+Deterministic coordinate derivation accepts only established anchor coordinate + grounded direction + grounded straight-line distance under an explicit profile. Diagonals use normalized vector math projected through the profile's declared north/east axes. Route/travel distances remain relational metadata only.
+
+### 24.5 Retrieval and injection
+
+Spatial has its own ephemeral per-chat index over effective active locations. It indexes names, context/type, route associations and bounded relation adjacency. Base data is indexed once when attached/loaded rather than scanned on every turn.
+
+Normal retrieval returns a bounded handful of relevant locations. Private injection contains current/relevant coordinate/context plus directly useful relations/routes and repeats the profile orientation only when useful. It does not dump the base map.
+
+### 24.6 Manual/UI flow
+
+The existing World State panel adds a Spatial tab. `ui.js` projects fields and emits action intents; `index.js` calls `spatial-manual.js` and persists only after reducer success. Unchanged coordinate authority is preserved when editing non-coordinate metadata. Manual location metadata, relations, and route semantics are not rewritten by later automatic capture.
+
+The editor supports add, rename, type/context, coordinate authority/lock, relative anchor/direction/distance, route associations, archive/delete, duplicate merge, campaign override, and evidence inspection. Reducer-level delete/merge rewrites or removes related spatial graph references so the UI cannot create dangling topology.
+
+### 24.7 Branch/migration/rebuild
+
+Schema 1 normalizes to schema 2 by adding an empty Spatial namespace. Existing Reality data and old rollback checkpoints remain valid.
+
+Spatial undo patches are nested in the same journal boundary as Reality undo. Whole-state checkpoint restore normalizes legacy snapshots before use.
+
+Rebuild starts from a clean schema-2 candidate, retains the attached profile/base-map reference, replays the same sanitized chronological capture surface, and remains atomic/fail-closed.

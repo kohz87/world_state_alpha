@@ -1,4 +1,7 @@
 import { clone } from './state-core.js';
+import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
+
+export { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 
 function messageText(message) {
   if (typeof message?.content === 'string') return message.content;
@@ -33,10 +36,13 @@ export function captureExchangeIndex(exchange = []) {
   const map = new Map();
   for (const message of Array.isArray(exchange) ? exchange : []) {
     if (!Number.isInteger(message?.messageId) || message.messageId < 0) continue;
+    const role = messageRole(message);
+    const raw = messageText(message);
+    const text = role === 'assistant' ? sanitizeAssistantNarration(raw) : raw;
     map.set(message.messageId, {
       messageId: message.messageId,
-      role: messageRole(message),
-      text: messageText(message),
+      role,
+      text,
       lineageKey: typeof message.lineageKey === 'string' ? message.lineageKey : '',
     });
   }

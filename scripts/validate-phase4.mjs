@@ -11,8 +11,8 @@ import { extractElapsedHint } from '../elapsed.js';
 import { EVOLUTION_WIRE_LIMITS } from '../evolution-wire.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-if (!['phase4-lazy-evolution', 'phase5-manual-rebuild', 'phase6-ui-evidence', 'phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage)) throw new Error('Phase 4 cumulative runtime inventory stage mismatch');
-if (!['phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage) && inventory.hostEntrypoint !== null) throw new Error('Phase 4 substrate must remain host-neutral before the authorized host phase');
+if (!['phase4-lazy-evolution', 'phase5-manual-rebuild', 'phase6-ui-evidence', 'phase7-coexistence-host', 'phase8-release-hardening', 'phase9-spatial-continuity'].includes(inventory.stage)) throw new Error('Phase 4 cumulative runtime inventory stage mismatch');
+if (!['phase7-coexistence-host', 'phase8-release-hardening', 'phase9-spatial-continuity'].includes(inventory.stage) && inventory.hostEntrypoint !== null) throw new Error('Phase 4 substrate must remain host-neutral before the authorized host phase');
 
 const required = ['elapsed.js', 'evolution-wire.js', 'evolution.js'];
 for (const file of required) {

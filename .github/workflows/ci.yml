@@ -23,7 +23,8 @@ jobs:
       - name: Package release candidate
         run: |
           npm run package
-          sha256sum dist/world_state_alpha-0.8.0-alpha.1.zip dist/release-manifest.json > /tmp/world-state-package.sha256
+          VERSION=$(node -p "require('./package.json').version")
+          sha256sum "dist/world_state_alpha-$VERSION.zip" dist/release-manifest.json > /tmp/world-state-package.sha256
       - name: Verify package reproducibility
         run: |
           npm run package

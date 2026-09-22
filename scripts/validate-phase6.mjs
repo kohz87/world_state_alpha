@@ -9,8 +9,8 @@ import {
 } from '../ui.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
-if (!['phase6-ui-evidence', 'phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage)) throw new Error('Phase 6 cumulative runtime inventory stage mismatch');
-if (!['phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage) && inventory.hostEntrypoint !== null) throw new Error('Phase 6 UI substrate must remain host-neutral before the authorized host phase');
+if (!['phase6-ui-evidence', 'phase7-coexistence-host', 'phase8-release-hardening', 'phase9-spatial-continuity'].includes(inventory.stage)) throw new Error('Phase 6 cumulative runtime inventory stage mismatch');
+if (!['phase7-coexistence-host', 'phase8-release-hardening', 'phase9-spatial-continuity'].includes(inventory.stage) && inventory.hostEntrypoint !== null) throw new Error('Phase 6 UI substrate must remain host-neutral before the authorized host phase');
 if (!inventory.modules.includes('ui.js')) throw new Error('Phase 6 ui.js missing from runtime inventory');
 if (!Array.isArray(inventory.assets) || !inventory.assets.includes('ui.css')) throw new Error('Phase 6 ui.css missing from asset inventory');
 

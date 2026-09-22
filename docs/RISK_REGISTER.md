@@ -34,3 +34,19 @@
 | Compaction rollback corruption | Pruned evidence causes missing reference errors on branch swipe | `undo.evidence` retains compacted entries; undo patch restores uncompacted state | 50-step compaction rollback test |
 | Non-deterministic release zip | Zip bytes vary between builds due to archive timestamps or ordering | fixed DOS timestamps (2026-01-01) and alphabetical entry sorting | package hash reproducibility test |
 | Storage schema version drift | Application version bump accidentally bumps persisted schema version | decouple app version (0.8.0-alpha.1) from schema versions (all 1) | Phase 8 static version validator |
+
+
+| Risk | Failure mode | Mitigation | Verification |
+|---|---|---|---|
+| Spatial authority drift | lower-authority narration silently moves canonical/manual place | authority rank + lock checks in Spatial reducer | authority/lock tests |
+| Geographic confetti | every clearing/ditch becomes durable state | named/persistent admission gate + bounded prompt | admission fixtures |
+| Writer-plan contamination | hidden writer_state establishes place/route | deterministic evidence-view sanitizer before capture/rebuild | writer_state + rebuild tests |
+| False precision | model invents X/Y for relative/unknown place | coordinate firewall; exact derivation only from grounded straight-line inputs | coordinate firewall tests |
+| Route displacement error | winding route length treated as Cartesian delta | distanceMode separates straight_line / route / unspecified | derivation tests |
+| True North drift | prose relation contradicts coordinate axes | reducer-level direction-vs-delta validation | True North tests |
+| Base-map mutation | campaign edit corrupts shared registry | immutable parsed base + campaign override layer | base immutability test |
+| Cross-campaign leakage | generated location appears in another chat | deterministic IDs include chat owner; Spatial lives inside per-chat sidecar | campaign isolation test |
+| Dangling spatial graph | delete/merge leaves invalid relations/routes | reducer rewrites/removes graph references | merge/delete tests |
+| Spatial scan regression | large base/campaign map scanned every turn | ephemeral spatial relevance index + cached base map | 1000-location measurement/test |
+| Schema migration loss | 0.8 state/checkpoints fail after schema bump | strict schema1->2 normalizer; envelope versions unchanged | migration/rollback tests |
+| UI authority bypass | manual editor creates impossible direction or base write | all intents pass Spatial manual reducer; base requires override | manual True North/override tests |

@@ -1,6 +1,6 @@
 # World State Alpha staged workplan
 
-Status: architecture and runtime accepted. Phases 1-8 implemented candidates.
+Status: architecture and runtime accepted. Phases 1-9 implemented candidates.
 
 ## Phase 0 - architecture/bootstrap
 
@@ -175,3 +175,36 @@ Acceptance:
 ## Why this order differs slightly from the proposed nine phases
 
 Relevance/injection is moved before evolution. This proves that persistent state is useful without simulation first and prevents evolution machinery from dictating the storage ontology. UI is delayed until the canonical state and lazy lifecycle are stable.
+
+
+## Phase 9 - Spatial Continuity [IMPLEMENTED CANDIDATE]
+
+Deliverables:
+
+- optional sibling `spatial` namespace; Reality Core fact/development schema unchanged
+- canonical schema migration 1 -> 2 with empty Spatial state for legacy campaigns
+- generic Cartesian 2D Spatial Core and generic base-map adapter
+- Ternia v0.9.10 registry adapter/acceptance fixture
+- read-only base geography plus per-chat generated locations and campaign overrides
+- coordinate authority, True North validation and deterministic derivation
+- writer-state narrative evidence sanitizer shared by normal capture and rebuild
+- combined Reality + Spatial extraction in the existing single capture provider request
+- ephemeral bounded spatial relevance index and compact private injection
+- Spatial UI/manual add/edit/lock/archive/delete/merge/override/relation/route-association controls
+- branch-journal/rollback/export/import/rebuild integration
+- v0.9.0-alpha.1 version synchronization and release documentation
+
+Acceptance:
+
+- existing Reality Core regression suite remains green
+- no Spatial entry enters `records[]`
+- Spatial disabled adds zero Spatial injection and no new automatic provider call
+- schema-1 sidecars/checkpoints migrate without data loss
+- Ternia profile enforces +Y north / +X east, 5 km per unit, bounds and decimal precision
+- generic/no-profile campaigns do not inherit Ternia scale, bounds, or compass assumptions; configured alternate Cartesian axes are honored
+- route/travel distance never becomes Cartesian displacement without explicit straight-line evidence
+- writer_state-only plans cannot establish Spatial or Reality evidence
+- campaign overrides never modify base source geography
+- manual edits are journaled and exact branch rollback restores Spatial state
+- 1000-location fixture retrieves through bounded local indexing
+- Megumin/Ukiyo remain untouched

@@ -14,6 +14,7 @@ import { prepareWorldStateContinuity } from './evolution.js';
 import { stableStringify } from './hash.js';
 import { getWorldStateChatIdentity, getWorldStateChatKey } from './host-identity.js';
 import { createSillyTavernWorldStateStorageAdapter } from './host-storage.js';
+import { storeBaseMapSource, loadBaseMapSource } from './host-base-map.js';
 import {
   WORLD_STATE_PROMPT_KEY,
   buildWorldStateInjection,
@@ -28,11 +29,15 @@ import {
 import { cancelWorldStateRequests } from './provider-routing.js';
 import { runManualRebuild } from './rebuild.js';
 import { buildRelevanceIndex, selectRelevantRecords, updateRelevanceIndex } from './relevance.js';
+import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
+import { buildSpatialInjection } from './spatial-injection.js';
+import { applySpatialManualMutation, inspectSpatialLocation, querySpatialLocations } from './spatial-manual.js';
+import { resolveEffectiveLocations } from './spatial-core.js';
 import { clone, createState, normalizeState } from './state-core.js';
 import { readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.8.0-alpha.1';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.1';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -46,10 +51,16 @@ const DEFAULTS = Object.freeze({
   injectBudgetTokens: 800,
   connectionProfile: '',
   dataFiles: {},
+  spatialEnabled: false,
+  spatialInject: true,
+  spatialInjectBudgetTokens: 500,
+  spatialBaseMaps: {},
 });
 
 const stateCache = new Map();
 const relevanceIndices = new Map();
+const spatialRelevanceIndices = new Map();
+const baseMapCache = new Map();
 const loadedChats = new Set();
 const hydrationErrors = new Map();
 const loadingChats = new Map();
@@ -112,6 +123,19 @@ export function getWorldStateSettings() {
     settings.dataFiles = {};
     dirty = true;
   }
+
+  // Phase 9 Spatial settings
+  settings.spatialEnabled = Boolean(settings.spatialEnabled);
+  settings.spatialInject = settings.spatialInject !== false;
+  {
+    const sBudget = Number(settings.spatialInjectBudgetTokens);
+    settings.spatialInjectBudgetTokens = Math.max(1, Math.min(2400, Number.isFinite(sBudget) ? Math.trunc(sBudget) : 500));
+  }
+  if (!settings.spatialBaseMaps || typeof settings.spatialBaseMaps !== 'object' || Array.isArray(settings.spatialBaseMaps)) {
+    settings.spatialBaseMaps = {};
+    dirty = true;
+  }
+
   if (dirty) persistHostSettings();
   return settings;
 }
@@ -142,11 +166,67 @@ function resetRelevanceIndex(chatKey, state) {
   return index;
 }
 
+function baseMapCacheKey(ref) {
+  if (!ref || typeof ref !== 'object' || !ref.id) return '';
+  const digest = String(ref.digest || '').trim();
+  const path = String(ref.path || '').trim();
+  return digest ? ref.id + ':' + digest : (path ? ref.id + ':' + path : ref.id);
+}
+
+async function getChatBaseMap(chatKey, state) {
+  if (!chatKey || chatKey === 'no-chat' || !state) return null;
+  const ref = state?.spatial?.baseMapRef;
+  if (!ref?.id) return null;
+  const cacheKey = baseMapCacheKey(ref);
+  if (cacheKey && baseMapCache.has(cacheKey)) return baseMapCache.get(cacheKey);
+
+  const settings = getWorldStateSettings();
+  // A campaign-owned pointer with a path/digest wins over the optional host
+  // convenience registry. This prevents a later import using the same logical
+  // map id from silently switching another campaign's source geography.
+  const pointer = ref.path
+    ? ref
+    : (settings.spatialBaseMaps?.[ref.digest]
+      || settings.spatialBaseMaps?.[cacheKey]
+      || settings.spatialBaseMaps?.[ref.id]
+      || ref);
+  try {
+    const baseMap = await loadBaseMapSource(hostStorage, pointer);
+    if (baseMap) {
+      baseMapCache.set(baseMapCacheKey(pointer) || cacheKey, baseMap);
+      return baseMap;
+    }
+    if (cacheKey) baseMapCache.set(cacheKey, null);
+  } catch (error) {
+    if (cacheKey) baseMapCache.set(cacheKey, null);
+    console.warn('[World State Alpha] failed to load base map for chat', chatKey, error);
+  }
+  return null;
+}
+
+function getSpatialRelevanceIndex(chatKey, spatialState, baseMap) {
+  if (!chatKey || chatKey === 'no-chat' || !spatialState) return null;
+  if (spatialRelevanceIndices.has(chatKey)) return spatialRelevanceIndices.get(chatKey);
+  const index = buildSpatialRelevanceIndex(spatialState, baseMap);
+  spatialRelevanceIndices.set(chatKey, index);
+  return index;
+}
+
+function resetSpatialRelevanceIndex(chatKey, spatialState, baseMap) {
+  if (!chatKey || chatKey === 'no-chat' || !spatialState) {
+    spatialRelevanceIndices.delete(chatKey);
+    return null;
+  }
+  const index = buildSpatialRelevanceIndex(spatialState, baseMap);
+  spatialRelevanceIndices.set(chatKey, index);
+  return index;
+}
+
 function epoch(chatKey) {
   return Number(stateEpochs.get(chatKey) || 0);
 }
 
-function setCachedState(chatKey, state, { indexMode = 'rebuild', indexDelta = null } = {}) {
+function setCachedState(chatKey, state, { indexMode = 'rebuild', indexDelta = null, spatialIndexDelta = null } = {}) {
   const normalized = normalizeState(clone(state), { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
   stateEpochs.set(chatKey, epoch(chatKey) + 1);
@@ -155,8 +235,15 @@ function setCachedState(chatKey, state, { indexMode = 'rebuild', indexDelta = nu
     const index = relevanceIndices.get(chatKey);
     if (index) updateRelevanceIndex(index, indexDelta || {});
     else resetRelevanceIndex(chatKey, normalized);
+
+    const spIndex = spatialRelevanceIndices.get(chatKey);
+    const baseMap = baseMapCache.get(baseMapCacheKey(normalized.spatial?.baseMapRef)) || null;
+    if (spIndex) updateSpatialRelevanceIndex(spIndex, spatialIndexDelta || {});
+    else resetSpatialRelevanceIndex(chatKey, normalized.spatial, baseMap);
   } else if (indexMode !== 'preserve') {
     resetRelevanceIndex(chatKey, normalized);
+    const baseMap = baseMapCache.get(baseMapCacheKey(normalized.spatial?.baseMapRef)) || null;
+    resetSpatialRelevanceIndex(chatKey, normalized.spatial, baseMap);
   }
   return normalized;
 }
@@ -224,9 +311,14 @@ async function ensureChatStateLoaded(chatKey = currentChatKey()) {
     try {
       const state = await loadChatState(chatKey);
       setCachedState(chatKey, state);
+      const loadedState = stateCache.get(chatKey);
+      if (loadedState?.spatial?.baseMapRef?.id) {
+        const baseMap = await getChatBaseMap(chatKey, loadedState);
+        if (baseMap) resetSpatialRelevanceIndex(chatKey, loadedState.spatial, baseMap);
+      }
       loadedChats.add(chatKey);
       hydrationErrors.delete(chatKey);
-      return stateCache.get(chatKey);
+      return loadedState;
     } catch (error) {
       hydrationErrors.set(chatKey, error);
       loadedChats.delete(chatKey);
@@ -330,7 +422,7 @@ function clearPrivatePrompt() {
 function updatePrivateInjection() {
   const settings = getWorldStateSettings();
   const chatKey = currentChatKey();
-  if (!settings.enabled || !settings.inject || chatKey === 'no-chat' || hydrationErrors.has(chatKey) || !loadedChats.has(chatKey)) {
+  if (!settings.enabled || (!settings.inject && !settings.spatialInject) || chatKey === 'no-chat' || hydrationErrors.has(chatKey) || !loadedChats.has(chatKey)) {
     clearPrivatePrompt();
     return null;
   }
@@ -342,16 +434,46 @@ function updatePrivateInjection() {
   const chat = getContext().chat || [];
   const end = chat.length - 1;
   const exchange = end >= 0 ? boundedExchange(chat, end, 4, state.lineage) : [];
-  const index = getRelevanceIndex(chatKey, state);
-  const injection = buildWorldStateInjection(state, {
-    index,
-    recentText: recentText(exchange),
-    currentMessageId: end >= 0 ? end : null,
-    budgetTokens: settings.injectBudgetTokens,
-    depth: settings.injectDepth,
-  });
-  setPrivatePrompt(injection.text, injection.descriptor.depth);
-  return injection;
+  const sceneText = recentText(exchange);
+
+  let realityText = '';
+  if (settings.inject) {
+    const index = getRelevanceIndex(chatKey, state);
+    const injection = buildWorldStateInjection(state, {
+      index,
+      recentText: sceneText,
+      currentMessageId: end >= 0 ? end : null,
+      budgetTokens: settings.injectBudgetTokens,
+      depth: settings.injectDepth,
+    });
+    realityText = injection.text;
+  }
+
+  let spatialText = '';
+  if (settings.spatialEnabled && settings.spatialInject) {
+    const baseRef = state.spatial?.baseMapRef;
+    const baseMap = baseMapCache.get(baseMapCacheKey(baseRef)) || null;
+    // If a campaign declares a base authority but that source is unavailable,
+    // omit Spatial injection rather than presenting a partial generated-only map.
+    if (!baseRef?.id || baseMap) {
+      const spIndex = getSpatialRelevanceIndex(chatKey, state.spatial, baseMap);
+      const spInjection = buildSpatialInjection(state.spatial, {
+        baseMap,
+        index: spIndex,
+        recentText: sceneText,
+        budgetTokens: settings.spatialInjectBudgetTokens,
+      });
+      spatialText = spInjection.text;
+    }
+  }
+
+  const combined = [realityText, spatialText].filter(Boolean).join('\n\n');
+  if (combined) {
+    setPrivatePrompt(combined, settings.injectDepth);
+  } else {
+    clearPrivatePrompt();
+  }
+  return { text: combined };
 }
 
 function extendCurrentBranchFast(chatKey) {
@@ -435,6 +557,25 @@ async function handleAssistantMessage(messageId) {
       maxRecords: CAPTURE_LIMITS.visibleRecords,
     }).selected.map(item => item.record);
 
+    let visibleLocations = [];
+    let baseMap = null;
+    let spatialCaptureEnabled = Boolean(settings.spatialEnabled);
+    if (spatialCaptureEnabled) {
+      baseMap = await getChatBaseMap(chatKey, before);
+      if (before.spatial?.baseMapRef?.id && !baseMap) {
+        spatialCaptureEnabled = false;
+      } else {
+        const spIndex = getSpatialRelevanceIndex(chatKey, before.spatial, baseMap);
+        const spRel = selectRelevantLocations(before.spatial, {
+          baseMap,
+          index: spIndex,
+          recentText: recentText(exchange),
+          maxLocations: 6,
+        });
+        visibleLocations = spRel.selected.map(item => item.location);
+      }
+    }
+
     const isCurrent = operationGuard(chatKey, messageId);
     const result = await runCaptureOperation({
       ctx: getContext(),
@@ -449,12 +590,20 @@ async function handleAssistantMessage(messageId) {
       operationId: 'capture:' + messageId + ':' + epoch(chatKey),
       isCurrent,
       diagnostics: diagnosticStore,
+      spatialEnabled: spatialCaptureEnabled,
+      visibleLocations,
+      baseMap,
+      spatialProfile: before.spatial?.profile,
     });
 
     if (!isCurrent() || result.outcome === 'stale' || result.outcome === 'skipped') return;
     const committed = commitMutationBoundary(before, result.state, liveChat, messageId, 'capture', { lineage: before.lineage });
     await persistState(chatKey, committed);
-    setCachedState(chatKey, committed, { indexMode: 'delta', indexDelta: result.indexDelta });
+    setCachedState(chatKey, committed, {
+      indexMode: 'delta',
+      indexDelta: result.indexDelta,
+      spatialIndexDelta: result.spatial?.indexDelta,
+    });
     updatePrivateInjection();
     refreshPanel();
   });
@@ -478,7 +627,7 @@ async function handleUserMessage(messageId) {
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
     const branch = extendCurrentBranchFast(chatKey)
       || await reconcileCurrentBranch(chatKey, { persistRestore: true });
-    if (branch?.failClosed || !getWorldStateSettings().inject) {
+    if (branch?.failClosed || (!getWorldStateSettings().inject && !getWorldStateSettings().spatialInject)) {
       updatePrivateInjection();
       refreshPanel();
       return;
@@ -515,8 +664,6 @@ async function handleUserMessage(messageId) {
     });
 
     if (!isCurrent()) {
-      // prepareWorldStateContinuity may have applied an ephemeral index delta for final injection.
-      // A stale operation must restore the index to the still-canonical pre-operation state.
       resetRelevanceIndex(chatKey, before);
       return;
     }
@@ -528,10 +675,9 @@ async function handleUserMessage(messageId) {
         resetRelevanceIndex(chatKey, before);
         throw error;
       }
-      // The evolution helper already updated the ephemeral index with its small reducer delta.
       setCachedState(chatKey, committed, { indexMode: 'preserve' });
     }
-    setPrivatePrompt(prepared.injection?.text || '', prepared.injection?.descriptor?.depth ?? getWorldStateSettings().injectDepth);
+    updatePrivateInjection();
     refreshPanel();
   });
 }
@@ -542,10 +688,7 @@ async function handleBranchChange() {
     clearPrivatePrompt();
     return;
   }
-  // Mark the branch dirty synchronously so any subsequently queued normal event
-  // must take the exact reconciliation path before using append-only lineage.
   branchDirtyChats.add(chatKey);
-  // Invalidate provider currentness immediately; exact reconciliation may wait behind queued chat work.
   stateEpochs.set(chatKey, epoch(chatKey) + 1);
   cancelWorldStateRequests({ chatKey });
   await queueChatWork(chatKey, async () => {
@@ -608,6 +751,9 @@ function syncSettingsControls() {
   assignValue('world_state_alpha_inject_depth', settings.injectDepth);
   assignValue('world_state_alpha_inject_budget', settings.injectBudgetTokens);
   assignValue('world_state_alpha_connection_profile', settings.connectionProfile);
+  assignChecked('world_state_alpha_spatial_enabled', settings.spatialEnabled);
+  assignChecked('world_state_alpha_spatial_inject', settings.spatialInject);
+  assignValue('world_state_alpha_spatial_inject_budget', settings.spatialInjectBudgetTokens);
 }
 
 function buildSettingsCard() {
@@ -622,6 +768,10 @@ function buildSettingsCard() {
     '<label>Injection depth <input id="world_state_alpha_inject_depth" type="number" min="0" max="20" step="1"></label>',
     '<label>Injection budget <input id="world_state_alpha_inject_budget" type="number" min="1" max="2400" step="1"></label>',
     '<label>Connection Profile ID <input id="world_state_alpha_connection_profile" type="text" autocomplete="off" placeholder="Default host route"></label>',
+    '<hr style="border:0;border-top:1px solid rgba(255,255,255,0.1);margin:4px 0;">',
+    '<label><input id="world_state_alpha_spatial_enabled" type="checkbox"> Enable Spatial Continuity (Phase 9)</label>',
+    '<label><input id="world_state_alpha_spatial_inject" type="checkbox"> Inject spatial continuity</label>',
+    '<label>Spatial inject budget <input id="world_state_alpha_spatial_inject_budget" type="number" min="1" max="2400" step="1"></label>',
     '<button id="world_state_alpha_open" type="button" class="menu_button">Open World State</button>',
   ].join('');
   return section;
@@ -664,9 +814,30 @@ function bindSettingsEvents() {
     else if (target.id === 'world_state_alpha_inject_depth') settings.injectDepth = Math.max(0, Math.min(20, Math.trunc(Number(target.value) || 0)));
     else if (target.id === 'world_state_alpha_inject_budget') settings.injectBudgetTokens = Math.max(1, Math.min(2400, Math.trunc(Number(target.value) || 800)));
     else if (target.id === 'world_state_alpha_connection_profile') settings.connectionProfile = String(target.value || '').trim().slice(0, 160);
+    else if (target.id === 'world_state_alpha_spatial_enabled') settings.spatialEnabled = Boolean(target.checked);
+    else if (target.id === 'world_state_alpha_spatial_inject') settings.spatialInject = Boolean(target.checked);
+    else if (target.id === 'world_state_alpha_spatial_inject_budget') settings.spatialInjectBudgetTokens = Math.max(1, Math.min(2400, Math.trunc(Number(target.value) || 500)));
     else return;
     persistHostSettings();
     syncSettingsControls();
+
+    const spatialToggle = target.id === 'world_state_alpha_spatial_enabled'
+      || target.id === 'world_state_alpha_spatial_inject';
+    if (spatialToggle && (settings.spatialEnabled || settings.spatialInject)) {
+      const chatKey = currentChatKey();
+      const state = stateCache.get(chatKey);
+      if (chatKey !== 'no-chat' && state?.spatial?.baseMapRef?.id) {
+        void getChatBaseMap(chatKey, state).then(baseMap => {
+          if (baseMap && currentChatKey() === chatKey) {
+            resetSpatialRelevanceIndex(chatKey, state.spatial, baseMap);
+          }
+          updatePrivateInjection();
+          refreshPanel();
+        });
+        return;
+      }
+    }
+
     updatePrivateInjection();
     refreshPanel();
   });
@@ -740,6 +911,12 @@ async function applyMaintenanceAction(actionId) {
     const next = seedRootCheckpoint(applyWorldStateImport(preview, { confirmed: true }));
     await persistState(chatKey, next);
     setCachedState(chatKey, next);
+    if (next.spatial?.baseMapRef?.id) {
+      const reboundBaseMap = await getChatBaseMap(chatKey, stateCache.get(chatKey));
+      if (reboundBaseMap) {
+        resetSpatialRelevanceIndex(chatKey, stateCache.get(chatKey).spatial, reboundBaseMap);
+      }
+    }
     updatePrivateInjection();
     refreshPanel();
     return;
@@ -765,6 +942,8 @@ async function applyMaintenanceAction(actionId) {
     const isCurrent = () => currentChatKey() === chatKey
       && epoch(chatKey) === startEpoch
       && stableStringify(chatLineage(getContext().chat || [])) === startLineage;
+    const settings = getWorldStateSettings();
+    const baseMap = await getChatBaseMap(chatKey, state);
     const result = await runManualRebuild({
       ctx: getContext(),
       state,
@@ -773,6 +952,9 @@ async function applyMaintenanceAction(actionId) {
       route: routeSettings(),
       operationId: 'rebuild:' + sourceMessageId + ':' + startEpoch,
       isCurrent,
+      spatialEnabled: Boolean(settings.spatialEnabled),
+      baseMap,
+      spatialProfile: state.spatial?.profile,
     });
     if (result.outcome !== 'completed' || !isCurrent()) {
       notify('error', 'World State Alpha rebuild did not complete; canonical state was left unchanged.');
@@ -783,6 +965,364 @@ async function applyMaintenanceAction(actionId) {
     updatePrivateInjection();
     refreshPanel();
     notify('success', 'World State Alpha rebuild completed.');
+  }
+}
+
+async function applySpatialAction(actionId, payload = {}) {
+  const chatKey = currentChatKey();
+  if (chatKey === 'no-chat') return;
+  await ensureChatStateLoaded(chatKey);
+  if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
+  const state = stateCache.get(chatKey);
+  const baseMap = await getChatBaseMap(chatKey, state);
+  const chat = getContext().chat || [];
+  const messageId = chat.length ? chat.length - 1 : null;
+
+  const persistSpatialState = async (nextState, message) => {
+    await persistState(chatKey, nextState);
+    setCachedState(chatKey, nextState);
+    updatePrivateInjection();
+    refreshPanel();
+    if (message) notify('success', message);
+  };
+
+  const applySequence = (initialState, steps) => {
+    let working = initialState;
+    const combined = [];
+    for (const step of steps) {
+      const res = applySpatialManualMutation({
+        state: working,
+        chat,
+        chatKey,
+        messageId,
+        mutation: step.mutation,
+        note: step.note,
+        baseMap,
+      });
+      if (res.outcome !== 'applied') {
+        return { outcome: 'rejected', state: initialState, rejected: res.rejected || [] };
+      }
+      working = res.state;
+      combined.push(...(res.applied || []));
+    }
+    return { outcome: 'applied', state: working, applied: combined };
+  };
+
+  const effectiveLocations = currentState => resolveEffectiveLocations(currentState.spatial, baseMap);
+  const findEffectiveByName = (currentState, name) => {
+    const needle = String(name || '').trim().toLowerCase();
+    if (!needle) return null;
+    return effectiveLocations(currentState).find(loc => loc.name.toLowerCase() === needle) || null;
+  };
+
+  if (actionId === 'add_location_modal') {
+    const name = window.prompt('Location name:');
+    if (!name?.trim()) return;
+    const type = window.prompt('Location type (e.g. inn, hamlet, ford, ruin):', 'landmark') || 'landmark';
+    const xRaw = window.prompt('Coordinate X (leave blank if unknown):', '');
+    const yRaw = window.prompt('Coordinate Y (leave blank if unknown):', '');
+    const context = window.prompt('Region / context (optional):', '') || '';
+    const x = xRaw !== null && xRaw.trim() !== '' ? Number(xRaw) : null;
+    const y = yRaw !== null && yRaw.trim() !== '' ? Number(yRaw) : null;
+    if ((x !== null) !== (y !== null) || (x !== null && (!Number.isFinite(x) || !Number.isFinite(y)))) {
+      notify('error', 'Provide both X and Y as numbers, or leave both blank.');
+      return;
+    }
+    const res = applySpatialManualMutation({
+      state,
+      chat,
+      chatKey,
+      messageId,
+      mutation: {
+        action: 'upsert_location',
+        name: name.trim(),
+        type: type.trim() || 'landmark',
+        context: context.trim(),
+        coordinate: {
+          x,
+          y,
+          authority: x === null ? 'unknown' : 'manual',
+          locked: x !== null,
+        },
+      },
+      note: 'Manually added location',
+      baseMap,
+    });
+    if (res.outcome === 'applied') {
+      await persistSpatialState(res.state, 'Added location ' + name.trim());
+    } else {
+      notify('error', 'Location was not added: ' + (res.rejected?.[0]?.reason || 'rejected'));
+    }
+    return;
+  }
+
+  if (actionId === 'create_override' && payload.location) {
+    const res = applySpatialManualMutation({
+      state,
+      chat,
+      chatKey,
+      messageId,
+      mutation: {
+        action: 'upsert_location',
+        locationId: payload.location.id,
+        name: payload.location.name,
+        type: payload.location.type,
+        context: payload.location.context,
+        routeRefs: payload.location.routeRefs,
+        notes: 'Campaign override',
+        createOverride: true,
+      },
+      note: 'Created campaign override',
+      baseMap,
+    });
+    if (res.outcome === 'applied') {
+      await persistSpatialState(res.state, 'Created campaign override for ' + payload.location.name);
+    }
+    return;
+  }
+
+  if (actionId === 'save_location' && payload.location) {
+    const fd = payload.formData || {};
+    if ((fd.x !== null) !== (fd.y !== null)
+      || (fd.x !== null && (!Number.isFinite(fd.x) || !Number.isFinite(fd.y)))) {
+      notify('error', 'Provide both X and Y as numbers, or leave both blank.');
+      return;
+    }
+
+    const targetId = payload.location.overrideId || payload.location.id;
+    const priorCoord = payload.location.coordinate || {};
+    const priorX = Number.isFinite(priorCoord.x) ? priorCoord.x : null;
+    const priorY = Number.isFinite(priorCoord.y) ? priorCoord.y : null;
+    const nextLocked = Boolean(fd.locked && fd.x !== null);
+    const nextAuthority = fd.authority || (fd.x === null ? 'unknown' : 'manual');
+    const coordinateChanged = fd.x !== priorX
+      || fd.y !== priorY
+      || nextLocked !== Boolean(priorCoord.locked)
+      || nextAuthority !== String(priorCoord.authority || 'unknown');
+
+    const locationMutation = {
+      action: 'upsert_location',
+      locationId: targetId,
+      name: fd.name || payload.location.name,
+      type: fd.type || payload.location.type,
+      context: fd.context,
+      routeRefs: fd.routeRefs,
+      notes: fd.notes,
+    };
+    if (coordinateChanged) {
+      locationMutation.coordinate = {
+        x: fd.x,
+        y: fd.y,
+        authority: nextAuthority,
+        locked: nextLocked,
+      };
+    }
+
+    const steps = [{
+      mutation: locationMutation,
+      note: 'Manual location update',
+    }];
+
+    const relationId = String(fd.relationId || '').trim();
+    const anchorName = String(fd.relativeAnchor || '').trim();
+    if (relationId) {
+      steps.push({
+        mutation: { action: 'delete_relation', relationId },
+        note: 'Replaced spatial relation',
+      });
+    }
+
+    if (anchorName) {
+      const afterLocation = applySequence(state, steps.slice(0, 1));
+      if (afterLocation.outcome !== 'applied') {
+        notify('error', 'Location update rejected.');
+        return;
+      }
+      const anchor = findEffectiveByName(afterLocation.state, anchorName);
+      if (!anchor) {
+        notify('error', 'Relative anchor not found: ' + anchorName);
+        return;
+      }
+      const selectedEffectiveId = payload.location.id;
+      if (anchor.id === selectedEffectiveId) {
+        notify('error', 'A location cannot be relative to itself.');
+        return;
+      }
+      steps.push({
+        mutation: {
+          action: 'upsert_relation',
+          fromId: anchor.id,
+          toId: selectedEffectiveId,
+          direction: fd.direction || '',
+          distanceKm: Number.isFinite(fd.distanceKm) ? fd.distanceKm : null,
+          distanceMode: fd.distanceMode || 'unspecified',
+          notes: 'Manual relative position',
+        },
+        note: 'Updated spatial relation',
+      });
+    }
+
+    const res = applySequence(state, steps);
+    if (res.outcome === 'applied') {
+      await persistSpatialState(res.state, 'Saved location ' + (fd.name || payload.location.name));
+    } else {
+      notify('error', 'Spatial update rejected: ' + (res.rejected?.[0]?.reason || 'invalid edit'));
+    }
+    return;
+  }
+
+  if (actionId === 'toggle_lock' && payload.location) {
+    const curCoord = payload.location.coordinate || {};
+    const nextLocked = !curCoord.locked;
+    const res = applySpatialManualMutation({
+      state,
+      chat,
+      chatKey,
+      messageId,
+      mutation: {
+        action: 'upsert_location',
+        locationId: payload.location.overrideId || payload.location.id,
+        name: payload.location.name,
+        coordinate: {
+          ...curCoord,
+          locked: nextLocked,
+          authority: curCoord.authority || 'manual',
+        },
+      },
+      note: nextLocked ? 'Locked coordinates' : 'Unlocked coordinates',
+      baseMap,
+    });
+    if (res.outcome === 'applied') {
+      await persistSpatialState(res.state, (nextLocked ? 'Locked' : 'Unlocked') + ' coordinates for ' + payload.location.name);
+    }
+    return;
+  }
+
+  if (actionId === 'archive_location' && payload.location) {
+    if (!window.confirm('Archive this campaign location? It will stop appearing in normal spatial retrieval.')) return;
+    const targetId = payload.location.overrideId || payload.location.id;
+    const res = applySpatialManualMutation({
+      state,
+      chat,
+      chatKey,
+      messageId,
+      mutation: { action: 'archive_location', locationId: targetId },
+      note: 'Archived campaign location',
+      baseMap,
+    });
+    if (res.outcome === 'applied') {
+      await persistSpatialState(res.state, 'Archived location ' + payload.location.name);
+    }
+    return;
+  }
+
+  if (actionId === 'merge_location' && payload.location) {
+    const sourceId = payload.location.overrideId || payload.location.id;
+    const candidates = state.spatial.locations.filter(loc => loc.status === 'active' && loc.id !== sourceId);
+    if (!candidates.length) {
+      notify('warning', 'No other campaign location is available to merge into.');
+      return;
+    }
+    const targetName = window.prompt(
+      'Merge this duplicate into which campaign location?\n' + candidates.slice(0, 12).map(loc => '- ' + loc.name).join('\n'),
+      '',
+    );
+    if (!targetName?.trim()) return;
+    const target = candidates.find(loc => loc.name.toLowerCase() === targetName.trim().toLowerCase());
+    if (!target) {
+      notify('error', 'Merge target not found among campaign locations.');
+      return;
+    }
+    if (!window.confirm('Merge "' + payload.location.name + '" into "' + target.name + '"? The source will be archived.')) return;
+    const res = applySpatialManualMutation({
+      state,
+      chat,
+      chatKey,
+      messageId,
+      mutation: { action: 'merge_locations', sourceId, targetId: target.id },
+      note: 'Merged accidental duplicate into ' + target.name,
+      baseMap,
+    });
+    if (res.outcome === 'applied') {
+      await persistSpatialState(res.state, 'Merged duplicate into ' + target.name);
+    }
+    return;
+  }
+
+  if (actionId === 'delete_location' && payload.location) {
+    const label = payload.location.isOverridden
+      ? 'Delete this campaign override? The read-only base location will become visible again.'
+      : 'Delete this campaign location?';
+    if (!window.confirm(label)) return;
+    const targetId = payload.location.overrideId || payload.location.id;
+    const res = applySpatialManualMutation({
+      state,
+      chat,
+      chatKey,
+      messageId,
+      mutation: { action: 'delete_location', locationId: targetId },
+      note: 'Deleted campaign location',
+      baseMap,
+    });
+    if (res.outcome === 'applied') {
+      await persistSpatialState(res.state, 'Deleted location ' + payload.location.name);
+    }
+    return;
+  }
+
+  if (actionId === 'import_base_map') {
+    const startEpoch = epoch(chatKey);
+    const file = await chooseImportFile();
+    if (!file || currentChatKey() !== chatKey || epoch(chatKey) !== startEpoch) return;
+    const rawText = await file.text();
+    if (currentChatKey() !== chatKey || epoch(chatKey) !== startEpoch) return;
+    let stored;
+    try {
+      stored = await storeBaseMapSource(hostStorage, rawText);
+    } catch (err) {
+      notify('error', 'Failed to parse base map: ' + err.message);
+      return;
+    }
+    // Uploading an immutable source may finish after navigation. In that case
+    // leave the harmless source file unattached and mutate no campaign/settings state.
+    if (currentChatKey() !== chatKey || epoch(chatKey) !== startEpoch) return;
+    const settings = getWorldStateSettings();
+    const sourceKey = stored.pointer.digest || baseMapCacheKey(stored.pointer);
+    settings.spatialBaseMaps[sourceKey] = stored.pointer;
+    persistHostSettings();
+    baseMapCache.set(baseMapCacheKey(stored.pointer), stored.baseMap);
+
+    const steps = [
+      {
+        mutation: { action: 'set_profile', profile: stored.baseMap.profile },
+        note: 'Adopted base-map spatial profile',
+      },
+      {
+        mutation: { action: 'set_base_map_ref', baseMapRef: stored.pointer },
+        note: 'Attached base map ' + stored.baseMap.name,
+      },
+    ];
+    const res = applySequence(state, steps);
+    if (res.outcome === 'applied') {
+      await persistSpatialState(res.state, 'Base map attached: ' + stored.baseMap.name);
+    }
+    return;
+  }
+
+  if (actionId === 'detach_base_map') {
+    if (!window.confirm('Detach base map from this campaign? Campaign locations will be preserved.')) return;
+    const res = applySpatialManualMutation({
+      state,
+      chat,
+      chatKey,
+      messageId,
+      mutation: { action: 'set_base_map_ref', baseMapRef: null },
+      note: 'Detached base map',
+    });
+    if (res.outcome === 'applied') {
+      await persistSpatialState(res.state);
+      notify('info', 'Base map detached.');
+    }
   }
 }
 
@@ -811,8 +1351,13 @@ export async function openWorldStatePanel() {
   panelController = createWorldStateUiController({
     root: panelRoot,
     getState: () => getCachedState(currentChatKey()) || createState(currentChatKey()),
+    getBaseMap: () => {
+      const ref = stateCache.get(currentChatKey())?.spatial?.baseMapRef;
+      return baseMapCache.get(baseMapCacheKey(ref)) || null;
+    },
     getDiagnostics: () => diagnosticStore.records(currentChatKey()),
     onMaintenanceAction: actionId => applyMaintenanceAction(actionId),
+    onSpatialAction: (actionId, payload) => applySpatialAction(actionId, payload),
     onClose: closeWorldStatePanel,
   });
   return true;

@@ -165,7 +165,7 @@ export function buildReleasePackage() {
   const manifestJson = JSON.stringify(releaseManifest, null, 2) + '\n';
   fs.writeFileSync(`dist/world_state_alpha-${pkg.version}-manifest.json`, manifestJson);
   fs.writeFileSync('dist/release-manifest.json', manifestJson);
-  fs.writeFileSync('dist/world_state_alpha-phase8.json', manifestJson);
+  fs.writeFileSync(`dist/world_state_alpha-${inventory.stage}.json`, manifestJson);
 
   return {
     archiveName,

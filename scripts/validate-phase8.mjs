@@ -16,14 +16,14 @@ const indexSource = fs.readFileSync('index.js', 'utf8');
 const packageSource = fs.readFileSync('scripts/package-design.mjs', 'utf8');
 
 // 1. Stage and version validation
-if (inventory.stage !== 'phase8-release-hardening') {
+if (inventory.stage !== 'phase8-release-hardening' && inventory.stage !== 'phase9-spatial-continuity') {
   throw new Error('Phase 8 runtime inventory stage mismatch: ' + inventory.stage);
 }
-if (pkg.version !== '0.8.0-alpha.1' || manifest.version !== pkg.version) {
+if ((pkg.version !== '0.8.0-alpha.1' && pkg.version !== '0.9.0-alpha.1') || manifest.version !== pkg.version) {
   throw new Error('Phase 8 application version markers inconsistent in package.json/manifest.json');
 }
-if (!indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.8.0-alpha.1'")) {
-  throw new Error('Phase 8 index.js version marker not synchronized to 0.8.0-alpha.1');
+if (!indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.8.0-alpha.1'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.1'")) {
+  throw new Error('Phase 8 index.js version marker not synchronized');
 }
 for (const required of [
   'const branchDirtyChats = new Set()',
@@ -35,9 +35,9 @@ for (const required of [
   if (!indexSource.includes(required)) throw new Error('Phase 8 branch-dirty fast-path guard missing: ' + required);
 }
 
-// 2. Persisted versions must remain 1
-if (SCHEMA_VERSION !== 1 || SIDECAR_FORMAT_VERSION !== 1 || BUNDLE_VERSION !== 1 || ROLLBACK_JOURNAL_VERSION !== 1) {
-  throw new Error('Phase 8 must not bump persisted schema/sidecar/bundle/journal versions (target is 1)');
+// 2. Persisted versions must remain 1 (schemaVersion may be 2 in Phase 9)
+if ((SCHEMA_VERSION !== 1 && SCHEMA_VERSION !== 2) || SIDECAR_FORMAT_VERSION !== 1 || BUNDLE_VERSION !== 1 || ROLLBACK_JOURNAL_VERSION !== 1) {
+  throw new Error('Phase 8 sidecar/bundle/journal versions must remain 1');
 }
 
 // 3. Module inventory and browser-safe runtime check
@@ -191,4 +191,4 @@ if (pkg1.manifestJson !== pkg2.manifestJson) {
   throw new Error('Phase 8 release package manifest differs between runs');
 }
 
-console.log('World State Alpha Phase 8 validation passed: application version 0.8.0-alpha.1 synchronized, schema versions 1 preserved, ephemeral index bounded and incrementally updated, orphan evidence compacted, and release package byte-reproducible.');
+console.log('World State Alpha Phase 8 compatibility validation passed under the current application: Phase 8 index/compaction/package contracts remain valid and sidecar/bundle/journal envelope versions remain 1.');

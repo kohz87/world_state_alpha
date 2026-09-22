@@ -9,6 +9,12 @@ import {
   SCHEMA_VERSION,
 } from './constants.js';
 import { deterministicId, stableStringify } from './hash.js';
+import {
+  applySpatialUndoPatch,
+  buildSpatialUndoPatch,
+  createSpatialState,
+  normalizeSpatialState,
+} from './spatial-core.js';
 
 export function clone(value) {
   if (typeof structuredClone === 'function') return structuredClone(value);
@@ -59,6 +65,7 @@ export function createState(chatKey = '') {
     checkpoints: [],
     lastCaptureMessage: null,
     recoveryRequired: null,
+    spatial: createSpatialState(),
   };
 }
 
@@ -124,7 +131,7 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
     if (strictSchema) throw new Error('state payload is not an object');
     return createState(chatKey);
   }
-  if (strictSchema && raw.schemaVersion !== SCHEMA_VERSION) {
+  if (strictSchema && raw.schemaVersion !== 1 && raw.schemaVersion !== SCHEMA_VERSION) {
     throw new Error(`unsupported state schema version: ${raw.schemaVersion}`);
   }
   const state = createState(raw.chatKey || chatKey);
@@ -175,6 +182,7 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
   state.recoveryRequired = raw.recoveryRequired && typeof raw.recoveryRequired === 'object'
     ? clone(raw.recoveryRequired)
     : null;
+  state.spatial = normalizeSpatialState(raw.spatial, { strict: strictSchema });
   return state;
 }
 
@@ -184,6 +192,7 @@ function domainSnapshot(state) {
     evidence: clone(state.evidence),
     links: clone(state.links),
     lastCaptureMessage: state.lastCaptureMessage,
+    spatial: state.spatial ? clone(state.spatial) : createSpatialState(),
   };
 }
 
@@ -209,14 +218,17 @@ export function buildUndoPatch(beforeState, afterState) {
   const after = domainSnapshot(afterState);
   const evidenceBefore = Object.values(before.evidence);
   const evidenceAfter = Object.values(after.evidence);
+  const spatialUndo = buildSpatialUndoPatch(before.spatial, after.spatial);
   const patch = {
     records: keyedUndo(before.records, after.records),
     evidence: keyedUndo(evidenceBefore, evidenceAfter),
     links: keyedUndo(before.links, after.links),
     lastCaptureMessageBefore: before.lastCaptureMessage,
+    spatial: spatialUndo,
   };
   const changed = patch.records.length || patch.evidence.length || patch.links.length
-    || before.lastCaptureMessage !== after.lastCaptureMessage;
+    || before.lastCaptureMessage !== after.lastCaptureMessage
+    || Boolean(spatialUndo);
   return changed ? patch : null;
 }
 
@@ -237,6 +249,9 @@ export function applyUndoPatch(inputState, patch) {
   state.evidence = Object.fromEntries(evidenceItems.map(item => [item.id, item]));
   state.links = restoreKeyed(state.links, patch.links);
   state.lastCaptureMessage = messageId(patch.lastCaptureMessageBefore);
+  if (patch.spatial) {
+    state.spatial = applySpatialUndoPatch(state.spatial, patch.spatial);
+  }
   return state;
 }
 
@@ -491,5 +506,6 @@ export function canonicalDomain(state) {
     evidence: clone(normalized.evidence),
     links: clone(normalized.links),
     lastCaptureMessage: normalized.lastCaptureMessage,
+    spatial: clone(normalized.spatial),
   };
 }

@@ -1,9 +1,10 @@
 {
-  "stage": "phase8-release-hardening",
+  "stage": "phase9-spatial-continuity",
   "hostEntrypoint": "bootstrap.js",
   "modules": [
     "constants.js",
     "hash.js",
+    "narrative-sanitizer.js",
     "state-core.js",
     "branch.js",
     "storage.js",
@@ -21,6 +22,14 @@
     "evolution.js",
     "manual.js",
     "rebuild.js",
+    "spatial-core.js",
+    "spatial-base-map.js",
+    "host-base-map.js",
+    "spatial-wire.js",
+    "spatial-capture.js",
+    "spatial-relevance.js",
+    "spatial-injection.js",
+    "spatial-manual.js",
     "ui.js",
     "host-identity.js",
     "host-storage.js"

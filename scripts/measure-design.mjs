@@ -13,6 +13,10 @@ import { chatLineage, commitMutationBoundary } from '../branch.js';
 import { createState, reduceMutations } from '../state-core.js';
 import { encodeSidecar } from '../storage.js';
 import { buildReleasePackage } from './package-design.mjs';
+import { parseBaseMap } from '../spatial-base-map.js';
+import { createSpatialState } from '../spatial-core.js';
+import { buildSpatialRelevanceIndex, selectRelevantLocations } from '../spatial-relevance.js';
+import { buildSpatialInjection } from '../spatial-injection.js';
 
 const files = ['docs/core-contract.md', 'docs/ARCHITECTURE.md', 'docs/DATA_MODEL.md'];
 for (const file of files) {
@@ -300,7 +304,7 @@ const canonicalSidecar = encodeSidecar({
   chatKey: sequentialState.chatKey,
   state: sequentialState,
   revision: 1000,
-  appVersion: '0.8.0-alpha.1',
+  appVersion: '0.9.0-alpha.1',
 });
 
 // Rollback storage is capped at 256 entries. Measure one full retained window separately
@@ -347,7 +351,7 @@ const journalSidecar = encodeSidecar({
   chatKey: journalState.chatKey,
   state: journalState,
   revision: rollbackWindow,
-  appVersion: '0.8.0-alpha.1',
+  appVersion: '0.9.0-alpha.1',
 });
 
 console.log(JSON.stringify({
@@ -376,3 +380,121 @@ console.log(JSON.stringify({
   reproducible: true,
   note: 'Deterministic archive and manifest bytes.',
 }));
+
+// Phase 9 Spatial Continuity measurements
+
+// 1. Capture prompt parity: disabled (0 extra chars/tokens) vs enabled (single call with spatial prompt)
+const captureExchange = [
+  { messageId: 50, role: 'user', content: 'I wait near the freight office.' },
+  { messageId: 51, role: 'assistant', content: 'Hadrik inspectors close the freight gate while merchants queue outside.' },
+];
+const disabledCapture = buildCapturePrompt({
+  exchange: captureExchange,
+  visibleRecords: [{
+    id: 'wsr_measure',
+    kind: 'development',
+    summary: 'Freight inspections are delaying trade.',
+    status: 'active',
+    trend: 'rising',
+    anchors: ['Hadrik', 'freight'],
+  }],
+  loreText: 'Hadrik normally inspects commercial freight.',
+  spatialEnabled: false,
+});
+const enabledCapture = buildCapturePrompt({
+  exchange: captureExchange,
+  visibleRecords: [{
+    id: 'wsr_measure',
+    kind: 'development',
+    summary: 'Freight inspections are delaying trade.',
+    status: 'active',
+    trend: 'rising',
+    anchors: ['Hadrik', 'freight'],
+  }],
+  visibleLocations: [{
+    id: 'wsloc_measure',
+    name: 'Kesselpass Outpost',
+    type: 'fortress',
+    coordinate: { x: 10, y: 20 },
+    routeRefs: ['North Road'],
+    context: 'Border checkpoint.',
+  }],
+  loreText: 'Hadrik normally inspects commercial freight.',
+  spatialEnabled: true,
+  baseMap: { id: 'ternia', name: 'Ternia' },
+});
+const disabledChars = disabledCapture.systemPrompt.length + disabledCapture.prompt.length;
+const enabledChars = enabledCapture.systemPrompt.length + enabledCapture.prompt.length;
+
+console.log(JSON.stringify({
+  kind: 'phase9-capture-prompt-parity',
+  disabledTotalChars: disabledChars,
+  disabledEstimatedTokens: Math.ceil(disabledChars / 4),
+  enabledTotalChars: enabledChars,
+  enabledEstimatedTokens: Math.ceil(enabledChars / 4),
+  deltaTokens: Math.ceil((enabledChars - disabledChars) / 4),
+  providerCallsPerTurn: 1,
+  note: 'Spatial capture operates within the same single LLM turn call as Reality Core.',
+}));
+
+// 2. Base map parsing & indexing benchmark
+const baseMapRaw = fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8');
+const baseMapParseStart = performance.now();
+const parsedBaseMap = parseBaseMap(baseMapRaw);
+const baseMapParseElapsed = performance.now() - baseMapParseStart;
+
+console.log(JSON.stringify({
+  kind: 'phase9-base-map-parsing',
+  adapter: parsedBaseMap.adapter,
+  locations: parsedBaseMap.locations.length,
+  routes: parsedBaseMap.routes.length,
+  digest: parsedBaseMap.digest,
+  frozen: Object.isFrozen(parsedBaseMap),
+  wallMs: Math.round(baseMapParseElapsed * 1000) / 1000,
+}));
+
+// 3. Ephemeral spatial relevance indexing across corpus sizes 10, 100, 500, 1000
+const spatialCorpusSizes = [10, 100, 500, 1000];
+for (const size of spatialCorpusSizes) {
+  const targetIndex = Math.floor(size * 0.77);
+  const locations = Array.from({ length: size }, (_, index) => ({
+    id: `wsloc_bench_${index}`,
+    name: index === targetIndex ? 'Hidden Moon Stronghold' : `Settlement ${index}`,
+    type: index === targetIndex ? 'stronghold' : 'village',
+    status: 'active',
+    baseRefId: null,
+    coordinate: { x: index * 0.1, y: index * 0.1, authority: 'derived', locked: false },
+    context: index === targetIndex ? 'Ancient stronghold hidden in the moonlit canyon.' : `Context for settlement ${index}`,
+    routeRefs: index === targetIndex ? ['Silver Trail'] : [],
+    createdAtMessage: 1,
+    lastChangedMessage: index === targetIndex ? 990 : 1,
+    evidenceIds: [],
+    notes: '',
+  }));
+  const spatialState = { profile: parsedBaseMap.profile, locations, relations: [], routes: [] };
+  const relevanceIndex = buildSpatialRelevanceIndex(spatialState);
+
+  const start = performance.now();
+  const injection = buildSpatialInjection(spatialState, {
+    index: relevanceIndex,
+    recentText: 'The travellers march towards the Hidden Moon Stronghold along the canyon edge.',
+    maxLocations: 6,
+  });
+  const elapsed = performance.now() - start;
+
+  console.log(JSON.stringify({
+    kind: 'phase9-spatial-relevance',
+    corpusLocations: size,
+    candidateLocations: injection.retrievalMetrics.candidateLocations,
+    scoredLocations: injection.retrievalMetrics.scoredLocations,
+    seedMatches: injection.retrievalMetrics.seedMatches,
+    injectedLocations: injection.included.length,
+    injectionChars: injection.text.length,
+    estimatedTokens: injection.estimatedTokens,
+    budgetTokens: injection.budgetTokens,
+    indexUsed: injection.retrievalMetrics.indexUsed,
+    postingVisits: injection.retrievalMetrics.postingVisits,
+    postingVisitBudget: injection.retrievalMetrics.postingVisitBudget,
+    wallMs: Math.round(elapsed * 1000) / 1000,
+  }));
+}

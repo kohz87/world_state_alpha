@@ -7,11 +7,11 @@ It is the world-level conceptual sibling of NPC State Delta:
 - NPC State Delta answers: "What is true about this NPC right now?"
 - World State Alpha answers: "What is true about the wider world right now?"
 
-World State Alpha models **change, not maps**. It has no required geography, polity, faction, settlement, calendar, genre, or setting ontology.
+The Reality Core models **change, not maps** and keeps its two-kind fact/development model. World State Alpha 0.9 adds an optional sibling subsystem, **Spatial Continuity**, which remembers established/generated places without turning Reality Core into a map ontology.
 
 ## Implementation status
 
-**Phases 1-8 are implemented as candidates: canonical state/rollback, immediate capture, local relevance/private injection, bounded lazy evolution, manual controls/rebuild, projection-only UI/evidence inspection, minimal isolated SillyTavern host/coexistence shell, and performance/release hardening (ephemeral relevance indexing, unreferenced evidence compaction, deterministic packaging, and live acceptance protocol). Application version is synchronized to 0.8.0-alpha.1 while persisted schema, sidecar, bundle, and journal versions remain 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.1 adds optional Spatial Continuity as a sibling to the unchanged Reality Core: campaign locations/relations/routes, read-only base-map adapters, deterministic coordinate authority/derivation, manual spatial editing, bounded spatial retrieval/injection, shared branch rollback, and writer-state evidence sanitation. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 
@@ -28,6 +28,17 @@ The proposed Alpha core uses one generic world-record schema with only two seman
 - `development`: an established ongoing condition that may evolve
 
 Historical **events are not a third durable record class**. They are evidence and mutation provenance for current records.
+
+Spatial Continuity is separate:
+
+- locations are not a third `records[]` kind
+- base maps are read-only source geography
+- campaign-generated places and overrides are per-chat durable Spatial state
+- exact/derived/relative/unknown coordinates remain distinct
+- no profile means no hidden Ternia scale/bounds/compass assumptions; configured Cartesian axes drive derivation
+- `<writer_state>...</writer_state>` planning is never capture evidence
+- Spatial is optional and disabled independently
+
 
 The normal loop is:
 
@@ -63,4 +74,4 @@ World State Alpha never rewrites source lore and never modifies Ukiyo.
 
 ## Repository rule
 
-Phases 1-8 authorize the canonical state/rollback substrate, bounded immediate capture, deterministic local relevance/private injection, targeted lazy evolution, manual inspection/correction/transfer/rebuild services, the browser-safe projection UI/evidence inspector, the minimal World-State-only SillyTavern host shell, and performance/release hardening. Phase 8 adds ephemeral per-chat relevance indexing, candidate cap saturation (128), unreferenced evidence compaction on mutation, deterministic byte-reproducible packaging, release manifests, and the live acceptance protocol. Persisted schema, sidecar, bundle, and rollback journal versions remain 1.
+Phases 1-9 authorize the existing Reality Core/runtime plus optional Spatial Continuity. Phase 9 does not modify Megumin/Ukiyo, does not add Story Director behavior, and does not modify attached base-map source files. Canonical schema version 2 adds the durable `spatial` namespace; sidecar, bundle, and rollback-journal envelope formats remain version 1.

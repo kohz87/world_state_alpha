@@ -7,6 +7,7 @@ import {
   clone,
   normalizeState,
 } from './state-core.js';
+import { createSpatialState } from './spatial-core.js';
 
 function messageContent(message) {
   if (!message || typeof message !== 'object') return '';
@@ -78,6 +79,11 @@ function restoreCheckpoint(state, snapshot) {
   restored.evidence = clone(snapshot.evidence || {});
   restored.links = clone(snapshot.links || []);
   restored.lastCaptureMessage = Number.isInteger(snapshot.lastCaptureMessage) ? snapshot.lastCaptureMessage : null;
+  if (snapshot.spatial) {
+    restored.spatial = clone(snapshot.spatial);
+  } else {
+    restored.spatial = createSpatialState();
+  }
   return normalizeState(restored);
 }
 

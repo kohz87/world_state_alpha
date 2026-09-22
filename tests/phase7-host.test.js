@@ -225,7 +225,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -234,7 +234,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   assert.deepEqual(manifest.optional, []);
 
   assert.equal(pkg.version, manifest.version);
-  assert.equal(['phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage), true);
+  assert.equal(['phase7-coexistence-host', 'phase8-release-hardening', 'phase9-spatial-continuity'].includes(inventory.stage), true);
   assert.equal(inventory.hostEntrypoint, 'bootstrap.js');
   assert.deepEqual(inventory.hostFiles, ['bootstrap.js', 'index.js', 'manifest.json']);
   assert.equal(inventory.modules.includes('host-identity.js'), true);

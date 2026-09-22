@@ -47,6 +47,29 @@ export function importBundle(text, { targetChatKey, preserveChronology = false }
     }
     for (const link of imported.links) link.sourceMessageId = null;
     imported.lastCaptureMessage = null;
+
+    if (imported.spatial) {
+      for (const loc of imported.spatial.locations) {
+        loc.createdAtMessage = null;
+        loc.lastChangedMessage = null;
+      }
+      for (const ev of Object.values(imported.spatial.evidence)) {
+        ev.sourceMessageId = null;
+        ev.lineageKey = '';
+        ev.sourceClass = 'foreign_import';
+      }
+      imported.spatial.lastCaptureMessage = null;
+
+      // A foreign campaign must not inherit a machine-local base-map file path.
+      // Keep immutable source identity/digest so the host can rebind the same
+      // source from its local base-map registry, or let the user reattach it.
+      if (!sameChat && imported.spatial.baseMapRef) {
+        imported.spatial.baseMapRef = {
+          ...imported.spatial.baseMapRef,
+          path: '',
+        };
+      }
+    }
   }
 
   imported.lineage = [];

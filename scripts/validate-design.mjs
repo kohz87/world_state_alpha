@@ -13,6 +13,7 @@ const required = [
   'docs/RISK_REGISTER.md',
   'docs/OPEN_QUESTIONS.md',
   'docs/LIVE_ACCEPTANCE.md',
+  'CHANGELOG.md',
 ];
 
 for (const file of required) {
@@ -56,6 +57,13 @@ for (const phrase of [
   'No external-extension state adapter is authorized in Phase 7',
   'All asynchronous provider-backed work is guarded by current chat identity',
   'Rebuild never becomes automatic',
+  'Writer State, narrative plans, Story Director output, anticipated events, and spatial hypotheses are not canonical World State evidence',
+  'Spatial state changes only from trusted base geography',
+  'Spatial Continuity is an **optional sibling subsystem**',
+  'never stores locations, spatial relations, or routes inside `records[]`',
+  'Ternia is an adapter/acceptance fixture, not core ontology',
+  'Spatial automatic capture shares the existing eligible Reality capture request',
+  'Canonical schema version 2 adds the durable `spatial` namespace',
 ]) {
   if (!contract.toLowerCase().includes(phrase.toLowerCase())) {
     throw new Error('Core contract missing invariant: ' + phrase);

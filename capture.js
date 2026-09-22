@@ -4,6 +4,8 @@ import { createDiagnosticStore } from './diagnostics.js';
 import { consolidateCreateCandidate } from './duplicate.js';
 import { hashText, stableStringify } from './hash.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
+import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
+import { processSpatialCapture } from './spatial-capture.js';
 import { applyCaptureSourceFirewall } from './source-firewall.js';
 import { clone, reduceMutations } from './state-core.js';
 
@@ -59,7 +61,12 @@ export function normalizeCaptureExchange(exchange = []) {
       messageId: message.messageId,
       role: roleOf(message),
       lineageKey: typeof message.lineageKey === 'string' ? message.lineageKey : '',
-      content: clip(messageText(message), CAPTURE_LIMITS.perMessageChars),
+      content: clip(
+        roleOf(message) === 'assistant'
+          ? sanitizeAssistantNarration(messageText(message))
+          : messageText(message),
+        CAPTURE_LIMITS.perMessageChars,
+      ),
     }));
 
   let remaining = CAPTURE_LIMITS.exchangeChars;
@@ -99,7 +106,14 @@ function renderRecords(records = []) {
     }));
 }
 
-export function buildCapturePrompt({ exchange = [], visibleRecords = [], loreText = '' } = {}) {
+export function buildCapturePrompt({
+  exchange = [],
+  visibleRecords = [],
+  loreText = '',
+  spatialEnabled = false,
+  visibleLocations = [],
+  spatialProfile = null,
+} = {}) {
   const currentExchange = normalizeCaptureExchange(exchange);
   const records = renderRecords(visibleRecords);
   const lore = clip(loreText, CAPTURE_LIMITS.loreChars);
@@ -113,10 +127,27 @@ export function buildCapturePrompt({ exchange = [], visibleRecords = [], loreTex
     'RELEVANT LORE BASELINE (context/possibility only; never evidence of current occurrence):',
     lore || '(none)',
     '',
+    spatialEnabled ? 'VISIBLE SPATIAL CONTINUITY (current/base authority; use only shown IDs):' : '',
+    spatialEnabled ? JSON.stringify((Array.isArray(visibleLocations) ? visibleLocations : []).slice(0, 8).map(location => ({
+      id: location.id,
+      name: location.name,
+      type: location.type,
+      context: location.context || '',
+      coordinate: location.coordinate || null,
+      routeRefs: Array.isArray(location.routeRefs) ? location.routeRefs.slice(0, 8) : [],
+      source: location.isBase ? 'base' : 'campaign',
+    }))) : '',
+    spatialEnabled ? 'SPATIAL PROFILE:' : '',
+    spatialEnabled ? JSON.stringify(spatialProfile || null) : '',
     'OUTPUT SHAPE:',
-    '{"mutations":[{"action":"create|update|resolve|supersede","recordId":"existing-id-for-non-create","kind":"fact|development-for-create","summary":"compact current state","status":"active|resolved when creating","trend":"emerging|rising|stable|falling|uncertain when useful","anchors":["concept"],"reason":"grounded reason","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from current exchange"}],"relatedRecordIds":["visible-id"],"newEpisodeOfRecordId":"optional visible resolved/superseded id"}]}',
-    'For no material change return exactly {"mutations":[]}.',
-  ].join('\n');
+    spatialEnabled
+      ? '{"mutations":[...Reality mutations...],"spatialMutations":[{"action":"upsert_location|upsert_relation|upsert_route","locationId":"visible existing id only when updating","name":"grounded persistent place name","type":"generic place type","context":"established context","coordinate":{"x":1.2,"y":3.4,"authority":"narrative_explicit"},"relative":{"toLocationId":"visible anchor id","direction":"east","distanceKm":10,"distanceMode":"straight_line|route|unspecified"},"routeRefs":["visible route"],"admissionReason":"named|explicit_position|explicit_coordinate|revisited|persistent_feature|route_landmark|material_event","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from CURRENT EXCHANGE"}]}]}'
+      : '{"mutations":[{"action":"create|update|resolve|supersede","recordId":"existing-id-for-non-create","kind":"fact|development-for-create","summary":"compact current state","status":"active|resolved when creating","trend":"emerging|rising|stable|falling|uncertain when useful","anchors":["concept"],"reason":"grounded reason","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from current exchange"}],"relatedRecordIds":["visible-id"],"newEpisodeOfRecordId":"optional visible resolved/superseded id"}]}',
+    spatialEnabled
+      ? 'Spatial rules: track only persistent established places; never capture generic scenery. Planning/writer_state is not evidence. Do not invent precise coordinates. Route/travel distance is not straight-line displacement. Never assign manual/base/campaign_override authority. If no spatial change return spatialMutations:[] alongside mutations.'
+      : '',
+    spatialEnabled ? 'For no material change return exactly {"mutations":[],"spatialMutations":[]}.' : 'For no material change return exactly {"mutations":[]}.',
+  ].filter(Boolean).join('\n');
   return {
     systemPrompt: CAPTURE_SYSTEM_PROMPT,
     prompt,
@@ -127,7 +158,15 @@ export function buildCapturePrompt({ exchange = [], visibleRecords = [], loreTex
   };
 }
 
-export function captureSnapshotToken({ state, exchange, visibleRecords = [], sourceMessageId, sourceLineageKey }) {
+export function captureSnapshotToken({
+  state,
+  exchange,
+  visibleRecords = [],
+  visibleLocations = [],
+  spatialEnabled = false,
+  sourceMessageId,
+  sourceLineageKey,
+}) {
   return hashText(stableStringify({
     rollbackJournalSequence: Number(state?.rollbackJournalSequence) || 0,
     lastCaptureMessage: state?.lastCaptureMessage ?? null,
@@ -138,6 +177,14 @@ export function captureSnapshotToken({ state, exchange, visibleRecords = [], sou
       fingerprint: fingerprintMessage({ role: message.role, content: message.content }),
     })),
     visibleRecords: renderRecords(visibleRecords),
+    spatialEnabled: Boolean(spatialEnabled),
+    visibleLocations: spatialEnabled
+      ? (Array.isArray(visibleLocations) ? visibleLocations : []).slice(0, 8).map(item => ({
+        id: item.id,
+        name: item.name,
+        coordinate: item.coordinate || null,
+      }))
+      : [],
   }));
 }
 
@@ -161,6 +208,10 @@ export function processCaptureResponse({
   sourceLineageKey,
   operation = 'capture',
   evidenceSourceClass = '',
+  spatialEnabled = false,
+  visibleLocations = [],
+  baseMap = null,
+  spatialProfile = null,
 } = {}) {
   const raw = parseCaptureJson(text);
   const wire = validateCaptureEnvelope(raw);
@@ -207,6 +258,41 @@ export function processCaptureResponse({
   const nextState = clone(reduced.state);
   nextState.lastCaptureMessage = sourceMessageId;
 
+  let spatialResult = {
+    spatial: clone(nextState.spatial),
+    applied: [],
+    rejected: [],
+    proposedCount: 0,
+    acceptedCount: 0,
+    indexDelta: {
+      changedLocationIds: [],
+      upsertedLocations: [],
+      removedLocationIds: [],
+      upsertedRelations: [],
+      removedRelationIds: [],
+      upsertedRoutes: [],
+      removedRouteIds: [],
+      relationsChanged: false,
+      routesChanged: false,
+    },
+  };
+  if (spatialEnabled) {
+    spatialResult = processSpatialCapture({
+      rawSpatialMutations: Array.isArray(raw.spatialMutations) ? raw.spatialMutations : [],
+      spatial: nextState.spatial,
+      exchange,
+      visibleLocations,
+      baseMap,
+      profile: spatialProfile || nextState.spatial?.profile,
+      chatKey,
+      sourceMessageId,
+      sourceLineageKey,
+      operation,
+      evidenceSourceClass,
+    });
+    nextState.spatial = spatialResult.spatial;
+  }
+
   return {
     state: nextState,
     proposedCount: Array.isArray(raw.mutations) ? raw.mutations.length : 0,
@@ -214,6 +300,7 @@ export function processCaptureResponse({
     applied: reduced.applied,
     rejected,
     indexDelta: reduced.indexDelta || { upsertedRecords: [], appendedLinks: [], corpusRecords: nextState.records.length },
+    spatial: spatialResult,
   };
 }
 
@@ -236,6 +323,10 @@ export async function runCaptureOperation({
   operation = 'capture',
   evidenceSourceClass = '',
   label = 'capture',
+  spatialEnabled = false,
+  visibleLocations = [],
+  baseMap = null,
+  spatialProfile = null,
 } = {}) {
   const diagnosticStore = diagnostics || createDiagnosticStore();
   const startedAt = Date.now();
@@ -244,7 +335,15 @@ export async function runCaptureOperation({
     return { outcome: 'skipped', state: clone(state), providerCalls: 0, rejected: [], applied: [] };
   }
 
-  const snapshotToken = captureSnapshotToken({ state, exchange, visibleRecords, sourceMessageId, sourceLineageKey });
+  const snapshotToken = captureSnapshotToken({
+    state,
+    exchange,
+    visibleRecords,
+    visibleLocations,
+    spatialEnabled,
+    sourceMessageId,
+    sourceLineageKey,
+  });
   if (typeof isCurrent !== 'function') {
     const error = new Error('automatic capture requires an isCurrent(snapshotToken) guard');
     error.code = 'WORLD_STATE_CAPTURE_CURRENT_GUARD_REQUIRED';
@@ -255,7 +354,14 @@ export async function runCaptureOperation({
     return { outcome: 'stale', state: clone(state), providerCalls: 0, rejected: [], applied: [], snapshotToken };
   }
 
-  const options = buildCapturePrompt({ exchange, visibleRecords, loreText });
+  const options = buildCapturePrompt({
+    exchange,
+    visibleRecords,
+    loreText,
+    spatialEnabled,
+    visibleLocations,
+    spatialProfile,
+  });
   let dispatched;
   try {
     dispatched = await dispatcher(ctx, options, {
@@ -325,8 +431,14 @@ export async function runCaptureOperation({
       sourceLineageKey,
       operation,
       evidenceSourceClass,
+      spatialEnabled,
+      visibleLocations,
+      baseMap,
+      spatialProfile,
     });
-    const outcome = processed.applied.length > 0 ? 'applied' : 'no-change';
+    const spatialApplied = processed.spatial?.applied?.length || 0;
+    const spatialRejected = processed.spatial?.rejected?.length || 0;
+    const outcome = (processed.applied.length + spatialApplied) > 0 ? 'applied' : 'no-change';
     diagnosticStore.record(chatKey, {
       operationId,
       sourceMessageId,
@@ -334,10 +446,10 @@ export async function runCaptureOperation({
       route: dispatched.receipt?.route || '',
       profileId: dispatched.receipt?.profileId || '',
       providerCalls: 1,
-      proposed: processed.proposedCount,
-      accepted: processed.acceptedCount,
-      applied: processed.applied.length,
-      rejected: processed.rejected.length,
+      proposed: processed.proposedCount + (processed.spatial?.proposedCount || 0),
+      accepted: processed.acceptedCount + (processed.spatial?.acceptedCount || 0),
+      applied: processed.applied.length + spatialApplied,
+      rejected: processed.rejected.length + spatialRejected,
       candidateRecords: Math.min(visibleRecords.length, CAPTURE_LIMITS.visibleRecords),
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,

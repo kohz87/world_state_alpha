@@ -1,6 +1,6 @@
 # World State Alpha - core contract
 
-Status: ARCHITECTURE & RUNTIME ACCEPTED. Phases 1-8 are implemented as candidates.
+Status: ARCHITECTURE & RUNTIME ACCEPTED. Phases 1-9 are implemented as candidates.
 
 ## C01. Product purpose
 
@@ -320,6 +320,10 @@ Story-driving principles such as autonomous world motion, scene variation, chanc
 
 World State records or evolves state only from its own grounded evidence and causal contract.
 
+Writer State, narrative plans, Story Director output, anticipated events, and spatial hypotheses are not canonical World State evidence. Before Reality Core capture, Spatial capture, rebuild, or evidence validation evaluates assistant narration, `<writer_state>...</writer_state>` planning blocks are removed from the evidence view only. Raw chat storage, raw-message ownership, lineage fingerprints, and branch history remain unchanged.
+
+Spatial state changes only from trusted base geography, grounded user/assistant narrative evidence, deterministic derivation from already-established spatial facts, or explicit user/manual authority.
+
 It supplies compact continuity only. Scene reasoning and prose remain owned by the configured RP model.
 
 
@@ -431,12 +435,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-Application version is `0.8.0-alpha.1`. Persisted versions remain:
-
-- `SCHEMA_VERSION = 1`
-- `SIDECAR_FORMAT_VERSION = 1`
-- `BUNDLE_VERSION = 1`
-- `ROLLBACK_JOURNAL_VERSION = 1`
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added; sidecar, bundle, and rollback-journal envelope formats remain version 1.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 
@@ -445,3 +444,116 @@ Application version is `0.8.0-alpha.1`. Persisted versions remain:
 Synthetic/local measurements may establish bounded request counts, prompt/injection sizes, indexed candidate work, storage growth, rollback-window bytes, and package reproducibility. They must not be described as live TTFT, provider latency, browser timing, or real co-install proof.
 
 Real SillyTavern/provider/browser/Delta/Ukiyo/Megumin acceptance results are recorded separately under `docs/LIVE_ACCEPTANCE.md`. No live PASS result may be fabricated from mocks or deterministic tests.
+
+
+## C24. Spatial Continuity
+
+Spatial Continuity is an **optional sibling subsystem** inside World State Alpha. It is not a third Reality Core record kind and never stores locations, spatial relations, or routes inside `records[]`.
+
+The semantic ownership boundary is:
+
+```text
+World State Alpha
+|-- Reality Core
+|   |-- fact / development
+|   |-- evidence / relevance / evolution
+|
+`-- Spatial Continuity
+    |-- locations
+    |-- spatial relations
+    |-- route associations
+    |-- coordinate authority
+    |-- campaign overrides
+    `-- spatial retrieval/injection
+```
+
+Reality Core and Spatial Continuity may share per-chat ownership, sidecar envelope, raw-message lineage, rollback journal/checkpoints, diagnostics, provider routing, settings, UI shell, and one eligible capture request. They do **not** share semantic mutation reducers.
+
+### C24.1 Optional universal profile
+
+Spatial Continuity is disabled independently by default and must remain usable outside Ternia. The durable profile is generic Cartesian 2D metadata: north/east axes, unit scale, optional bounds, decimal precision, and True North lock.
+
+A campaign with Spatial enabled but no configured profile may still retain named places, explicit coordinates, and relative-only relations. It must not inherit a hidden unit scale, bounds, or True North transform. Scale-based coordinate derivation requires an explicit profile with a positive unit scale; locked direction validation requires an explicit profile. The declared north/east axes are part of the math rather than decorative metadata.
+
+Ternia is an adapter/acceptance fixture, not core ontology. Its accepted profile is North = +Y, South = -Y, East = +X, West = -X; 5 km per coordinate unit; X/Y bounds -500..500; decimal step 0.1; True North locked.
+
+Route, road, river, and sea-lane geometry may curve. Route/travel length is not Cartesian displacement unless accepted evidence explicitly establishes straight-line/direct displacement.
+
+### C24.2 Base map versus campaign state
+
+Read-only base geography and per-chat campaign Spatial state are different authorities.
+
+- imported base data remains immutable source/reference geography
+- generated campaign locations, relations, routes, and overrides remain in that chat's canonical `spatial` namespace
+- no generated location is automatically written back into a base source
+- a campaign override shadows a base location without mutating the source
+- separate chats may attach the same base map while accumulating different generated places
+- if a campaign declares a base-map authority but the referenced source cannot be loaded, automatic Spatial capture/injection fails closed rather than treating campaign-generated state as the complete map
+
+### C24.3 Coordinate authority and derivation
+
+Coordinate authority is deterministic. The effective precedence is:
+
+1. locked manual campaign coordinate
+2. campaign override coordinate
+3. base canonical coordinate
+4. grounded narrative-explicit coordinate
+5. unlocked manual coordinate
+6. deterministic derived coordinate
+7. relative-only location
+8. unknown
+
+A locked or higher-authority coordinate may not be silently moved by lower authority. Unlocking a manual coordinate explicitly permits a later grounded higher-ranked observation to correct it.
+
+Precise X/Y must never be invented merely because a location exists. Relative-only and unknown are valid durable states.
+
+Deterministic derivation is allowed only from a known anchor plus grounded direction and grounded straight-line/direct distance under an explicit configured profile with a positive unit scale. Cardinal and diagonal vectors use that profile's declared north/east axes and unit scale. Vague distance and route/travel distance do not yield exact coordinates.
+
+When True North is locked, any stored direction whose endpoints both have known coordinates must agree with the coordinate delta.
+
+### C24.4 Admission and evidence firewall
+
+Generated-location admission is conservative. A place may be retained when grounded evidence establishes at least one durable signal such as a proper name, explicit position/coordinate, revisit, persistent infrastructure/resource/NPC association, route-landmark role, material consequence, or explicit manual creation. Generic unnamed scenery is not durable geography.
+
+Spatial automatic capture shares the existing eligible Reality capture request. It may add a bounded `spatialMutations` envelope to that response, but it does not create a second automatic provider call.
+
+Every automatic Spatial mutation passes its own source/evidence firewall and reducer. `writer_state`, planning blocks, anticipated events, and model-only hypotheses are not evidence. Rebuild uses the same sanitized evidence view.
+
+### C24.5 Manual authority and UI
+
+The Spatial panel must support campaign-authoritative editing without a model call:
+
+- add location
+- rename and edit type/context
+- edit/clear X and Y
+- select coordinate authority and lock/unlock
+- edit relative anchor, direction, distance and distance meaning
+- edit route associations
+- archive or delete a generated location/override
+- merge accidental campaign duplicates
+- create a campaign override for a base location
+- inspect provenance/evidence
+
+Manual spatial edits journal through the ordinary raw-message boundary owner. Base entries remain read-only until the user creates an override. Operator-authored location metadata, relations, and route semantics are campaign authority: automatic capture may attach confirming evidence and grounded additive route associations, but it may not rewrite those manual semantics.
+
+### C24.6 Branch, migration, import/export and rebuild
+
+Canonical schema version 2 adds the durable `spatial` namespace. Schema version 1 sidecars/bundles/checkpoints migrate to schema 2 by supplying an empty Spatial state. Sidecar format, bundle format, and rollback-journal format remain version 1.
+
+Spatial undo data participates in the same branch journal and checkpoints as Reality Core. Swipe/delete/edit/branch reconciliation must restore both subsystems to the same proven boundary. Stale provider completion is rejected by the existing host currentness guard.
+
+Export/import carries campaign Spatial state. Foreign import clears false local spatial message/lineage provenance. Base-map source files remain separate read-only references identified by campaign `baseMapRef`; foreign import preserves source identity/digest but clears the machine-local source path so the target host must rebind or reattach the read-only source.
+
+Explicit rebuild reconstructs generated Spatial state from the same chronological sanitized evidence stream, retains the attached base-map reference/profile, and atomically replaces state only after complete success.
+
+### C24.7 Bounded retrieval and private injection
+
+Normal turns must not scan every campaign location, the complete base map, every route/polyline, or the full chat.
+
+Spatial relevance uses an ephemeral per-chat index and bounded candidates. Normal private injection is a compact continuity block containing only the relevant current place/coordinate/context, a few directly linked/relevant places, and useful route/connection information. It is private continuity, not automatic PC knowledge.
+
+Spatial injection does not modify Megumin Suite. It supplies authoritative continuity through World State Alpha's existing private prompt so Megumin/RP narration can keep its own scene/world-state presentation.
+
+### C24.8 No Story Director
+
+Spatial Continuity does not plan arcs, invent places for drama, escalate conflicts, generate quests, avoid stagnation, shape scenes, or simulate a map. It remembers and deterministically relates established geography only.

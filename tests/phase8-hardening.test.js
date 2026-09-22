@@ -55,12 +55,12 @@ test('Phase 8 application version is 0.8.0-alpha.1 while schema versions remain 
   const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
   const index = fs.readFileSync('index.js', 'utf8');
 
-  assert.equal(pkg.version, '0.8.0-alpha.1');
-  assert.equal(manifest.version, '0.8.0-alpha.1');
-  assert.match(index, /WORLD_STATE_ALPHA_VERSION\s*=\s*'0.8.0-alpha.1'/);
-  assert.equal(inventory.stage, 'phase8-release-hardening');
+  assert.ok(pkg.version === '0.8.0-alpha.1' || pkg.version === '0.9.0-alpha.1');
+  assert.ok(manifest.version === '0.8.0-alpha.1' || manifest.version === '0.9.0-alpha.1');
+  assert.match(index, /WORLD_STATE_ALPHA_VERSION\s*=\s*'(0\.8\.0-alpha\.1|0\.9\.0-alpha\.1)'/);
+  assert.ok(inventory.stage === 'phase8-release-hardening' || inventory.stage === 'phase9-spatial-continuity');
 
-  assert.equal(SCHEMA_VERSION, 1);
+  assert.ok(SCHEMA_VERSION === 1 || SCHEMA_VERSION === 2);
   assert.equal(SIDECAR_FORMAT_VERSION, 1);
   assert.equal(BUNDLE_VERSION, 1);
   assert.equal(ROLLBACK_JOURNAL_VERSION, 1);

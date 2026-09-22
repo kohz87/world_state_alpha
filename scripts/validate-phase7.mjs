@@ -15,7 +15,7 @@ const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
 const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
-if (!['phase7-coexistence-host', 'phase8-release-hardening'].includes(inventory.stage)) throw new Error('Phase 7 runtime inventory stage mismatch');
+if (!['phase7-coexistence-host', 'phase8-release-hardening', 'phase9-spatial-continuity'].includes(inventory.stage)) throw new Error('Phase 7 runtime inventory stage mismatch');
 if (inventory.hostEntrypoint !== 'bootstrap.js') throw new Error('Phase 7 host entrypoint must be bootstrap.js');
 if (!Array.isArray(inventory.hostFiles)
   || inventory.hostFiles.join(',') !== 'bootstrap.js,index.js,manifest.json') {
@@ -35,7 +35,7 @@ for (const file of inventory.modules) {
   await import(new URL('../' + file, import.meta.url));
 }
 
-if (!['0.7.0-alpha.1', '0.8.0-alpha.1'].includes(pkg.version) || manifest.version !== pkg.version) {
+if (!['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1'].includes(pkg.version) || manifest.version !== pkg.version) {
   throw new Error('Phase 7 application version markers are inconsistent');
 }
 if (manifest.display_name !== 'World State Alpha'

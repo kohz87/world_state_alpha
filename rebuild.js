@@ -2,6 +2,7 @@ import { chatLineage, commitMutationBoundary, seedRootCheckpoint } from './branc
 import { CAPTURE_LIMITS, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
+import { selectRelevantLocations } from './spatial-relevance.js';
 import { canonicalDomain, clone, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
@@ -194,6 +195,9 @@ export async function runManualRebuild({
   dispatcher = undefined,
   loreResolver = undefined,
   maxBoundaries = REBUILD_LIMITS.maxBoundaries,
+  spatialEnabled = false,
+  baseMap = null,
+  spatialProfile = null,
 } = {}) {
   const original = normalizeState(clone(state), { chatKey });
   const owner = String(chatKey || original.chatKey || '');
@@ -223,6 +227,10 @@ export async function runManualRebuild({
   }
 
   let candidate = seedRootCheckpoint(createState(owner));
+  if (spatialEnabled) {
+    candidate.spatial.profile = spatialProfile || original.spatial?.profile || null;
+    candidate.spatial.baseMapRef = original.spatial?.baseMapRef || null;
+  }
   let providerCalls = 0;
   let processedBoundaries = 0;
   const receipts = [];
@@ -266,6 +274,16 @@ export async function runManualRebuild({
     }
 
     const visibleRecords = visibleForRebuild(candidate, window.exchange, window.messageId);
+    let visibleLocations = [];
+    if (spatialEnabled) {
+      const spatialRel = selectRelevantLocations(candidate.spatial, {
+        baseMap,
+        recentText: exchangeText(window.exchange),
+        loreText,
+        maxLocations: 6,
+      });
+      visibleLocations = spatialRel.selected.map(item => item.location);
+    }
     const beforeStep = candidate;
     const result = await runCaptureOperation({
       ctx,
@@ -285,6 +303,10 @@ export async function runManualRebuild({
       operation: 'rebuild',
       evidenceSourceClass: 'rebuild',
       label: 'rebuild',
+      spatialEnabled,
+      visibleLocations,
+      baseMap,
+      spatialProfile: candidate.spatial.profile,
     });
 
     providerCalls += result.providerCalls || 0;

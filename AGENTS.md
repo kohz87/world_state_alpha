@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-The design and runtime candidate are accepted and **Phases 1-8** are implemented. Phase 8 implements performance optimization and release hardening: ephemeral per-chat relevance indexing, candidate cap saturation (128), unreferenced evidence compaction on mutation, deterministic byte-reproducible zip packaging, release manifests, and the live acceptance protocol (`docs/LIVE_ACCEPTANCE.md`). It maintains application version 0.8.0-alpha.1 while preserving persisted schema, sidecar, bundle, and journal versions at 1. It must not introduce NPC State dependencies, external-state adapters, Story Director behavior, launcher/watchdog machinery, generic slash-command surfaces, or new semantic rules.
+The design and runtime candidate are accepted and **Phases 1-9** are implemented. Phase 9 / 0.9.0-alpha.1 adds optional Spatial Continuity as a sibling subsystem with its own semantic reducer. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope versions remain 1. Spatial may share per-chat persistence, branch ownership, diagnostics, provider routing, settings and UI shell, but it must not become a third Reality Core record kind, mutate base-map sources, add Story Director behavior, or modify Megumin/Ukiyo.
 
 ## Product boundary
 
@@ -51,7 +51,21 @@ Never require setting-specific ontology. In particular, do not make any of these
 - organization type
 - fantasy calendar
 
-World State models change, not maps.
+The Reality Core models change, not maps. Optional Spatial Continuity may model established/generated place continuity through its separate `spatial` namespace; do not introduce geography into Reality Core `records[]`.
+
+## Spatial subsystem rule
+
+Spatial Continuity is optional and semantically separate from Reality Core.
+
+- never add `location` as a Reality record kind
+- never place Spatial locations/relations/routes in `records[]`
+- base geography is read-only source authority; campaign overrides live only in per-chat state
+- precise coordinates require trusted base/manual/narrative-explicit evidence or deterministic derivation
+- route/travel distance is not straight-line displacement unless explicitly established
+- True North and unit-scale derivation are determined only by an explicit coordinate profile; no profile means no hidden Ternia defaults
+- `writer_state` and other planning material is never canonical evidence
+- manual spatial edits use the branch journal and are campaign authority
+- no full base-map/spatial scan on normal turns
 
 ## State model rule
 
