@@ -2,7 +2,7 @@ import { LIMITS, RECORD_TRENDS } from './constants.js';
 
 export const EVOLUTION_OUTCOMES = Object.freeze(['stable', 'update', 'resolve', 'supersede']);
 export const EVOLUTION_WIRE_LIMITS = Object.freeze({
-  evaluations: 4,
+  evaluations: 6,
   supportIds: 8,
   derived: 1,
   reasonChars: 500,

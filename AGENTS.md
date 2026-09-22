@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-The design and runtime candidate are accepted and **Phases 1-9** are implemented. Phase 9 introduced optional Spatial Continuity in 0.9.0-alpha.1; 0.9.0-alpha.2 hardened that subsystem and its SillyTavern host lifecycle; 0.9.0-alpha.3 standardized the settings drawer; 0.9.0-alpha.4 hardened host identity/ownership and Spatial edge cases; and the current 0.9.0-alpha.5 candidate strengthens bounded immediate-capture completeness so explicitly established persistent off-screen conditions are not lost merely because the PC leaves or ignores them, without adding simulation or changing the source firewall. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope versions remain 1. Spatial may share per-chat persistence, branch ownership, diagnostics, provider routing, settings and UI shell, but it must not become a third Reality Core record kind, mutate base-map sources, add Story Director behavior, or modify Megumin/Ukiyo.
+The design and runtime candidate are accepted and **Phases 1-9** are implemented. Phase 9 introduced optional Spatial Continuity in 0.9.0-alpha.1; 0.9.0-alpha.2 hardened that subsystem and its SillyTavern host lifecycle; 0.9.0-alpha.3 standardized the settings drawer; 0.9.0-alpha.4 hardened host identity/ownership and Spatial edge cases; 0.9.0-alpha.5 strengthened persistent off-screen capture completeness; and the current 0.9.0-alpha.6 candidate adds bounded Background Development Catch-up so a small indexed slice of established remote active developments may be conservatively reevaluated on meaningful elapsed-time boundaries without a full-world scan. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope versions remain 1. Spatial may share per-chat persistence, branch ownership, diagnostics, provider routing, settings and UI shell, but it must not become a third Reality Core record kind, mutate base-map sources, add Story Director behavior, or modify Megumin/Ukiyo.
 
 ## Product boundary
 
@@ -30,6 +30,7 @@ completed exchange
  -> branch-safe persistence
  -> relevance retrieval
  -> optional bounded lazy catch-up for stale relevant developments
+ -> optional bounded background catch-up for established remote active developments on meaningful elapsed-time boundaries
  -> compact private continuity injection
  -> existing RP model / Ukiyo continues normal narration
 ```

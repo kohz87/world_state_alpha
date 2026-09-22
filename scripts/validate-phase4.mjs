@@ -40,7 +40,11 @@ for (const phrase of [
   if (!EVOLUTION_SYSTEM_PROMPT.includes(phrase)) throw new Error(`evolution prompt missing invariant: ${phrase}`);
 }
 
-if (EVOLUTION_LIMITS.targets !== 4) throw new Error('automatic evolution target cap drifted');
+if (EVOLUTION_LIMITS.targets !== 6) throw new Error('automatic evolution target cap drifted');
+if (EVOLUTION_LIMITS.relevantTargets !== 4) throw new Error('relevant evolution priority cap drifted');
+if (EVOLUTION_LIMITS.backgroundTargets !== 3) throw new Error('background evolution fill cap drifted');
+if (EVOLUTION_LIMITS.backgroundScan !== 32) throw new Error('background candidate scan cap drifted');
+if (EVOLUTION_WIRE_LIMITS.evaluations !== 6) throw new Error('evolution wire target cap drifted');
 if (EVOLUTION_WIRE_LIMITS.derived !== 1) throw new Error('derived-development cap drifted');
 if (!EVIDENCE_SOURCE_CLASSES.includes('elapsed_hint')) throw new Error('elapsed_hint evidence class missing');
 
@@ -52,7 +56,7 @@ if (!fiveWeeks?.meaningful || fiveWeeks.unit !== 'week' || fiveWeeks.amount !== 
   throw new Error('five-week meaningful elapsed detection failed');
 }
 
-const records = Array.from({ length: 6 }, (_, index) => ({
+const records = Array.from({ length: 8 }, (_, index) => ({
   id: `wsr_phase4_${index}`,
   kind: 'development',
   summary: `Kesselpass development ${index} remains active.`,
@@ -91,11 +95,11 @@ const plan = planLazyEvolution(state, {
   sourceMessageId: 100,
   sourceLineageKey: 'ln100',
 });
-if (plan.targets.length !== 4) throw new Error(`Phase 4 target cap failed: ${plan.targets.length}`);
+if (plan.targets.length !== 6) throw new Error(`Phase 4 target cap failed: ${plan.targets.length}`);
 const context = buildEvolutionContext(state, plan);
 const prompt = buildEvolutionPrompt(context, { loreText: 'Kesselpass is a major freight crossing.' });
 const promptChars = prompt.systemPrompt.length + prompt.prompt.length;
-if (promptChars > 24000) throw new Error(`Phase 4 four-target prompt exceeds compactness budget: ${promptChars}`);
+if (promptChars > 30000) throw new Error(`Phase 4 six-target prompt exceeds compactness budget: ${promptChars}`);
 
 const ordinaryPlan = planLazyEvolution(state, {
   selectedEntries,
@@ -110,4 +114,4 @@ const ordinaryPlan = planLazyEvolution(state, {
 });
 if (ordinaryPlan.targets.length !== 0) throw new Error('ordinary relevant turn incorrectly triggered evolution');
 
-console.log(`World State Alpha Phase 4 validation passed: ordinary targets 0; elapsed targets ${plan.targets.length}; four-target prompt ${promptChars} chars.`);
+console.log(`World State Alpha Phase 4 validation passed: ordinary targets 0; elapsed targets ${plan.targets.length}; six-target prompt ${promptChars} chars.`);

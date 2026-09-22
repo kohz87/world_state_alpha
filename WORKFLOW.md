@@ -9,7 +9,7 @@ Included in the current gate:
 - Phase 1 canonical state, persistence, transfer, and exact rollback substrate
 - Phase 2 bounded immediate capture and request-scoped provider routing
 - Phase 3 deterministic local relevance and compact private injection
-- Phase 4 bounded stale-relevant lazy evolution
+- Phase 4 bounded stale-relevant lazy evolution plus meaningful-elapsed-time Background Development Catch-up from the indexed active-development pool
 - Phase 5 inspect/query, current-head manual correction, transfer, and explicit rebuild services
 - Phase 6 bounded Current/Recent/Resolved/Search/detail/evidence/diagnostics/data-maintenance projections
 - Phase 7 minimal SillyTavern manifest/bootstrap, World-State-only settings/sidecar adapter, lifecycle capture/injection/rollback wiring, and mounting the existing Phase 6 panel

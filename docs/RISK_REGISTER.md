@@ -17,6 +17,7 @@
 | Wrong time inference | fictional calendar misparsed | message chronology mandatory, opaque time anchors optional | no-calendar fixture |
 | Rebuild divergence | rebuild creates different current reality | bounded assistant-boundary replay through capture firewall + semantic equivalence fixtures + atomic replacement only on full success | incremental-vs-rebuild |
 | Rebuild hidden simulation | recovery invents off-screen evolution not established in narration | rebuild never invokes lazy evolution; reconstruct only grounded chronological capture evidence | no-evolution rebuild fixture |
+| Repeated background drain | one elapsed-time phrase triggers new remote batches across following turns while still present in bounded context | ephemeral elapsed-boundary guard permits at most one background sweep per detected elapsed evidence boundary | repeated-same-skip background fixture |
 | Manual provenance drift | operator edit attaches to stale/other branch | current-head + exact-lineage guard + manual evidence + ordinary rollback journal | manual branch/head fixtures |
 | Approximate rollback corruption | older snapshot used as parent | exact-boundary only, fail closed | missing-parent fixture |
 | Diagnostics leak | prompts/story/credentials stored | allowlisted bounded receipts | serialization inspection |
@@ -40,7 +41,7 @@
 | Incremental index drift | In-memory relevance index becomes out of sync with mutated state | `reduceMutations` computes exact `indexDelta`; incremental delta tested against fresh index | incremental update fixture |
 | Compaction rollback corruption | Pruned evidence causes missing reference errors on branch swipe | `undo.evidence` retains compacted entries; undo patch restores uncompacted state | 50-step compaction rollback test |
 | Non-deterministic release zip | Zip bytes vary between builds due to archive timestamps or ordering | fixed DOS timestamps (2026-01-01) and alphabetical entry sorting | package hash reproducibility test |
-| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.5) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.6) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
 
 
 | Risk | Failure mode | Mitigation | Verification |

@@ -151,6 +151,63 @@ test('manual rebuild reconstructs chat chronology using rebuild evidence and no 
   assert.equal(result.receipts.some(item => item.outcome === 'evolved'), false);
 });
 
+test('rebuild from chat recovers an established persistent off-screen development', async () => {
+  const chat = [
+    { role: 'user', content: 'I ignore the market shakedown and leave Brackenford.' },
+    {
+      role: 'assistant',
+      content: 'At Brackenford market, Orson and two carters continue demanding unauthorized unloading fees from traders after the traveler departs.',
+    },
+    { role: 'user', content: 'I continue toward Applecross and do not return to the market.' },
+    { role: 'assistant', content: 'The traveler reaches Applecross before dusk.' },
+  ];
+  const calls = { count: 0 };
+  const dispatcher = async (_ctx, options) => {
+    calls.count += 1;
+    assert.match(options.prompt, /REBUILD RECOVERY MODE/);
+    if (options.prompt.includes('Orson and two carters continue demanding unauthorized unloading fees')) {
+      return {
+        text: JSON.stringify({
+          mutations: [{
+            action: 'create',
+            kind: 'development',
+            summary: 'Orson and local carters are extorting Brackenford market traders for unauthorized unloading fees.',
+            trend: 'stable',
+            anchors: ['Brackenford', 'market', 'Orson', 'carters'],
+            evidence: [{
+              sourceMessageId: 1,
+              claim: 'Orson and two carters continue demanding unauthorized unloading fees from traders after the traveler departs.',
+            }],
+          }],
+        }),
+        receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+      };
+    }
+    return {
+      text: '{"mutations":[]}',
+      receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+    };
+  };
+
+  const result = await runManualRebuild({
+    ctx: {},
+    dispatcher,
+    state: createState('rebuild-offscreen'),
+    chat,
+    chatKey: 'rebuild-offscreen',
+    isCurrent: () => true,
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.equal(calls.count, 2);
+  assert.equal(result.state.records.length, 1);
+  assert.equal(result.state.records[0].kind, 'development');
+  assert.equal(result.state.records[0].status, 'active');
+  assert.match(result.state.records[0].summary, /extorting Brackenford market traders/i);
+  const evidence = result.state.evidence[result.state.records[0].evidenceIds[0]];
+  assert.equal(evidence.sourceClass, 'rebuild');
+});
+
 test('controlled incremental and rebuild paths converge on equivalent current world state', async () => {
   const chat = fixtureChat();
   const incremental = await buildIncrementally('equivalence', chat, scriptedDispatcher());
