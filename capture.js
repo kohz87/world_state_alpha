@@ -114,6 +114,7 @@ export function buildCapturePrompt({
   exchange = [],
   visibleRecords = [],
   loreText = '',
+  operation = 'capture',
   spatialEnabled = false,
   visibleLocations = [],
   spatialProfile = null,
@@ -125,6 +126,9 @@ export function buildCapturePrompt({
     'CURRENT EXCHANGE (the only automatic mutation evidence source):',
     JSON.stringify(currentExchange.map(({ messageId, role, content }) => ({ messageId, role, content }))),
     '',
+    operation === 'rebuild'
+      ? 'REBUILD RECOVERY MODE: This is one historical chronological exchange boundary. Recover every materially persistent condition established in this exchange, including conditions that were already off-screen, ignored, or unrelated to the PC objective. Do not infer un-narrated evolution between boundaries; later narrated exchanges must establish later changes.'
+      : '',
     'VISIBLE CURRENT WORLD STATE (current authority; use only these IDs):',
     JSON.stringify(records),
     '',
@@ -364,6 +368,7 @@ export async function runCaptureOperation({
     exchange,
     visibleRecords,
     loreText,
+    operation,
     spatialEnabled,
     visibleLocations,
     spatialProfile,

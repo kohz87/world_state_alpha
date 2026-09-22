@@ -30,7 +30,7 @@ test('core safety invariants are present', () => {
     /are narration concerns and are not evidence/i,
     /Elapsed time is permission to evaluate/i,
     /zero evolution calls on ordinary relevant turns/i,
-    /at most four developments/i,
+    /at most six developments/i,
     /Phase 5 exposes host-neutral service functions only/i,
     /current raw-message head/i,
     /preview-then-confirm/i,

@@ -66,7 +66,7 @@ No fixture may require schema code specific to its setting.
 34. Host sidecar upload uses the World State filename namespace, revision checks the existing pointer, and persists the actual server-returned path.
 35. Hydration failure with an existing pointer fails closed and never overwrites durable state with a fresh empty state.
 36. Assistant lifecycle performs at most one eligible capture request and journals/persists only if its chat/lineage/epoch guard remains current.
-37. User lifecycle performs local relevance/injection and only one batched lazy-evolution request when an existing Phase 4 trigger is justified.
+37. User lifecycle performs local relevance/injection and only one batched lazy-evolution request when an existing Phase 4 trigger is justified; meaningful elapsed time may add bounded background targets from the indexed active-development pool without a full-world scan or repeated background sweep from the same elapsed boundary.
 38. Edit/delete/swipe lifecycle cancels World State requests and restores exact branch state or fails closed.
 39. Alpha and pinned Delta identifiers do not collide across settings, prompt key, DOM, global, sidecar filename, manifest dependency, or loading order.
 40. Phase 7 host source neither reads nor mutates NPC State Delta, Ukiyo, Megumin Suite, or Writer's Mind state.
@@ -107,6 +107,9 @@ No fixture may require schema code specific to its setting.
 - rebuild currentness changes mid-run -> discard whole candidate
 - rebuild passive duplicate of resolved episode -> reject
 - rebuild explicit new related episode -> create new record, retain tombstone
+- rebuild historical exchange contains an ignored persistent off-screen condition -> recover it as current development with `rebuild` evidence, without replaying hidden evolution
+- meaningful elapsed hint remains visible across subsequent bounded exchanges -> at most one background sweep for that elapsed evidence boundary
+- meaningful elapsed time in an unrelated scene -> examine at most 32 indexed active-development entries, fill at most three background slots, and keep the combined evolution batch at six or fewer
 - empty UI search -> no accidental whole-database dump
 - malicious HTML in summary/anchor/evidence/diagnostic fields -> escaped text only
 - UI maintenance click -> emits caller action intent only; no direct reset/import/rebuild/storage mutation

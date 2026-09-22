@@ -40,7 +40,7 @@ for (const phrase of [
   'are narration concerns and are not evidence',
   'Elapsed time is permission to evaluate',
   'zero evolution calls on ordinary relevant turns',
-  'at most four developments',
+  'at most six developments',
   'Phase 5 exposes host-neutral service functions only',
   'current raw-message head',
   'preview-then-confirm',

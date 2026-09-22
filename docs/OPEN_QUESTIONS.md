@@ -6,7 +6,7 @@ Resolved: Phase 2 automatic capture defaults to one eligible capture after each 
 
 Resolved: Phase 3 private injection defaults to a hard 800 conservative local-token-unit budget, at most six selected records, shallow `IN_CHAT` SYSTEM placement at depth 1, and a much smaller typical payload.
 
-Resolved: Phase 4 uses correctness-first lazy evolution only for stale relevant active developments with a meaningful elapsed-time hint or grounded direct affecting evidence. Ordinary relevant turns use zero evolution calls. Eligible records are evaluated in one batch capped at four targets; elapsed time permits evaluation but never forces change.
+Resolved: Phase 4 uses correctness-first lazy evolution for stale relevant active developments with a meaningful elapsed-time hint or grounded direct affecting evidence. Meaningful elapsed time may additionally fill the same request with up to three stale remote active developments from a bounded 32-entry indexed background sample. Relevant targets retain priority, the combined batch is capped at six, ordinary no-trigger turns use zero evolution calls, and elapsed time permits evaluation but never forces change.
 
 Resolved: Phase 5 manual correction is attached only to the current raw-message head on the proven branch and requires an operator note; reset/import use preview-then-confirm; rebuild is explicit-only, bounded by assistant-completed exchange windows, atomic on success, reuses the capture firewall, and does not replay lazy evolution.
 

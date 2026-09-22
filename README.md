@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.5 retains the alpha.4 host/lifecycle hardening and strengthens immediate capture completeness so explicitly established persistent conditions are retained even when they are off-screen, ignored by the PC, or unrelated to the current objective. This stays inside the existing one-call capture budget and unchanged source firewall. Spatial Continuity remains a sibling to the unchanged Reality Core, and canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.6 retains alpha.5 persistent off-screen capture completeness and adds bounded Background Development Catch-up: on meaningful elapsed-time boundaries, the existing evolution request may include a small indexed slice of established remote active developments without a full-world scan or a second provider call. Rebuild from chat reuses the completeness-hardened capture path so narrated remote developments can be reconstructed, but rebuild still does not replay hidden off-screen evolution. Spatial Continuity remains a sibling to the unchanged Reality Core, and canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 
@@ -52,7 +52,7 @@ completed RP exchange
   -> existing RP model / Ukiyo writes normally
 ```
 
-A stale relevant development may receive one bounded lazy catch-up evaluation when meaningful elapsed time is known. There is no full-world simulation loop.
+A stale relevant development may receive bounded lazy catch-up when a valid trigger exists. Meaningful elapsed time may also admit up to three remote active developments from a bounded indexed background sample into the same evolution batch. There is no full-world simulation loop.
 
 ## Authority boundary
 

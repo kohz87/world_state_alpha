@@ -5,13 +5,16 @@ import { EvolutionWireError, parseEvolutionJson, validateEvolutionEnvelope } fro
 import { hashText, stableStringify } from './hash.js';
 import { buildWorldStateInjection } from './injection.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
-import { updateRelevanceIndex } from './relevance.js';
+import { selectBackgroundDevelopments, updateRelevanceIndex } from './relevance.js';
 import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.js';
 import { clone, reduceMutations } from './state-core.js';
 
 export const EVOLUTION_RESPONSE_TOKENS = 2600;
 export const EVOLUTION_LIMITS = Object.freeze({
-  targets: 4,
+  targets: 6,
+  relevantTargets: 4,
+  backgroundTargets: 3,
+  backgroundScan: 32,
   historicalEvidencePerTarget: 4,
   affectingEvidence: 8,
   loreChars: 3500,
@@ -592,6 +595,7 @@ export async function runLazyEvolution({
   exchange = [],
   elapsedHint = null,
   affectingEvidence = [],
+  maxTargets = EVOLUTION_LIMITS.targets,
   loreText = '',
   currentTimeAnchor = '',
   chatKey,
@@ -612,6 +616,7 @@ export async function runLazyEvolution({
     affectingEvidence,
     sourceMessageId,
     sourceLineageKey,
+    maxTargets,
   });
 
   if (!plan.targets.length) {
@@ -827,7 +832,43 @@ export async function prepareWorldStateContinuity({
     ...(depth === undefined ? {} : { depth }),
   });
 
-  if (!beforeInjection.selected.length) {
+  const resolvedElapsedHint = resolveElapsedHint(
+    elapsedHint,
+    exchange,
+    sourceMessageId,
+    sourceLineageKey,
+  );
+  const relevantEvolutionEntries = beforeInjection.selected
+    .filter(entry => {
+      const record = recordFromEntry(entry);
+      return record?.kind === 'development' && record?.status === 'active';
+    })
+    .slice(0, EVOLUTION_LIMITS.relevantTargets);
+  const relevantIds = new Set(
+    relevantEvolutionEntries
+      .map(entry => recordFromEntry(entry)?.id)
+      .filter(Boolean),
+  );
+  const elapsedBoundary = Number.isInteger(resolvedElapsedHint?.sourceMessageId)
+    ? resolvedElapsedHint.sourceMessageId
+    : sourceMessageId;
+  const backgroundSelection = resolvedElapsedHint?.meaningful && index
+    ? selectBackgroundDevelopments(index, {
+        excludeIds: relevantIds,
+        currentMessageId: elapsedBoundary,
+        maxRecords: Math.min(
+          EVOLUTION_LIMITS.backgroundTargets,
+          Math.max(0, EVOLUTION_LIMITS.targets - relevantEvolutionEntries.length),
+        ),
+        scanCap: EVOLUTION_LIMITS.backgroundScan,
+      })
+    : { selected: [], metrics: { examined: 0, poolSize: 0, available: 0, selected: 0 } };
+  const evolutionEntries = [
+    ...relevantEvolutionEntries,
+    ...backgroundSelection.selected,
+  ];
+
+  if (!evolutionEntries.length) {
     return {
       state: clone(state),
       injection: beforeInjection,
@@ -837,6 +878,7 @@ export async function prepareWorldStateContinuity({
         applied: [],
         outcomes: [],
         rejectedDerived: [],
+        backgroundSelection: backgroundSelection.metrics,
       },
       providerCalls: 0,
     };
@@ -845,10 +887,11 @@ export async function prepareWorldStateContinuity({
   const evolution = await runLazyEvolution({
     ctx,
     state,
-    selectedEntries: beforeInjection.selected,
+    selectedEntries: evolutionEntries,
     exchange,
-    elapsedHint,
+    elapsedHint: resolvedElapsedHint,
     affectingEvidence,
+    maxTargets: EVOLUTION_LIMITS.targets,
     loreText,
     currentTimeAnchor,
     chatKey,
@@ -862,6 +905,7 @@ export async function prepareWorldStateContinuity({
     diagnostics,
     dispatcher,
   });
+  evolution.backgroundSelection = backgroundSelection.metrics;
 
   const nextState = evolution.state || state;
   if (index && evolution.indexDelta) {

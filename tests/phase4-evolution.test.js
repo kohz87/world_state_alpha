@@ -11,6 +11,7 @@ import {
   processEvolutionResponse,
   runLazyEvolution,
 } from '../evolution.js';
+import { buildRelevanceIndex, selectBackgroundDevelopments } from '../relevance.js';
 import { createState, reduceMutations } from '../state-core.js';
 
 function withLineage(chat) {
@@ -382,6 +383,187 @@ test('prepare continuity performs a five-week catch-up then reruns injection fro
   assert.match(result.injection.text, /trend: stable/);
 });
 
+test('background selector examines only a bounded stale-development slice', () => {
+  const seeded = seedDevelopments(
+    'background-pool',
+    Array.from({ length: 40 }, (_, index) => ({
+      summary: `Remote development ${index} remains active.`,
+      anchors: [`remote-${index}`],
+    })),
+  );
+  const index = buildRelevanceIndex(seeded.state);
+  const excludedId = seeded.state.records[0].id;
+  const result = selectBackgroundDevelopments(index, {
+    excludeIds: new Set([excludedId]),
+    currentMessageId: 500,
+    maxRecords: 3,
+    scanCap: 9,
+  });
+
+  assert.equal(result.metrics.examined, 9);
+  assert.equal(result.selected.length, 3);
+  assert.equal(result.selected.some(entry => entry.record.id === excludedId), false);
+  assert.ok(result.selected.every(entry => entry.source === 'background'));
+  assert.equal(index.backgroundCursor, 9);
+});
+
+test('meaningful elapsed time catches up remote developments even when none are scene-relevant', async () => {
+  const seeded = seedDevelopments('background-catchup', [
+    { summary: 'North quarry labor unrest remains active.', anchors: ['North quarry'] },
+    { summary: 'West canal silting remains unresolved.', anchors: ['West canal'] },
+    { summary: 'Hill shrine repairs remain incomplete.', anchors: ['Hill shrine'] },
+    { summary: 'East orchard blight remains active.', anchors: ['East orchard'] },
+    { summary: 'South ferry shortage remains active.', anchors: ['South ferry'] },
+  ]);
+  const index = buildRelevanceIndex(seeded.state);
+  const exchange = [{
+    role: 'user',
+    content: 'Five weeks later, I remain at an unrelated observatory.',
+    messageId: 500,
+    lineageKey: 'lineage-500',
+  }];
+  const backgroundIds = seeded.state.records.slice(0, 3).map(record => record.id);
+  const response = JSON.stringify({
+    evaluations: backgroundIds.map(recordId => ({
+      recordId,
+      outcome: 'stable',
+      reason: 'Elapsed time permits reevaluation, but no supplied evidence establishes a change.',
+      supportIds: ['t0'],
+    })),
+    derived: [],
+  });
+  const calls = { count: 0 };
+
+  const result = await prepareWorldStateContinuity({
+    ctx: provider(response, calls),
+    state: seeded.state,
+    index,
+    recentText: exchange[0].content,
+    currentMessageId: 500,
+    exchange,
+    chatKey: 'background-catchup',
+    sourceMessageId: 500,
+    sourceLineageKey: 'lineage-500',
+    isCurrent: () => true,
+  });
+
+  assert.equal(calls.count, 1);
+  assert.equal(result.providerCalls, 1);
+  assert.equal(result.evolution.backgroundSelection.selected, 3);
+  assert.deepEqual(result.evolution.plan.targets.map(target => target.record.id), backgroundIds);
+  for (const recordId of backgroundIds) {
+    assert.equal(result.state.records.find(record => record.id === recordId).lastEvaluatedMessage, 500);
+  }
+
+  const repeated = await prepareWorldStateContinuity({
+    ctx: provider('unused', calls),
+    state: result.state,
+    index,
+    recentText: exchange[0].content,
+    currentMessageId: 501,
+    exchange,
+    chatKey: 'background-catchup',
+    sourceMessageId: 501,
+    sourceLineageKey: 'lineage-501',
+    isCurrent: () => true,
+  });
+  assert.equal(calls.count, 1);
+  assert.equal(repeated.providerCalls, 0);
+  assert.equal(repeated.evolution.backgroundSelection.boundaryAlreadyProcessed, true);
+
+  const rehydratedIndex = buildRelevanceIndex(result.state);
+  const rehydratedSweep = selectBackgroundDevelopments(rehydratedIndex, {
+    currentMessageId: 500,
+    maxRecords: 3,
+    scanCap: 32,
+  });
+  assert.equal(rehydratedSweep.selected.length, 0);
+  assert.equal(rehydratedSweep.metrics.boundaryAlreadyProcessed, true);
+});
+
+test('relevant targets keep priority and background only fills the remaining six-target batch slots', async () => {
+  const seeded = seedDevelopments('background-fill', [
+    { summary: 'Kesselpass freight congestion remains active.', anchors: ['Kesselpass'] },
+    { summary: 'Kesselpass hiring pressure remains active.', anchors: ['Kesselpass'] },
+    { summary: 'Kesselpass lodging pressure remains active.', anchors: ['Kesselpass'] },
+    { summary: 'Kesselpass inspection delays remain active.', anchors: ['Kesselpass'] },
+    { summary: 'North quarry labor unrest remains active.', anchors: ['North quarry'] },
+    { summary: 'West canal silting remains unresolved.', anchors: ['West canal'] },
+    { summary: 'Hill shrine repairs remain incomplete.', anchors: ['Hill shrine'] },
+    { summary: 'East orchard blight remains active.', anchors: ['East orchard'] },
+  ]);
+  const index = buildRelevanceIndex(seeded.state);
+  const exchange = [{
+    role: 'user',
+    content: 'Five weeks later, I return to Kesselpass.',
+    messageId: 500,
+    lineageKey: 'lineage-500',
+  }];
+  const relevantIds = seeded.state.records.slice(0, 4).map(record => record.id);
+  const remoteIds = seeded.state.records.slice(4).map(record => record.id);
+  const responseIds = [...relevantIds, ...remoteIds.slice(0, 2)];
+  const response = JSON.stringify({
+    evaluations: responseIds.map(recordId => ({
+      recordId,
+      outcome: 'stable',
+      reason: 'Elapsed time permits reevaluation, but no supplied evidence establishes a change.',
+      supportIds: ['t0'],
+    })),
+    derived: [],
+  });
+
+  const result = await prepareWorldStateContinuity({
+    ctx: provider(response),
+    state: seeded.state,
+    index,
+    recentText: exchange[0].content,
+    currentMessageId: 500,
+    exchange,
+    chatKey: 'background-fill',
+    sourceMessageId: 500,
+    sourceLineageKey: 'lineage-500',
+    isCurrent: () => true,
+  });
+
+  const targetIds = result.evolution.plan.targets.map(target => target.record.id);
+  assert.equal(targetIds.length, 6);
+  assert.deepEqual(new Set(targetIds.slice(0, 4)), new Set(relevantIds));
+  assert.equal(targetIds.slice(4).every(id => remoteIds.includes(id)), true);
+  assert.equal(result.evolution.backgroundSelection.selected, 2);
+});
+
+test('background catch-up stays dormant without meaningful elapsed time', async () => {
+  const seeded = seedDevelopments('background-no-time', [
+    { summary: 'Remote bridge repairs remain incomplete.', anchors: ['Remote bridge'] },
+  ]);
+  const index = buildRelevanceIndex(seeded.state);
+  const exchange = [{
+    role: 'user',
+    content: 'I remain at an unrelated observatory.',
+    messageId: 500,
+    lineageKey: 'lineage-500',
+  }];
+  const calls = { count: 0 };
+
+  const result = await prepareWorldStateContinuity({
+    ctx: provider('unused', calls),
+    state: seeded.state,
+    index,
+    recentText: exchange[0].content,
+    currentMessageId: 500,
+    exchange,
+    chatKey: 'background-no-time',
+    sourceMessageId: 500,
+    sourceLineageKey: 'lineage-500',
+    isCurrent: () => true,
+  });
+
+  assert.equal(calls.count, 0);
+  assert.equal(result.providerCalls, 0);
+  assert.equal(result.evolution.backgroundSelection.selected, 0);
+  assert.equal(result.state.records[0].lastEvaluatedMessage, 0);
+});
+
 test('ordinary relevant turn with no trigger uses zero evolution calls', async () => {
   const seeded = seedDevelopments('no-trigger', [{
     summary: 'East Dormitory is inaccessible.',
@@ -406,7 +588,7 @@ test('ordinary relevant turn with no trigger uses zero evolution calls', async (
   assert.match(result.injection.text, /East Dormitory is inaccessible/);
 });
 
-test('dormant irrelevant records receive no evolution call even across a five-week skip', async () => {
+test('background catch-up never falls back to a full-state scan when no relevance index is supplied', async () => {
   const seeded = seedDevelopments('irrelevant', [{
     summary: 'The southern ferry dispute is active.',
     anchors: ['southern ferry'],
@@ -479,8 +661,8 @@ test('duplicate selected entries cannot duplicate an evolution target', () => {
   assert.equal(plan.targets.length, 1);
 });
 
-test('automatic batch is capped at four targets', () => {
-  const seeded = seedDevelopments('cap', Array.from({ length: 6 }, (_, index) => ({
+test('automatic batch is capped at six targets', () => {
+  const seeded = seedDevelopments('cap', Array.from({ length: 8 }, (_, index) => ({
     summary: `Kesselpass development ${index} is active.`,
     anchors: ['Kesselpass'],
   })));
@@ -493,7 +675,7 @@ test('automatic batch is capped at four targets', () => {
     exchange,
     ...sourceBoundary(exchange),
   });
-  assert.equal(plan.targets.length, 4);
+  assert.equal(plan.targets.length, 6);
 });
 
 test('resolve outcome removes the development from normal private injection', async () => {

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { buildCapturePrompt } from '../capture.js';
 import { buildWorldStateInjection } from '../injection.js';
-import { buildEvolutionContext, buildEvolutionPrompt, planLazyEvolution } from '../evolution.js';
+import { EVOLUTION_LIMITS, buildEvolutionContext, buildEvolutionPrompt, planLazyEvolution } from '../evolution.js';
 import { queryWorldState } from '../manual.js';
 import { planChronologicalRebuild } from '../rebuild.js';
 import { buildWorldStateUiModel, renderWorldStatePanel } from '../ui.js';
@@ -106,7 +106,7 @@ for (const size of testCorpusSizes) {
   }));
 }
 
-const evolutionRecords = Array.from({ length: 4 }, (_, index) => ({
+const evolutionRecords = Array.from({ length: 6 }, (_, index) => ({
   id: `wsr_evolve_${index}`,
   kind: 'development',
   summary: `Kesselpass development ${index} remains active because its established mechanism persists.`,
@@ -173,7 +173,10 @@ console.log(JSON.stringify({
   kind: 'phase4-trigger-policy',
   ordinaryTargets: ordinaryPlan.targets.length,
   elapsedTargets: evolutionPlan.targets.length,
-  maxAutomaticTargets: 4,
+  maxAutomaticTargets: EVOLUTION_LIMITS.targets,
+  maxRelevantTargets: EVOLUTION_LIMITS.relevantTargets,
+  maxBackgroundTargets: EVOLUTION_LIMITS.backgroundTargets,
+  backgroundScanCap: EVOLUTION_LIMITS.backgroundScan,
   ordinaryTurnRequestBudget: { capture: 1, evolution: 0 },
   triggeredEvolutionRequestBudget: { capture: 1, evolution: 1 },
 }));
@@ -304,7 +307,7 @@ const canonicalSidecar = encodeSidecar({
   chatKey: sequentialState.chatKey,
   state: sequentialState,
   revision: 1000,
-  appVersion: '0.9.0-alpha.5',
+  appVersion: '0.9.0-alpha.6',
 });
 
 // Rollback storage is capped at 256 entries. Measure one full retained window separately
@@ -351,7 +354,7 @@ const journalSidecar = encodeSidecar({
   chatKey: journalState.chatKey,
   state: journalState,
   revision: rollbackWindow,
-  appVersion: '0.9.0-alpha.5',
+  appVersion: '0.9.0-alpha.6',
 });
 
 console.log(JSON.stringify({

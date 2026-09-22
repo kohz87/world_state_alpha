@@ -14,7 +14,7 @@ completed exchange
  -> consolidate canonical current state
  -> persist with raw-message provenance
  -> retrieve only relevant state
- -> optionally catch up stale relevant developments
+ -> optionally catch up stale relevant plus bounded stale background developments
  -> inject compact private continuity
  -> existing RP model / Ukiyo narrates normally
 ```
@@ -203,14 +203,16 @@ No geographic scope hierarchy is required. No model/provider call is permitted s
 
 A record may remain untouched for many messages.
 
-Phase 4 uses correctness-first catch-up only when an **active relevant development** is stale and one of these bounded triggers exists:
+Phase 4 uses correctness-first catch-up for existing **active developments** through two bounded candidate paths:
 
-- a meaningful elapsed-time hint grounded to the current raw-message boundary, or
-- grounded current-exchange evidence that directly affects that development
+- stale relevant developments may qualify from a meaningful elapsed-time hint grounded to the current raw-message boundary, or grounded current-exchange evidence that directly affects that development
+- stale background developments may qualify only when a meaningful elapsed-time hint exists; they are drawn from the existing active-development index and do not need to be relevant to the current scene
 
-Ordinary relevance alone is not an evolution trigger. Short passage alone is not automatically meaningful. Opaque fictional time hints are allowed without requiring a calendar engine.
+Ordinary relevance alone is not an evolution trigger. Background selection without meaningful elapsed time is inert. Short passage alone is not automatically meaningful. Opaque fictional time hints are allowed without requiring a calendar engine.
 
-All eligible targets are evaluated in one batch, capped at four developments. Never issue one model request per record.
+Relevant developments retain priority: at most four relevant targets are admitted first. Background catch-up may fill at most three remaining slots. The combined automatic evolution batch is capped at six developments and always uses at most one provider request.
+
+Background candidate discovery must remain bounded and non-global. The ephemeral relevance index maintains an active-development pool during already-authorized full index construction/replacement and incremental canonical updates. On an eligible elapsed-time boundary, background catch-up examines at most 32 pool entries and never scans all World State records merely to find remote work. The same elapsed-time evidence boundary may trigger at most one background sweep; it must not drain additional remote batches on following turns merely because the original time-skip text is still inside the bounded exchange.
 
 Elapsed time is permission to evaluate, not evidence that change occurred. `stable` is a first-class outcome. A changed outcome requires either grounded current affecting evidence, or meaningful elapsed time plus prior accepted evidence from that same development.
 
@@ -277,7 +279,8 @@ Normal exchange target:
 - at most one capture model call when capture is due
 - zero evolution calls on ordinary relevant turns
 - at most one batched evolution model call when a Phase 4 trigger is met
-- at most four developments in that automatic evolution batch
+- at most six developments in that automatic evolution batch, with at most four relevant-priority targets and at most three background-fill targets
+- background discovery examines at most 32 indexed active-development entries on an eligible elapsed-time boundary
 - no full-world scan, including evolution
 - no full-chat scan
 - no per-record request fan-out
@@ -307,7 +310,8 @@ The Phase 5 rebuild contract is:
 - plan the current chat in bounded chronological assistant-completed exchange windows
 - fail before provider work if the configured boundary cap is exceeded
 - rebuild into an isolated candidate state from the root, never incrementally overwrite canonical state while scanning
-- reuse the existing capture prompt, source firewall, duplicate gate, reducer, request dispatcher, and exact message lineage
+- reuse the existing capture prompt, including its persistent-condition completeness sweep, source firewall, duplicate gate, reducer, request dispatcher, and exact message lineage
+- historical rebuild windows explicitly recover materially persistent narrated conditions even when they were already off-screen, ignored by the PC, or unrelated to the PC objective
 - tag reconstructed narrative evidence as `rebuild`
 - surface relevant resolved/superseded tombstones during reconstruction so passive historical similarity cannot resurrect an old episode
 - allow a genuinely new related episode only through explicit new-episode semantics

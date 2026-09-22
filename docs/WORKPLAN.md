@@ -88,8 +88,8 @@ Acceptance:
 Build:
 
 - opaque time/elapsed evidence capture
-- stale-relevant trigger logic
-- one batched targeted evolution request
+- stale-relevant trigger logic plus bounded indexed background-development selection
+- one batched targeted evolution request capped at six total targets
 - stability/no-change outcome
 - resolve/supersede
 - conservative derived-development gate
@@ -98,7 +98,7 @@ Acceptance:
 
 - meaningful five-week skip can update one relevant stored development
 - time passage with no causal support leaves it stable
-- dormant irrelevant records receive no calls
+- remote background records receive no calls without meaningful elapsed time; eligible background selection examines at most 32 indexed active-development entries and may fill up to three batch slots
 - no thread explosion
 - resolved record does not resurrect from lore
 
@@ -197,6 +197,7 @@ Deliverables:
 - v0.9.0-alpha.3 settings polish: replace the custom collapse shell with SillyTavern's standard inline-drawer structure and host chevron behavior
 - v0.9.0-alpha.4 hardening: deterministic sidecar recovery, ownership epochs/tombstones, historical rename-lineage migration, owner-probed deletion, chat-bound panel actions, bounded host caches, stale Spatial-ID rejection, co-located Ternia anchor preservation, and profileless generic-map handling
 - v0.9.0-alpha.5 capture completeness: keep the one-call source-firewalled capture path, but require a whole-exchange sweep for each distinct materially persistent established condition, including ongoing off-screen conditions that continue independently after the PC leaves or ignores them
+- v0.9.0-alpha.6 Background Development Catch-up: meaningful elapsed-time boundaries may fill the existing one-call evolution batch with a bounded indexed sample of stale remote active developments; rebuild from chat recovers narrated persistent developments but never replays hidden evolution
 
 Acceptance:
 

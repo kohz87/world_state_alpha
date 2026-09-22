@@ -168,20 +168,21 @@ Phase 3 renders the selected records into a host-neutral descriptor using namesp
 Phase 4 implements this host-neutral preparation flow:
 
 1. retrieve current relevant active records locally
-2. keep only active `development` records whose `lastEvaluatedMessage` predates either a meaningful elapsed hint or grounded direct affecting evidence
-3. if none qualify, inject the last-established state immediately with zero evolution calls
-4. if some qualify, evaluate at most four in one **batched targeted evolution request**
-5. require one result per target, with `stable` explicitly valid
-6. admit changes only from current affecting evidence, or meaningful elapsed time plus prior accepted evidence for that target
-7. gate any derived development to one candidate, with strict declared-cause support and duplicate/resurrection protection
-8. re-run local relevance against the resulting canonical state
-9. inject compact current summaries
+2. keep up to four stale relevant `development` records whose `lastEvaluatedMessage` predates either a meaningful elapsed hint or grounded direct affecting evidence
+3. when a meaningful elapsed hint exists and that elapsed evidence boundary has not already received a background sweep, sample at most 32 entries from the ephemeral active-development background pool and add up to three stale remote developments that are not already relevant targets
+4. if none qualify, inject the last-established state immediately with zero evolution calls
+5. if some qualify, evaluate at most six combined targets in one **batched targeted evolution request**
+6. require one result per target, with `stable` explicitly valid
+7. admit changes only from current affecting evidence, or meaningful elapsed time plus prior accepted evidence for that target
+8. gate any derived development to one candidate, with strict declared-cause support and duplicate/resurrection protection
+9. re-run local relevance against the resulting canonical state
+10. inject compact current summaries
 
 Elapsed time never forces motion. It opens an evaluation window. The evaluator does not inherit Writer's Mind/Ukiyo story-driving incentives and cannot create events merely to avoid stagnation.
 
 Opaque fictional time strings are supported directly. A small local recognizer handles obvious relative intervals such as weeks/months/years without becoming a calendar engine.
 
-Never issue one evolution call per record. If no reliable elapsed hint and no grounded affecting evidence exist, a dormant record remains exactly as last established.
+Never issue one evolution call per record. Background coverage is not a full-world sweep: the active-development pool is built only during already-authorized index construction/replacement and maintained incrementally; an eligible elapsed-time turn advances a bounded cursor through at most 32 entries. If no reliable elapsed hint and no grounded affecting evidence exist, a dormant record remains exactly as last established.
 
 ## 10. Injection boundary
 
@@ -469,7 +470,7 @@ plan bounded assistant-completed exchange windows
 start isolated empty/root-checkpoint candidate
    |
 for each window in chronology:
-   existing capture prompt + source firewall
+   existing capture prompt + persistent-condition completeness sweep + source firewall
    + relevant active records
    + relevant resolved/superseded tombstones
    -> one bounded capture-style request
@@ -489,7 +490,7 @@ atomic replace candidate on complete success
 
 The provider-call ceiling for rebuild is therefore bounded by the number of assistant-completed exchange windows admitted by the configured rebuild limit. The default Phase 5 cap is 1024 boundaries. Planning itself is local and performs zero provider calls.
 
-Rebuild deliberately prefers narrated evidence over reconstructing hypothetical Phase 4 evolution. If an earlier evolved condition materially affected the campaign, subsequent established narration can recover that consequence. Otherwise rebuild does not manufacture it.
+Rebuild deliberately prefers narrated evidence over reconstructing hypothetical Phase 4 evolution. Its capture pass must recover materially persistent conditions established in each historical exchange even when they were off-screen, ignored by the PC, or unrelated to the current objective. If an earlier evolved condition materially affected the campaign, subsequent established narration can recover that consequence. Otherwise rebuild does not manufacture it.
 
 ## 22. Design review questions A-S
 
@@ -615,7 +616,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; and the current persistent-capture completeness candidate is `0.9.0-alpha.5`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
+Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; and the current Background Development Catch-up candidate is `0.9.0-alpha.6`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

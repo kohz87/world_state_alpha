@@ -297,6 +297,16 @@ function indexedNeighbors(index, recordId) {
   return out;
 }
 
+function latestElapsedEvolutionBoundary(state) {
+  let latest = -1;
+  for (const evidence of Object.values(state?.evidence || {})) {
+    if (evidence?.sourceClass !== 'elapsed_hint') continue;
+    if (!Number.isInteger(evidence.sourceMessageId)) continue;
+    latest = Math.max(latest, evidence.sourceMessageId);
+  }
+  return latest;
+}
+
 export function buildRelevanceIndex(state) {
   const records = activeRecords(state);
   const index = {
@@ -309,6 +319,10 @@ export function buildRelevanceIndex(state) {
     linkGraph: new Map(),
     recordRelations: new Map(),
     reverseRecordRelations: new Map(),
+    backgroundDevelopmentIds: [],
+    backgroundDevelopmentSet: new Set(),
+    backgroundCursor: 0,
+    backgroundElapsedBoundary: latestElapsedEvolutionBoundary(state),
     corpusRecords: Array.isArray(state?.records) ? state.records.length : 0,
     activeCount: records.length,
   };
@@ -317,6 +331,10 @@ export function buildRelevanceIndex(state) {
     index.byId.set(record.id, record);
     indexRecordTerms(record, index);
     setRecordRelations(index, record);
+    if (record.kind === 'development') {
+      index.backgroundDevelopmentIds.push(record.id);
+      index.backgroundDevelopmentSet.add(record.id);
+    }
   }
   for (const link of Array.isArray(state?.links) ? state.links : []) {
     addExplicitLink(index, link?.from, link?.to);
@@ -330,14 +348,23 @@ export function updateRelevanceIndex(index, delta = {}) {
   const removedIds = Array.isArray(delta.removedRecordIds) ? delta.removedRecordIds : [];
   const appendedLinks = Array.isArray(delta.appendedLinks) ? delta.appendedLinks : [];
 
+  const backgroundSet = index.backgroundDevelopmentSet instanceof Set
+    ? index.backgroundDevelopmentSet
+    : (index.backgroundDevelopmentSet = new Set());
+  if (!Array.isArray(index.backgroundDevelopmentIds)) index.backgroundDevelopmentIds = [];
+  if (!Number.isInteger(index.backgroundCursor) || index.backgroundCursor < 0) index.backgroundCursor = 0;
+  if (!Number.isInteger(index.backgroundElapsedBoundary)) index.backgroundElapsedBoundary = -1;
+
   for (const id of removedIds) {
     index.byId.delete(id);
+    backgroundSet.delete(id);
     removeRecordFromTerms(id, index);
     clearRecordRelations(index, id);
   }
 
   for (const record of upserted) {
     if (!record || !record.id) continue;
+    const wasBackground = backgroundSet.has(record.id);
     index.byId.delete(record.id);
     removeRecordFromTerms(record.id, index);
     clearRecordRelations(index, record.id);
@@ -346,6 +373,14 @@ export function updateRelevanceIndex(index, delta = {}) {
       index.byId.set(record.id, record);
       indexRecordTerms(record, index);
       setRecordRelations(index, record);
+      if (record.kind === 'development') {
+        if (!wasBackground) index.backgroundDevelopmentIds.push(record.id);
+        backgroundSet.add(record.id);
+      } else {
+        backgroundSet.delete(record.id);
+      }
+    } else {
+      backgroundSet.delete(record.id);
     }
   }
 
@@ -354,6 +389,85 @@ export function updateRelevanceIndex(index, delta = {}) {
   index.activeCount = index.byId.size;
   if (typeof delta.corpusRecords === 'number') index.corpusRecords = delta.corpusRecords;
   return index;
+}
+
+function evaluationBoundary(record) {
+  if (Number.isInteger(record?.lastEvaluatedMessage)) return record.lastEvaluatedMessage;
+  if (Number.isInteger(record?.lastChangedMessage)) return record.lastChangedMessage;
+  if (Number.isInteger(record?.createdAtMessage)) return record.createdAtMessage;
+  return -1;
+}
+
+export function selectBackgroundDevelopments(index, {
+  excludeIds = [],
+  currentMessageId = null,
+  maxRecords = 3,
+  scanCap = 32,
+} = {}) {
+  if (!index?.byId || !Array.isArray(index.backgroundDevelopmentIds)) {
+    return { selected: [], metrics: { examined: 0, poolSize: 0, available: 0 } };
+  }
+
+  const ids = index.backgroundDevelopmentIds;
+  const activeSet = index.backgroundDevelopmentSet instanceof Set
+    ? index.backgroundDevelopmentSet
+    : new Set();
+  const poolSize = activeSet.size;
+  if (!ids.length || !poolSize || !Number.isInteger(currentMessageId)) {
+    return { selected: [], metrics: { examined: 0, poolSize, available: 0 } };
+  }
+  if (currentMessageId <= Number(index.backgroundElapsedBoundary ?? -1)) {
+    return {
+      selected: [],
+      metrics: { examined: 0, poolSize, available: 0, selected: 0, boundaryAlreadyProcessed: true },
+    };
+  }
+
+  const excluded = excludeIds instanceof Set ? excludeIds : new Set(excludeIds || []);
+  const limit = Math.max(0, Math.min(6, Number(maxRecords) || 0));
+  const budget = Math.max(0, Math.min(ids.length, Number(scanCap) || 0));
+  if (!limit || !budget) {
+    return { selected: [], metrics: { examined: 0, poolSize, available: 0 } };
+  }
+
+  const seen = new Set();
+  const candidates = [];
+  const start = Math.max(0, Number(index.backgroundCursor) || 0) % ids.length;
+  let examined = 0;
+
+  while (examined < budget) {
+    const id = ids[(start + examined) % ids.length];
+    examined += 1;
+    if (!id || seen.has(id) || excluded.has(id) || !activeSet.has(id)) continue;
+    seen.add(id);
+    const record = index.byId.get(id);
+    if (record?.kind !== 'development' || record?.status !== 'active') continue;
+    const boundary = evaluationBoundary(record);
+    if (boundary >= currentMessageId) continue;
+    candidates.push({ record, boundary });
+  }
+
+  index.backgroundCursor = (start + examined) % ids.length;
+  index.backgroundElapsedBoundary = currentMessageId;
+  candidates.sort((left, right) =>
+    left.boundary - right.boundary || String(left.record.id).localeCompare(String(right.record.id)));
+
+  const selected = candidates.slice(0, limit).map(({ record }) => ({
+    record,
+    score: 0,
+    source: 'background',
+    reasons: ['bounded-background-catch-up'],
+  }));
+
+  return {
+    selected,
+    metrics: {
+      examined,
+      poolSize,
+      available: candidates.length,
+      selected: selected.length,
+    },
+  };
 }
 
 function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384) {

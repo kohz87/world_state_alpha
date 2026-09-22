@@ -84,20 +84,28 @@ Observe:
 
 - relevance selects the development
 - no more than one batched evolution call is issued
-- no more than four targets are evaluated
+- no more than six combined targets are evaluated
+- relevant targets retain priority and no more than four relevant targets are admitted
 - the result is grounded in accepted evidence and may validly remain stable
 - elapsed time alone does not force a changed outcome
 
 Record actual evolution latency and outcome.
 
-### L07. Quiet unrelated time skip
+### L07. Background five-week catch-up
 
-With an existing development elsewhere, narrate a meaningful time skip in an unrelated scene.
+Establish several active developments in different scenes, leave them remote, then narrate a meaningful five-week skip in an unrelated scene.
 
 Observe:
 
-- unrelated dormant records are not evolved simply because time passed
-- no off-screen change is invented to make the world busier
+- no more than one batched evolution call is issued
+- the batch may include up to three remote active developments that are not relevant to the current scene
+- the combined target ceiling remains six
+- remote developments may validly remain stable
+- no unsupported actor action, event, escalation, or resolution is invented merely because time passed
+- ordinary turns without meaningful elapsed time do not trigger background catch-up
+- the same five-week skip does not trigger another remote background batch on the following turn merely because the skip text remains in the bounded exchange
+
+This is the primary live acceptance case for 0.9.0-alpha.6 Background Development Catch-up.
 
 ### L08. Quiet relevant stability / resolution
 
@@ -147,6 +155,8 @@ Observe:
 - destructive operations require explicit confirmation
 - import/reset publish only after durable persistence
 - rebuild is never automatic
+- rebuild from chat recovers materially persistent narrated off-screen developments even when later scenes never revisit them
+- rebuild does not replay hidden background evolution between narrated boundaries
 - failed/stale rebuild leaves the prior canonical state unchanged
 
 ### L13. Desktop and mobile UI
@@ -289,7 +299,7 @@ These are behavioral ceilings, not latency predictions:
 - at most one automatic capture model call per eligible completed assistant exchange
 - zero evolution model calls on an ordinary relevant turn without an evolution trigger
 - at most one batched automatic evolution call when triggered
-- at most four automatic evolution targets in that batch
+- at most six automatic evolution targets in that batch, with at most four relevant-priority targets and at most three background-fill targets
 - private injection remains within the configured hard budget, default 800 local token units
 - rebuild is explicit only
 - Spatial disabled adds zero Spatial injection and no second automatic capture call
