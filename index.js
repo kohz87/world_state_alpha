@@ -785,18 +785,25 @@ function buildSettingsCard() {
   section.id = WORLD_STATE_SETTINGS_ID;
   section.className = 'world-state-alpha-settings';
   section.innerHTML = [
-    '<div class="world-state-alpha-settings-head"><strong>World State Alpha</strong><span>v' + WORLD_STATE_ALPHA_VERSION + '</span></div>',
-    '<label><input id="world_state_alpha_enabled" type="checkbox"> Enable World State Alpha</label>',
-    '<label><input id="world_state_alpha_auto_capture" type="checkbox"> Capture established world changes</label>',
-    '<label><input id="world_state_alpha_inject" type="checkbox"> Inject private world continuity</label>',
-    '<label>Injection depth <input id="world_state_alpha_inject_depth" type="number" min="0" max="20" step="1"></label>',
-    '<label>Injection budget <input id="world_state_alpha_inject_budget" type="number" min="1" max="2400" step="1"></label>',
-    '<label>Connection profile <select id="world_state_alpha_connection_profile" title="Choose a SillyTavern Connection Profile for World State requests"></select></label>',
-    '<hr style="border:0;border-top:1px solid rgba(255,255,255,0.1);margin:4px 0;">',
-    '<label><input id="world_state_alpha_spatial_enabled" type="checkbox"> Enable Spatial Continuity (Phase 9)</label>',
-    '<label><input id="world_state_alpha_spatial_inject" type="checkbox"> Inject spatial continuity</label>',
-    '<label>Spatial inject budget <input id="world_state_alpha_spatial_inject_budget" type="number" min="1" max="2400" step="1"></label>',
-    '<button id="world_state_alpha_open" type="button" class="menu_button">Open World State</button>',
+    '<div class="world-state-alpha-settings-head"><div><strong>World State Alpha</strong><small>World continuity</small></div><span>v' + WORLD_STATE_ALPHA_VERSION + '</span></div>',
+    '<div class="world-state-alpha-settings-group">',
+    '<div class="world-state-alpha-settings-group-head"><strong>Continuity</strong><span>Capture and inject established world state.</span></div>',
+    '<label class="world-state-alpha-toggle"><input id="world_state_alpha_enabled" type="checkbox"><span>Enable World State Alpha</span></label>',
+    '<label class="world-state-alpha-toggle"><input id="world_state_alpha_auto_capture" type="checkbox"><span>Capture established world changes</span></label>',
+    '<label class="world-state-alpha-toggle"><input id="world_state_alpha_inject" type="checkbox"><span>Inject private world continuity</span></label>',
+    '<div class="world-state-alpha-settings-grid">',
+    '<label class="world-state-alpha-field"><span>Injection depth</span><input id="world_state_alpha_inject_depth" type="number" min="0" max="20" step="1"></label>',
+    '<label class="world-state-alpha-field"><span>Injection budget</span><input id="world_state_alpha_inject_budget" type="number" min="1" max="2400" step="1"></label>',
+    '</div>',
+    '<label class="world-state-alpha-field"><span>Connection profile</span><select id="world_state_alpha_connection_profile" title="Choose a SillyTavern Connection Profile for World State requests"></select></label>',
+    '</div>',
+    '<div class="world-state-alpha-settings-group">',
+    '<div class="world-state-alpha-settings-group-head"><strong>Spatial continuity</strong><span>Optional place, route, and map continuity.</span></div>',
+    '<label class="world-state-alpha-toggle"><input id="world_state_alpha_spatial_enabled" type="checkbox"><span>Enable Spatial Continuity (Phase 9)</span></label>',
+    '<label class="world-state-alpha-toggle"><input id="world_state_alpha_spatial_inject" type="checkbox"><span>Inject spatial continuity</span></label>',
+    '<label class="world-state-alpha-field"><span>Spatial injection budget</span><input id="world_state_alpha_spatial_inject_budget" type="number" min="1" max="2400" step="1"></label>',
+    '</div>',
+    '<button id="world_state_alpha_open" type="button" class="menu_button world-state-alpha-open">Open World State</button>',
   ].join('');
   return section;
 }
