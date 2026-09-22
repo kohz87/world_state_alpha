@@ -673,6 +673,11 @@ test('Narrative Sanitizer strips writer_state blocks completely from capture and
     '<WRITER_STATE priority="high">',
     'Future plot hypothesis: The watchtower collapsed.',
     '</WRITER_STATE>',
+    '<NPC_Inner_Chatter>KARR: I think the bridge is secretly cursed.</NPC_Inner_Chatter>',
+    '<CYOA>1. Burn the watchtower. 2. Open the sealed gate.</CYOA>',
+    '<Skill_Mastery>Detection: 2/10</Skill_Mastery>',
+    '<World_State>**Off-Screen:** Market extortion remains active.</World_State>',
+    '<!-- INVENTORY_BLOCK_V05 <Inventory>Imaginary Key | 1</Inventory> -->',
   ].join('\n');
 
   assert.ok(containsWriterState(textWithWriterState));
@@ -682,8 +687,13 @@ test('Narrative Sanitizer strips writer_state blocks completely from capture and
   assert.ok(!sanitized.toLowerCase().includes('writer_state'));
   assert.ok(!sanitized.includes('Shadowrealm'));
   assert.ok(!sanitized.includes('Future plot hypothesis'));
+  assert.ok(!sanitized.includes('secretly cursed'));
+  assert.ok(!sanitized.includes('Burn the watchtower'));
+  assert.ok(!sanitized.includes('Detection: 2/10'));
+  assert.ok(!sanitized.includes('Imaginary Key'));
   assert.ok(sanitized.includes('The party arrives at the mountain pass.'));
   assert.ok(sanitized.includes('The guide points to Old Watchtower.'));
+  assert.ok(sanitized.includes('Market extortion remains active.'));
 
   const captureRes = processSpatialCapture({
     rawSpatialMutations: [{

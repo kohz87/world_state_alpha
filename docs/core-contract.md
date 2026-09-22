@@ -88,6 +88,12 @@ Default Alpha cadence is one eligible capture after each completed assistant exc
 
 If no material world change is established, capture returns no mutations.
 
+Capture is bounded for completeness rather than ranked only by immediate PC salience. Before output, the single capture request must sweep the whole bounded current exchange for each distinct materially persistent current condition established there, up to the existing mutation cap.
+
+PC proximity, current objective, and player intervention are not admission criteria. An established ongoing condition that will continue independently after the PC leaves or ignores it remains a valid `development`, including when it is now off-screen.
+
+Persistence means useful future continuity after the scene cuts away. Capture should ignore fleeting scenery, momentary positions, routine inventory/skill state, ordinary one-off transactions, notices/offers/rumors, plans, planted seeds, CYOA options, inner chatter, and mere possibilities unless the narration separately establishes the underlying condition as current reality. Known non-canonical assistant blocks such as `writer_state`, `NPC_Inner_Chatter`, `CYOA`, `Skill_Mastery`, and inventory blocks are removed from the capture/evidence view before model admission; current/narrated `World_State` summaries may remain as corroborating exchange text.
+
 Capture may:
 
 - create a grounded fact/development
@@ -95,6 +101,8 @@ Capture may:
 - resolve/supersede a record
 - attach evidence
 - link causally related existing records
+
+If several independent materially persistent conditions are established in one exchange, capture may represent each once in the same bounded request rather than stopping after the most scene-salient one.
 
 Capture must not run global simulation or fabricate off-screen developments merely to keep the world busy.
 

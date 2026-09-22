@@ -261,6 +261,27 @@ Observe:
 - established coordinate/orientation does not drift across later scenes
 - PC narration does not gain remote/private geography merely because Alpha stores it
 
+### L22. Persistent off-screen capture completeness
+
+Use one assistant response that establishes at least two independent current conditions:
+
+1. an ongoing condition the PC sees but deliberately leaves unresolved, such as market carters extorting traders in town
+2. a separate PC-adjacent condition in the destination scene, such as a concealed animal sounder/hazard
+
+Then move the PC away from the first condition.
+
+Observe:
+
+- the capture request remains one provider call
+- the persistent ignored condition is admitted as its own active `development`
+- the destination fact/development may also be captured in the same response
+- the ignored development remains stored after the PC leaves even when it is no longer injected into the unrelated current scene
+- PC proximity, current objective, or intervention are not used as reasons to omit the established condition
+- notice-board jobs, planted seeds, CYOA options, inner chatter, inventory/skill blocks, or mere plans do not become Reality records unless visible narration separately establishes their underlying condition
+- no off-screen event that was absent from narration is invented
+
+This is the primary live acceptance case for 0.9.0-alpha.5.
+
 ## 3. Contractual bounds to verify live
 
 These are behavioral ceilings, not latency predictions:
@@ -310,6 +331,7 @@ L18 Generated-place continuity/manual editing: PASS / FAIL / NOT RUN
 L19 Writer-state Spatial firewall: PASS / FAIL / NOT RUN
 L20 Spatial branch rollback/campaign isolation: PASS / FAIL / NOT RUN
 L21 Megumin World_State spatial continuity: PASS / FAIL / NOT RUN
+L22 Persistent off-screen capture completeness: PASS / FAIL / NOT RUN
 
 Measured:
 RP TTFT baseline:
