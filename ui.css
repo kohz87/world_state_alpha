@@ -714,6 +714,45 @@
   justify-content: space-between;
   gap: 14px;
   padding: 0 2px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-head::-webkit-details-marker {
+  display: none;
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-body {
+  display: grid;
+  gap: 14px;
+}
+
+#world_state_alpha_settings:not([open]) .world-state-alpha-settings-body {
+  display: none;
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-chevron {
+  display: inline-block;
+  font-size: .9rem;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+#world_state_alpha_settings:not([open]) .world-state-alpha-settings-chevron {
+  transform: rotate(-90deg);
+}
+
+#world_state_alpha_settings .world-state-alpha-settings-head:focus-visible {
+  outline: 2px solid var(--SmartThemeQuoteColor, rgba(140,184,255,.72));
+  outline-offset: 4px;
+  border-radius: 6px;
 }
 
 #world_state_alpha_settings .world-state-alpha-settings-head > div {

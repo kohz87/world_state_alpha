@@ -257,7 +257,7 @@ Recommended sidecar identity:
 
 Use owner-qualified per-chat keys and revision-guarded sidecar writes.
 
-Phase 7 maps the logical `world_state_alpha/<hash>.json` sidecar to a SillyTavern uploaded filename prefixed `world-state-alpha-`. The actual server-returned path is persisted in `extension_settings.world_state_alpha.dataFiles[chatKey]`. Equal chat filenames owned by different characters/groups therefore remain separate.
+Phase 7 maps the logical `world_state_alpha/<hash>.json` sidecar to a SillyTavern uploaded filename prefixed `world-state-alpha-`. The actual server-returned path is persisted in `extension_settings.world_state_alpha.dataFiles[chatKey]`. Equal chat filenames owned by different characters/groups therefore remain separate. In 0.9.0-alpha.2, character/chat rename events migrate that owner-qualified key by durably writing the re-owned sidecar before moving the pointer; delete lifecycle removes the active pointer/cache ownership so later filename reuse cannot resurrect an unrelated campaign.
 
 Hydration is fail-closed. An existing pointer that cannot be read/decoded is preserved; the host must not overwrite it with a fresh empty state.
 
@@ -285,7 +285,7 @@ The host-neutral controller accepts a caller-supplied root, `getState()`, option
 
 Desktop uses a centered panel up to roughly 1040 px with a list/detail split. At 700 px and below the panel becomes full-screen `100vw × 100dvh` with a vertically scrollable stacked body and >=44 px tab targets. At 420 px and below dense grids collapse to one column.
 
-Phase 6 itself remains host-neutral. Phase 7 mounts it through one `world_state_alpha_panel_root` plus a compact World State settings card. Phase 7 still deliberately omits a launcher/watchdog/MutationObserver framework, generic slash-command surface, and cross-extension adapter.
+Phase 6 itself remains host-neutral. Phase 7 mounts it through one `world_state_alpha_panel_root` plus a compact, natively collapsible World State settings card. Phase 7 still deliberately omits a launcher/watchdog/MutationObserver framework, generic slash-command surface, and cross-extension adapter.
 
 ## 15. Manual controls
 
@@ -325,8 +325,8 @@ The SillyTavern shell is intentionally thin:
 
 - `manifest.json` -> `bootstrap.js` -> `index.js`
 - `host-identity.js` derives owner-qualified character/group chat keys without reading another extension
-- `host-storage.js` adapts the existing revision/checksum sidecar contract to SillyTavern `/api/files/upload` and pointer GETs
-- `index.js` owns World-State-only settings, hydration cache, event registration, currentness guards, persistence, prompt application, and mounting the Phase 6 panel
+- `host-storage.js` adapts the existing revision/checksum sidecar contract to SillyTavern `/api/files/upload` and pointer GETs, and exposes the JSON upload/fetch surface used by immutable Spatial base-map sources
+- `index.js` owns World-State-only settings, hydration cache, identity rename/delete migration, event registration, currentness guards, per-chat work serialization, persistence, prompt application, and mounting the Phase 6 panel
 
 The shell calls existing capture/evolution/relevance/branch/manual/rebuild services rather than duplicating their semantic logic.
 
@@ -615,7 +615,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Phase 8 used application version `0.8.0-alpha.1`. Phase 9 uses `0.9.0-alpha.1`; canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
+Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; the current stabilization candidate is `0.9.0-alpha.2`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

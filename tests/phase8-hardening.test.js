@@ -49,15 +49,15 @@ function record(id, summary, {
   };
 }
 
-test('Phase 8 application version is 0.8.0-alpha.1 while schema versions remain 1', () => {
+test('Phase 8 compatibility accepts current Phase 9 application versions while envelope versions remain 1', () => {
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
   const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
   const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
   const index = fs.readFileSync('index.js', 'utf8');
 
-  assert.ok(pkg.version === '0.8.0-alpha.1' || pkg.version === '0.9.0-alpha.1');
-  assert.ok(manifest.version === '0.8.0-alpha.1' || manifest.version === '0.9.0-alpha.1');
-  assert.match(index, /WORLD_STATE_ALPHA_VERSION\s*=\s*'(0\.8\.0-alpha\.1|0\.9\.0-alpha\.1)'/);
+  assert.ok(['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2'].includes(pkg.version));
+  assert.ok(['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2'].includes(manifest.version));
+  assert.match(index, /WORLD_STATE_ALPHA_VERSION\s*=\s*'(0\.8\.0-alpha\.1|0\.9\.0-alpha\.1|0\.9\.0-alpha\.2)'/);
   assert.ok(inventory.stage === 'phase8-release-hardening' || inventory.stage === 'phase9-spatial-continuity');
 
   assert.ok(SCHEMA_VERSION === 1 || SCHEMA_VERSION === 2);

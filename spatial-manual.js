@@ -93,7 +93,7 @@ export function applySpatialManualMutation({
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
 
-  const boundary = Array.isArray(chat) && chat.length > 0 && Number.isInteger(messageId)
+  const boundary = Array.isArray(chat) && chat.length > 0
     ? exactBoundary(chat, messageId, before)
     : null;
 
@@ -124,10 +124,11 @@ export function applySpatialManualMutation({
     const authority = ['base_canonical', 'campaign_override'].includes(requestedAuthority)
       ? 'manual'
       : requestedAuthority;
+    const hasCoordinate = Number.isFinite(normalized.x) && Number.isFinite(normalized.y);
     proposal.coordinate = {
       ...normalized,
       authority,
-      locked: proposal.coordinate.locked !== false,
+      locked: hasCoordinate && proposal.coordinate.locked !== false,
     };
   }
 

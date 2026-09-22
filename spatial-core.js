@@ -151,10 +151,13 @@ export function normalizeCoordinate(raw) {
   if (!raw || typeof raw !== 'object') {
     return { x: null, y: null, authority: 'unknown', locked: false };
   }
-  const x = Number.isFinite(raw.x) ? raw.x : null;
-  const y = Number.isFinite(raw.y) ? raw.y : null;
+  const rawX = Number.isFinite(raw.x) ? raw.x : null;
+  const rawY = Number.isFinite(raw.y) ? raw.y : null;
+  const hasCoordinate = rawX !== null && rawY !== null;
+  const x = hasCoordinate ? rawX : null;
+  const y = hasCoordinate ? rawY : null;
   const authority = SPATIAL_AUTHORITIES.includes(raw.authority) ? raw.authority : 'unknown';
-  const locked = Boolean(raw.locked);
+  const locked = hasCoordinate && Boolean(raw.locked);
   return { x, y, authority, locked };
 }
 
@@ -762,18 +765,22 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         continue;
       }
 
-      // Check if location exists by visible locationId or normalized name
+      // Resolve direct stored campaign IDs first (including overrideId), then
+      // fall back to the effective/base projection used by automatic capture.
       const targetId = boundedText(proposal.locationId, 120);
       let existingLoc = null;
       let isBaseLoc = false;
 
-      if (targetId && effectiveById.has(targetId)) {
-        const eff = effectiveById.get(targetId);
-        if (eff.isBase && !eff.overrideId) {
-          isBaseLoc = true;
-          existingLoc = eff;
-        } else {
-          existingLoc = spatial.locations.find(l => l.id === (eff.overrideId || eff.id));
+      if (targetId) {
+        existingLoc = spatial.locations.find(l => l.id === targetId) || null;
+        if (!existingLoc && effectiveById.has(targetId)) {
+          const eff = effectiveById.get(targetId);
+          if (eff.isBase && !eff.overrideId) {
+            isBaseLoc = true;
+            existingLoc = eff;
+          } else {
+            existingLoc = spatial.locations.find(l => l.id === (eff.overrideId || eff.id)) || null;
+          }
         }
       }
 
@@ -793,27 +800,34 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       }
 
       if (existingLoc && !isBaseLoc) {
-        // Update existing campaign location
+        // Update existing campaign location.
         const priorCoord = existingLoc.coordinate;
-        const proposedCoord = proposal.coordinate ? normalizeCoordinate(proposal.coordinate) : null;
+        const proposedCoord = proposal.coordinate && typeof proposal.coordinate === 'object'
+          ? normalizeCoordinate(proposal.coordinate)
+          : null;
 
-        // Check authority conflict on coordinate update
-        if (proposedCoord && (Number.isFinite(proposedCoord.x) || Number.isFinite(proposedCoord.y))) {
-          const priorRank = authorityRank(priorCoord.authority, priorCoord.locked);
-          const proposedRank = authorityRank(proposedCoord.authority, proposedCoord.locked);
+        if (proposedCoord) {
+          const proposedKnown = Number.isFinite(proposedCoord.x) && Number.isFinite(proposedCoord.y);
+          if (context.operation === 'capture') {
+            // Automatic capture may refine a coordinate only when it has an actual
+            // grounded coordinate pair. Unknown/null proposals never erase state.
+            if (proposedKnown) {
+              const priorRank = authorityRank(priorCoord.authority, priorCoord.locked);
+              const proposedRank = authorityRank(proposedCoord.authority, proposedCoord.locked);
 
-          if (priorCoord.locked && !proposedCoord.locked && context.operation === 'capture') {
-            // Rejection: locked coordinate cannot be overwritten by automatic capture
-            rejected.push({ proposal, reason: 'cannot overwrite locked coordinate' });
-            continue;
-          }
-          if (priorRank > proposedRank && context.operation === 'capture') {
-            // Preserves higher authority and rejects lower authority coordinate change
-            if (priorCoord.x !== proposedCoord.x || priorCoord.y !== proposedCoord.y) {
-              rejected.push({ proposal, reason: `cannot overwrite coordinate with lower authority (${proposedCoord.authority} < ${priorCoord.authority})` });
-              continue;
+              if (priorCoord.locked && !proposedCoord.locked) {
+                rejected.push({ proposal, reason: 'cannot overwrite locked coordinate' });
+                continue;
+              }
+              if (priorRank > proposedRank
+                && (priorCoord.x !== proposedCoord.x || priorCoord.y !== proposedCoord.y)) {
+                rejected.push({ proposal, reason: `cannot overwrite coordinate with lower authority (${proposedCoord.authority} < ${priorCoord.authority})` });
+                continue;
+              }
+              existingLoc.coordinate = proposedCoord;
             }
           } else {
+            // Manual/operator edits may explicitly clear X/Y.
             existingLoc.coordinate = proposedCoord;
           }
         }
@@ -825,12 +839,22 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         // Automatic capture may add route associations and improve coordinate
         // certainty, but must not casually rewrite operator-authored metadata.
         if (!preserveManualMetadata) {
-          if (proposal.type) existingLoc.type = boundedText(proposal.type, SPATIAL_LIMITS.typeChars);
-          if (proposal.context) existingLoc.context = boundedText(proposal.context, SPATIAL_LIMITS.contextChars);
-          if (proposal.notes) existingLoc.notes = boundedText(proposal.notes, SPATIAL_LIMITS.notesChars);
+          existingLoc.name = name;
+          if (Object.hasOwn(proposal, 'type') && boundedText(proposal.type, SPATIAL_LIMITS.typeChars)) {
+            existingLoc.type = boundedText(proposal.type, SPATIAL_LIMITS.typeChars);
+          }
+          if (Object.hasOwn(proposal, 'context')) {
+            existingLoc.context = boundedText(proposal.context, SPATIAL_LIMITS.contextChars);
+          }
+          if (Object.hasOwn(proposal, 'notes')) {
+            existingLoc.notes = boundedText(proposal.notes, SPATIAL_LIMITS.notesChars);
+          }
         }
         if (Array.isArray(proposal.routeRefs)) {
-          existingLoc.routeRefs = uniqueStrings([...existingLoc.routeRefs, ...proposal.routeRefs], SPATIAL_LIMITS.routeRefsPerLocation, 120);
+          const incoming = uniqueStrings(proposal.routeRefs, SPATIAL_LIMITS.routeRefsPerLocation, 120);
+          existingLoc.routeRefs = context.operation === 'capture'
+            ? uniqueStrings([...existingLoc.routeRefs, ...incoming], SPATIAL_LIMITS.routeRefsPerLocation, 120)
+            : incoming;
         }
         if (proposal.status && SPATIAL_LOCATION_STATUSES.includes(proposal.status)) {
           existingLoc.status = proposal.status;

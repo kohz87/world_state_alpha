@@ -713,6 +713,29 @@ test('Ephemeral spatial relevance indexing over 1000 locations', () => {
   assert.ok(index.byId.has('wsloc_test_1001'));
 });
 
+test('Spatial relevance retrieves a location from indexed context terms', () => {
+  const spatial = createSpatialState();
+  spatial.locations.push(normalizeSpatialLocation({
+    id: 'wsloc_context_red_lantern',
+    name: 'Red Lantern',
+    type: 'inn',
+    status: 'active',
+    coordinate: { x: null, y: null, authority: 'unknown', locked: false },
+    context: 'Blackfen marsh district',
+    routeRefs: [],
+    evidenceIds: [],
+  }));
+
+  const index = buildSpatialRelevanceIndex(spatial);
+  const result = selectRelevantLocations(spatial, {
+    index,
+    recentText: 'We return to the Blackfen marsh district.',
+    maxLocations: 4,
+  });
+
+  assert.equal(result.selected.some(item => item.location.id === 'wsloc_context_red_lantern'), true);
+});
+
 test('Spatial continuity injection rendering and token budgeting', () => {
   const selectedLocations = [
     {
@@ -849,6 +872,136 @@ test('Spatial manual CRUD operations and rollback', () => {
   const branched = reconcileBranch(state, chat.slice(0, 1));
   assert.equal(branched.exactRestored, true);
   assert.equal(branched.state.spatial.locations.length, 0, 'manual spatial create rolls back with its message boundary');
+});
+
+test('manual Spatial edits support rename, clearing, replacement route refs, and unknown-coordinate unlock', () => {
+  let state = createState('chat:test:manual-edit');
+  const chat = [
+    { role: 'user', content: 'We establish a place.' },
+    { role: 'assistant', content: 'The Old Lantern stands beside Old Road.' },
+  ];
+
+  const created = applySpatialManualMutation({
+    state,
+    chat,
+    chatKey: state.chatKey,
+    messageId: 1,
+    mutation: {
+      action: 'upsert_location',
+      name: 'Old Lantern',
+      type: 'inn',
+      context: 'Old context',
+      notes: 'Old notes',
+      routeRefs: ['Old Road'],
+      coordinate: { x: 10, y: 20, authority: 'manual', locked: true },
+    },
+    note: 'Create location',
+  });
+  assert.equal(created.outcome, 'applied');
+  state = created.state;
+  const id = state.spatial.locations[0].id;
+
+  const edited = applySpatialManualMutation({
+    state,
+    chat,
+    chatKey: state.chatKey,
+    messageId: 1,
+    mutation: {
+      action: 'upsert_location',
+      locationId: id,
+      name: 'New Lantern',
+      type: 'inn',
+      context: '',
+      notes: '',
+      routeRefs: [],
+      coordinate: { x: null, y: null, authority: 'unknown', locked: true },
+    },
+    note: 'Rename and clear editable fields',
+  });
+
+  assert.equal(edited.outcome, 'applied');
+  const loc = edited.state.spatial.locations[0];
+  assert.equal(loc.name, 'New Lantern');
+  assert.equal(loc.context, '');
+  assert.equal(loc.notes, '');
+  assert.deepEqual(loc.routeRefs, []);
+  assert.equal(loc.coordinate.x, null);
+  assert.equal(loc.coordinate.y, null);
+  assert.equal(loc.coordinate.locked, false, 'unknown coordinates cannot be authority-locked');
+});
+
+test('manual Spatial mutations require the current raw-message boundary when chat history exists', () => {
+  const state = createState('chat:test:manual-boundary');
+  const chat = [{ role: 'assistant', content: 'A road is established.' }];
+
+  assert.throws(() => applySpatialManualMutation({
+    state,
+    chat,
+    chatKey: state.chatKey,
+    messageId: null,
+    mutation: {
+      action: 'upsert_location',
+      name: 'Roadside Camp',
+      type: 'camp',
+    },
+    note: 'Attempt unowned mutation',
+  }), /existing raw-message boundary/);
+});
+
+test('campaign override remains editable by its stored overrideId', () => {
+  const baseMap = parseBaseMap({
+    name: 'Override Test Map',
+    profile: { system: 'cartesian2d', unitKm: 1 },
+    locations: [{
+      id: 'base-town',
+      name: 'Base Town',
+      type: 'town',
+      coordinate: { x: 1, y: 2 },
+      context: 'Base context',
+    }],
+    routes: [],
+  });
+  let state = createState('chat:test:override-edit');
+
+  const created = applySpatialManualMutation({
+    state,
+    chat: [],
+    chatKey: state.chatKey,
+    mutation: {
+      action: 'upsert_location',
+      locationId: 'base-town',
+      name: 'Base Town',
+      type: 'town',
+      createOverride: true,
+      context: 'Campaign context',
+    },
+    note: 'Create campaign override',
+    baseMap,
+  });
+  assert.equal(created.outcome, 'applied');
+  state = created.state;
+  const overrideId = state.spatial.locations[0].id;
+
+  const edited = applySpatialManualMutation({
+    state,
+    chat: [],
+    chatKey: state.chatKey,
+    mutation: {
+      action: 'upsert_location',
+      locationId: overrideId,
+      name: 'Renamed Town',
+      type: 'city',
+      context: 'Edited campaign context',
+    },
+    note: 'Edit campaign override',
+    baseMap,
+  });
+
+  assert.equal(edited.outcome, 'applied');
+  assert.equal(edited.state.spatial.locations.length, 1);
+  assert.equal(edited.state.spatial.locations[0].name, 'Renamed Town');
+  assert.equal(edited.state.spatial.locations[0].type, 'city');
+  assert.equal(edited.state.spatial.locations[0].context, 'Edited campaign context');
 });
 
 test('Schema 1 to Schema 2 migration and old checkpoint rollback safety', () => {
@@ -1225,9 +1378,14 @@ test('Spatial UI exposes the complete manual continuity edit surface', () => {
     'data-wsa-field="routeRefs"',
   ]) assert.ok(html.includes(required), required);
   const hostSource = fs.readFileSync('index.js', 'utf8');
+  const uiSource = fs.readFileSync('ui.js', 'utf8');
   for (const action of ['add_location_modal', 'archive_location', 'merge_location']) {
     assert.ok(hostSource.includes(`actionId === '${action}'`), 'host handles ' + action);
   }
+  assert.match(uiSource, /context: getVal\('context'\) !== undefined/);
+  assert.match(uiSource, /notes: getVal\('notes'\) !== undefined/);
+  assert.doesNotMatch(uiSource, /context: getVal\('context'\) \|\| currentLoc/);
+  assert.doesNotMatch(uiSource, /notes: getVal\('notes'\) \|\| currentLoc/);
 });
 
 test('Rebuild uses the sanitized evidence view: writer_state alone cannot establish Spatial state', async () => {

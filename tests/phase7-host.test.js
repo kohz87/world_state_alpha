@@ -117,6 +117,36 @@ test('SillyTavern host storage GETs pointers, uploads base64 JSON, and returns a
   assert.equal(payload.data.length > 20, true);
 });
 
+test('SillyTavern host storage exposes JSON upload/fetch for Spatial base-map sources', async () => {
+  const path = '/user/files/world-state-alpha-basemap-test.json';
+  let stored = '';
+
+  const adapter = createSillyTavernWorldStateStorageAdapter({
+    fetchFn: async (url, options = {}) => {
+      if (url === '/api/files/upload' && options.method === 'POST') {
+        const payload = JSON.parse(options.body);
+        stored = Buffer.from(payload.data, 'base64').toString('utf8');
+        return response({ json: { path } });
+      }
+      if (url === path && options.method === 'GET') {
+        return response({ text: stored });
+      }
+      throw new Error('unexpected URL ' + url);
+    },
+  });
+
+  const payload = {
+    format: 'world_state_alpha_base_map',
+    version: 1,
+    digest: 'abc123',
+    baseMap: { id: 'map-test', name: 'Test Map' },
+  };
+  const uploaded = await adapter.uploadJsonFile('world-state-alpha-basemap-test.json', payload);
+  assert.equal(uploaded.path, path);
+  assert.deepEqual(JSON.parse(stored), payload);
+  assert.deepEqual(await adapter.fetchJsonFile(path), payload);
+});
+
 test('SillyTavern host storage detects revision conflict before upload', async () => {
   let uploads = 0;
   const current = encodeSidecar({
@@ -225,7 +255,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -280,6 +310,11 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
     'MESSAGE_SENT',
     'CHAT_LOADED',
     'CHAT_CHANGED',
+    'CHARACTER_RENAMED',
+    'CHARACTER_DELETED',
+    'CHAT_RENAMED',
+    'CHAT_DELETED',
+    'GROUP_CHAT_DELETED',
     'MESSAGE_EDITED',
     'MESSAGE_DELETED',
     'MESSAGE_SWIPED',
@@ -291,12 +326,49 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
   assert.match(source, /prepareWorldStateContinuity\(\{[\s\S]*affectingEvidence:\s*\[\]/);
   assert.match(source, /detectElapsedHintFromExchange\(exchange\)/);
   assert.match(source, /cancelWorldStateRequests\(\{\s*chatKey\s*\}\)/);
+  assert.match(source, /function invalidateChatOperations\(chatKey = currentChatKey\(\)\)/);
+  assert.match(source, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, chatKey\)\)/);
+  assert.match(source, /return queueChatWork\(chatKey, \(\) => applySpatialActionNow\(actionId, payload, chatKey\)\)/);
+  assert.match(source, /const baseMap = await getChatBaseMap\(chatKey, state\);\s*if \(currentChatKey\(\) !== chatKey \|\| hydrationErrors\.has\(chatKey\)\) return;/);
   assert.match(source, /reconcileBranch\(state, getContext\(\)\.chat \|\| \[\]\)/);
   assert.match(source, /commitMutationBoundary\(before, result\.state, liveChat, messageId, 'capture'(?:,|\))/);
   assert.match(source, /commitMutationBoundary\(before, prepared\.state, liveChat, messageId, 'evolution'(?:,|\))/);
 
   assert.doesNotMatch(source, /Promise\.all\([^\n]*runCaptureOperation/);
   assert.doesNotMatch(source, /for\s*\([^)]*\)\s*\{[^}]*runCaptureOperation/s);
+});
+
+test('host identity/settings lifecycle preserves continuity across rename and disables stale work', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+
+  assert.match(source, /async function migrateWorldStateChatKey\(oldKey, newKey\)/);
+  assert.match(source, /settings\.dataFiles\[newKey\] = committed;\s*delete settings\.dataFiles\[oldKey\]/);
+  assert.match(source, /async function handleCharacterRenamed\(oldAvatar, newAvatar\)/);
+  assert.match(source, /function handleCharacterDeleted\(eventData = \{\}\)/);
+  assert.match(source, /async function handleChatRenamed\(eventData = \{\}\)/);
+  assert.match(source, /function handleChatDeleted\(eventData, forcedKind = 'chat'\)/);
+  assert.match(source, /delete settings\.dataFiles\[chatKey\]/);
+
+  assert.match(source, /function invalidateChatOperations\(chatKey = currentChatKey\(\)\)[\s\S]*cancelWorldStateRequests\(\{ chatKey \}\)/);
+  for (const id of [
+    'world_state_alpha_enabled',
+    'world_state_alpha_auto_capture',
+    'world_state_alpha_inject',
+    'world_state_alpha_connection_profile',
+    'world_state_alpha_spatial_enabled',
+    'world_state_alpha_spatial_inject',
+  ]) assert.match(source, new RegExp(id));
+
+  assert.match(
+    source,
+    /!liveSettings\.enabled \|\| branch\?\.failClosed \|\| !liveSettings\.inject/,
+    'Spatial-only injection must not enter Reality evolution',
+  );
+  assert.doesNotMatch(source, /baseMapCache\.set\(cacheKey, null\)/, 'transient base-map failures must be retryable');
+  assert.match(
+    source,
+    /settings\.spatialEnabled && state\.spatial\?\.baseMapRef\?\.id && !baseMap[\s\S]*Rebuild paused because the attached Spatial base map is unavailable/,
+  );
 });
 
 test('host publishes mutated canonical state only after durable sidecar success', () => {
@@ -354,6 +426,9 @@ test('host settings mount reuses Phase 6 panel without a second UI framework or 
   assert.match(source, /#extensionsMenu/);
   assert.match(source, /createWorldStateUiController\(\{/);
   assert.match(source, /panelRoot\.id\s*=\s*WORLD_STATE_PANEL_ROOT_ID/);
+  assert.match(source, /document\.createElement\('details'\)/);
+  assert.match(source, /<summary class="world-state-alpha-settings-head"/);
+  assert.match(source, /world-state-alpha-settings-body/);
   assert.match(source, /world-state-alpha-settings-group/);
   assert.match(source, /world-state-alpha-field/);
   assert.match(source, /<select id="world_state_alpha_connection_profile"/);
@@ -361,6 +436,10 @@ test('host settings mount reuses Phase 6 panel without a second UI framework or 
   assert.match(source, /addEventListener\('focusin'/);
   assert.doesNotMatch(source, /Connection Profile ID <input/);
   assert.match(css, /world-state-alpha-settings-grid/);
+  assert.match(css, /world-state-alpha-settings-chevron/);
+  assert.match(css, /#world_state_alpha_settings:not\(\[open\]\) \.world-state-alpha-settings-body/);
+  assert.match(css, /#world_state_alpha_settings:not\(\[open\]\) \.world-state-alpha-settings-chevron/);
+  assert.match(css, /world-state-alpha-settings-head::-webkit-details-marker/);
   assert.match(css, /background:\s*var\(--black50a/);
   assert.match(css, /appearance:\s*textfield/);
   assert.match(css, /#world_state_alpha_open\.world-state-alpha-open/);

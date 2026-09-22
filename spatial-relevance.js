@@ -329,9 +329,11 @@ export function selectRelevantLocations(spatialState, {
   }
   for (const token of recentTokens) {
     visitPosting(spatialIndex.nameTokens.get(token), 30);
+    visitPosting(spatialIndex.contextTokens.get(token), 12);
   }
   for (const token of loreTokens) {
     visitPosting(spatialIndex.nameTokens.get(token), 15);
+    visitPosting(spatialIndex.contextTokens.get(token), 6);
   }
 
   // Score candidate records

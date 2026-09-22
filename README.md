@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.1 adds optional Spatial Continuity as a sibling to the unchanged Reality Core: campaign locations/relations/routes, read-only base-map adapters, deterministic coordinate authority/derivation, manual spatial editing, bounded spatial retrieval/injection, shared branch rollback, and writer-state evidence sanitation. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.2 hardens the Phase 9 Spatial Continuity release with production base-map host storage, reliable manual spatial editing, identity migration across SillyTavern rename/delete lifecycle events, stricter request isolation, and a collapsible settings card. Spatial Continuity remains a sibling to the unchanged Reality Core, and canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

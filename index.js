@@ -12,7 +12,7 @@ import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
 import { stableStringify } from './hash.js';
-import { getWorldStateChatIdentity, getWorldStateChatKey } from './host-identity.js';
+import { buildWorldStateChatKey, getWorldStateChatIdentity, getWorldStateChatKey } from './host-identity.js';
 import { createSillyTavernWorldStateStorageAdapter } from './host-storage.js';
 import { storeBaseMapSource, loadBaseMapSource } from './host-base-map.js';
 import {
@@ -37,7 +37,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.1';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.2';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -178,7 +178,12 @@ async function getChatBaseMap(chatKey, state) {
   const ref = state?.spatial?.baseMapRef;
   if (!ref?.id) return null;
   const cacheKey = baseMapCacheKey(ref);
-  if (cacheKey && baseMapCache.has(cacheKey)) return baseMapCache.get(cacheKey);
+  if (cacheKey && baseMapCache.has(cacheKey)) {
+    const cached = baseMapCache.get(cacheKey);
+    if (cached) return cached;
+    // Do not negatively cache a transient base-map read failure.
+    baseMapCache.delete(cacheKey);
+  }
 
   const settings = getWorldStateSettings();
   // A campaign-owned pointer with a path/digest wins over the optional host
@@ -196,9 +201,7 @@ async function getChatBaseMap(chatKey, state) {
       baseMapCache.set(baseMapCacheKey(pointer) || cacheKey, baseMap);
       return baseMap;
     }
-    if (cacheKey) baseMapCache.set(cacheKey, null);
   } catch (error) {
-    if (cacheKey) baseMapCache.set(cacheKey, null);
     console.warn('[World State Alpha] failed to load base map for chat', chatKey, error);
   }
   return null;
@@ -224,6 +227,12 @@ function resetSpatialRelevanceIndex(chatKey, spatialState, baseMap) {
 
 function epoch(chatKey) {
   return Number(stateEpochs.get(chatKey) || 0);
+}
+
+function invalidateChatOperations(chatKey = currentChatKey()) {
+  if (!chatKey || chatKey === 'no-chat') return;
+  stateEpochs.set(chatKey, epoch(chatKey) + 1);
+  cancelWorldStateRequests({ chatKey });
 }
 
 function setCachedState(chatKey, state, { indexMode = 'rebuild', indexDelta = null, spatialIndexDelta = null } = {}) {
@@ -300,6 +309,212 @@ async function loadChatState(chatKey) {
     throw error;
   }
   return normalizeState(payload.state, { strictSchema: true, chatKey });
+}
+
+function clearChatRuntimeState(chatKey) {
+  if (!chatKey || chatKey === 'no-chat') return;
+  cancelWorldStateRequests({ chatKey });
+  stateCache.delete(chatKey);
+  relevanceIndices.delete(chatKey);
+  spatialRelevanceIndices.delete(chatKey);
+  loadedChats.delete(chatKey);
+  hydrationErrors.delete(chatKey);
+  loadingChats.delete(chatKey);
+  branchDirtyChats.delete(chatKey);
+  stateEpochs.delete(chatKey);
+}
+
+async function migrateWorldStateChatKey(oldKey, newKey) {
+  if (!oldKey || oldKey === 'no-chat' || !newKey || newKey === 'no-chat' || oldKey === newKey) return true;
+
+  invalidateChatOperations(oldKey);
+  const settings = getWorldStateSettings();
+  const oldPointer = settings.dataFiles?.[oldKey] || null;
+  const newPointer = settings.dataFiles?.[newKey] || null;
+  if (newPointer) {
+    console.warn('[World State Alpha] identity migration refused because the destination already has World State:', newKey);
+    return false;
+  }
+
+  let sourceState = stateCache.get(oldKey) || null;
+  if (!sourceState && oldPointer?.path) {
+    const payload = await readSidecar({
+      adapter: hostStorage,
+      pointer: oldPointer,
+      expectedChatKey: oldKey,
+    });
+    sourceState = payload?.state || null;
+  }
+
+  if (!sourceState) {
+    if (oldPointer) {
+      console.warn('[World State Alpha] identity migration could not load the source sidecar:', oldKey);
+      return false;
+    }
+    return true;
+  }
+
+  const migrated = normalizeState(clone(sourceState), { strictSchema: true, chatKey: oldKey });
+  migrated.chatKey = newKey;
+  const committed = await writeSidecar({
+    adapter: hostStorage,
+    chatKey: newKey,
+    state: migrated,
+    pointer: null,
+    appVersion: WORLD_STATE_ALPHA_VERSION,
+  });
+
+  settings.dataFiles[newKey] = committed;
+  delete settings.dataFiles[oldKey];
+  persistHostSettings();
+
+  const wasLoaded = loadedChats.has(oldKey);
+  clearChatRuntimeState(oldKey);
+  setCachedState(newKey, migrated);
+  if (wasLoaded) loadedChats.add(newKey);
+  hydrationErrors.delete(newKey);
+  if (activeChatKey === oldKey) activeChatKey = newKey;
+  return true;
+}
+
+function characterOwnerKeyPrefix(ownerId) {
+  const probe = buildWorldStateChatKey('chat', ownerId, '__world_state_probe__');
+  const splitAt = probe.lastIndexOf(':');
+  return splitAt >= 0 ? probe.slice(0, splitAt + 1) : '';
+}
+
+async function handleCharacterRenamed(oldAvatar, newAvatar) {
+  const oldPrefix = characterOwnerKeyPrefix(oldAvatar);
+  const newPrefix = characterOwnerKeyPrefix(newAvatar);
+  if (!oldPrefix || !newPrefix || oldPrefix === newPrefix) return;
+
+  const settings = getWorldStateSettings();
+  const keys = new Set([
+    ...Object.keys(settings.dataFiles || {}),
+    ...stateCache.keys(),
+  ]);
+  for (const oldKey of keys) {
+    if (!oldKey.startsWith(oldPrefix)) continue;
+    const newKey = newPrefix + oldKey.slice(oldPrefix.length);
+    try {
+      const migrated = await migrateWorldStateChatKey(oldKey, newKey);
+      if (!migrated) notify('error', 'World State Alpha could not migrate one renamed character chat safely.');
+    } catch (error) {
+      console.error('[World State Alpha] character rename migration failed safely', error);
+      notify('error', 'World State Alpha could not migrate renamed character continuity safely.');
+    }
+  }
+}
+
+function handleCharacterDeleted(eventData = {}) {
+  const avatar = String(eventData?.character?.avatar || eventData?.avatar || '').trim();
+  const prefix = characterOwnerKeyPrefix(avatar);
+  if (!prefix) return;
+
+  const settings = getWorldStateSettings();
+  const keys = new Set([
+    ...Object.keys(settings.dataFiles || {}),
+    ...stateCache.keys(),
+  ]);
+  let settingsChanged = false;
+  for (const chatKey of keys) {
+    if (!chatKey.startsWith(prefix)) continue;
+    invalidateChatOperations(chatKey);
+    if (settings.dataFiles?.[chatKey]) {
+      delete settings.dataFiles[chatKey];
+      settingsChanged = true;
+    }
+    clearChatRuntimeState(chatKey);
+    if (activeChatKey === chatKey) activeChatKey = 'no-chat';
+  }
+  if (settingsChanged) persistHostSettings();
+}
+
+async function handleChatRenamed(eventData = {}) {
+  const oldChatId = String(eventData?.oldFileName || '').replace(/\.jsonl$/i, '').trim();
+  const newChatId = String(eventData?.newFileName || '').replace(/\.jsonl$/i, '').trim();
+  if (!oldChatId || !newChatId || oldChatId === newChatId) return;
+
+  const hasGroup = eventData?.groupId !== undefined
+    && eventData?.groupId !== null
+    && String(eventData.groupId).trim() !== '';
+  const identity = currentChatIdentity();
+  const kind = hasGroup ? 'group' : 'chat';
+  const ownerId = hasGroup
+    ? String(eventData.groupId).trim()
+    : String(eventData?.avatarId || identity.ownerId || '').trim();
+  if (!ownerId) return;
+
+  const oldKey = buildWorldStateChatKey(kind, ownerId, oldChatId);
+  const newKey = buildWorldStateChatKey(kind, ownerId, newChatId);
+  try {
+    const migrated = await migrateWorldStateChatKey(oldKey, newKey);
+    if (!migrated) {
+      notify('error', 'World State Alpha could not migrate the renamed chat because the destination already has continuity data.');
+      return;
+    }
+    if (currentChatKey() === newKey) await activateCurrentChat();
+  } catch (error) {
+    console.error('[World State Alpha] chat rename migration failed safely', error);
+    notify('error', 'World State Alpha could not migrate renamed chat continuity safely.');
+  }
+}
+
+function matchingWorldStateChatKeys(kind, chatId) {
+  if (!['chat', 'group'].includes(kind)) return [];
+  const probe = buildWorldStateChatKey(kind, '__world_state_owner_probe__', chatId);
+  const splitAt = probe.indexOf(':', probe.indexOf(':') + 1);
+  const suffix = splitAt >= 0 ? probe.slice(splitAt) : '';
+  if (!suffix) return [];
+
+  const settings = getWorldStateSettings();
+  const keys = new Set([
+    ...Object.keys(settings.dataFiles || {}),
+    ...stateCache.keys(),
+  ]);
+  return [...keys].filter(key => key.startsWith(kind + ':') && key.endsWith(suffix));
+}
+
+function removeWorldStateChatOwnership(chatKey) {
+  if (!chatKey || chatKey === 'no-chat') return;
+  const settings = getWorldStateSettings();
+  invalidateChatOperations(chatKey);
+  if (settings.dataFiles?.[chatKey]) {
+    delete settings.dataFiles[chatKey];
+    persistHostSettings();
+  }
+  clearChatRuntimeState(chatKey);
+  if (activeChatKey === chatKey) activeChatKey = 'no-chat';
+}
+
+function handleChatDeleted(eventData, forcedKind = 'chat') {
+  const deletedChatId = String(
+    typeof eventData === 'string'
+      ? eventData
+      : (eventData?.chatId || eventData?.fileName || eventData?.oldFileName || ''),
+  ).replace(/\.jsonl$/i, '').trim();
+  if (!deletedChatId) return;
+
+  const eventObject = eventData && typeof eventData === 'object' ? eventData : null;
+  const kind = forcedKind === 'group' || eventObject?.groupId ? 'group' : 'chat';
+  const explicitOwnerId = kind === 'group'
+    ? String(eventObject?.groupId || '').trim()
+    : String(eventObject?.avatarId || eventObject?.avatar || '').trim();
+
+  if (explicitOwnerId) {
+    removeWorldStateChatOwnership(buildWorldStateChatKey(kind, explicitOwnerId, deletedChatId));
+    return;
+  }
+
+  // SillyTavern 1.18 emits CHAT_DELETED / GROUP_CHAT_DELETED as a bare
+  // chat name in several paths. Never guess the owner from the currently
+  // selected chat because deletion may target a different character/group.
+  const candidates = matchingWorldStateChatKeys(kind, deletedChatId);
+  if (candidates.length === 1) {
+    removeWorldStateChatOwnership(candidates[0]);
+  } else if (candidates.length > 1) {
+    console.warn('[World State Alpha] delete event owner is ambiguous; preserved pointers fail-closed:', kind, deletedChatId);
+  }
 }
 
 async function ensureChatStateLoaded(chatKey = currentChatKey()) {
@@ -533,6 +748,8 @@ async function handleAssistantMessage(messageId) {
   await queueChatWork(chatKey, async () => {
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+    const liveSettings = getWorldStateSettings();
+    if (!liveSettings.enabled || !liveSettings.autoCapture) return;
     const branch = extendCurrentBranchFast(chatKey)
       || await reconcileCurrentBranch(chatKey, { persistRestore: true });
     if (branch?.failClosed) {
@@ -559,7 +776,7 @@ async function handleAssistantMessage(messageId) {
 
     let visibleLocations = [];
     let baseMap = null;
-    let spatialCaptureEnabled = Boolean(settings.spatialEnabled);
+    let spatialCaptureEnabled = Boolean(liveSettings.spatialEnabled);
     if (spatialCaptureEnabled) {
       baseMap = await getChatBaseMap(chatKey, before);
       if (before.spatial?.baseMapRef?.id && !baseMap) {
@@ -625,9 +842,16 @@ async function handleUserMessage(messageId) {
   await queueChatWork(chatKey, async () => {
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+    if (!getWorldStateSettings().enabled) {
+      clearPrivatePrompt();
+      return;
+    }
     const branch = extendCurrentBranchFast(chatKey)
       || await reconcileCurrentBranch(chatKey, { persistRestore: true });
-    if (branch?.failClosed || (!getWorldStateSettings().inject && !getWorldStateSettings().spatialInject)) {
+    // Reality evolution belongs to Reality injection only. Spatial-only
+    // injection is local retrieval and must never trigger a Reality provider call.
+    const liveSettings = getWorldStateSettings();
+    if (!liveSettings.enabled || branch?.failClosed || !liveSettings.inject) {
       updatePrivateInjection();
       refreshPanel();
       return;
@@ -781,11 +1005,13 @@ function syncSettingsControls() {
 }
 
 function buildSettingsCard() {
-  const section = document.createElement('section');
+  const section = document.createElement('details');
   section.id = WORLD_STATE_SETTINGS_ID;
   section.className = 'world-state-alpha-settings';
+  section.open = true;
   section.innerHTML = [
-    '<div class="world-state-alpha-settings-head"><div><strong>World State Alpha</strong><small>World continuity</small></div><span>v' + WORLD_STATE_ALPHA_VERSION + '</span></div>',
+    '<summary class="world-state-alpha-settings-head"><div><strong>World State Alpha</strong><small>World continuity</small></div><span class="world-state-alpha-settings-meta">v' + WORLD_STATE_ALPHA_VERSION + '<span class="world-state-alpha-settings-chevron" aria-hidden="true">▾</span></span></summary>',
+    '<div class="world-state-alpha-settings-body">',
     '<div class="world-state-alpha-settings-group">',
     '<div class="world-state-alpha-settings-group-head"><strong>Continuity</strong><span>Capture and inject established world state.</span></div>',
     '<label class="world-state-alpha-toggle"><input id="world_state_alpha_enabled" type="checkbox"><span>Enable World State Alpha</span></label>',
@@ -804,6 +1030,7 @@ function buildSettingsCard() {
     '<label class="world-state-alpha-field"><span>Spatial injection budget</span><input id="world_state_alpha_spatial_inject_budget" type="number" min="1" max="2400" step="1"></label>',
     '</div>',
     '<button id="world_state_alpha_open" type="button" class="menu_button world-state-alpha-open">Open World State</button>',
+    '</div>',
   ].join('');
   return section;
 }
@@ -854,6 +1081,18 @@ function bindSettingsEvents() {
     else if (target.id === 'world_state_alpha_spatial_inject') settings.spatialInject = Boolean(target.checked);
     else if (target.id === 'world_state_alpha_spatial_inject_budget') settings.spatialInjectBudgetTokens = Math.max(1, Math.min(2400, Math.trunc(Number(target.value) || 500)));
     else return;
+
+    if ([
+      'world_state_alpha_enabled',
+      'world_state_alpha_auto_capture',
+      'world_state_alpha_inject',
+      'world_state_alpha_connection_profile',
+      'world_state_alpha_spatial_enabled',
+      'world_state_alpha_spatial_inject',
+    ].includes(target.id)) {
+      invalidateChatOperations();
+    }
+
     persistHostSettings();
     syncSettingsControls();
 
@@ -927,6 +1166,10 @@ function chooseImportFile() {
 async function applyMaintenanceAction(actionId) {
   const chatKey = currentChatKey();
   if (chatKey === 'no-chat') return;
+  return queueChatWork(chatKey, () => applyMaintenanceActionNow(actionId, chatKey));
+}
+
+async function applyMaintenanceActionNow(actionId, chatKey) {
   await ensureChatStateLoaded(chatKey);
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
   const state = stateCache.get(chatKey);
@@ -942,6 +1185,7 @@ async function applyMaintenanceAction(actionId) {
     const file = await chooseImportFile();
     if (!file || currentChatKey() !== chatKey) return;
     const text = await file.text();
+    if (currentChatKey() !== chatKey) return;
     const preview = previewWorldStateImport(text, { targetChatKey: chatKey });
     if (!window.confirm('Import this World State bundle into the current chat? Existing World State records will be replaced after confirmation.')) return;
     const next = seedRootCheckpoint(applyWorldStateImport(preview, { confirmed: true }));
@@ -980,6 +1224,11 @@ async function applyMaintenanceAction(actionId) {
       && stableStringify(chatLineage(getContext().chat || [])) === startLineage;
     const settings = getWorldStateSettings();
     const baseMap = await getChatBaseMap(chatKey, state);
+    if (!isCurrent()) return;
+    if (settings.spatialEnabled && state.spatial?.baseMapRef?.id && !baseMap) {
+      notify('error', 'Rebuild paused because the attached Spatial base map is unavailable. Reattach or restore the base map first.');
+      return;
+    }
     const result = await runManualRebuild({
       ctx: getContext(),
       state,
@@ -1007,10 +1256,15 @@ async function applyMaintenanceAction(actionId) {
 async function applySpatialAction(actionId, payload = {}) {
   const chatKey = currentChatKey();
   if (chatKey === 'no-chat') return;
+  return queueChatWork(chatKey, () => applySpatialActionNow(actionId, payload, chatKey));
+}
+
+async function applySpatialActionNow(actionId, payload, chatKey) {
   await ensureChatStateLoaded(chatKey);
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
   const state = stateCache.get(chatKey);
   const baseMap = await getChatBaseMap(chatKey, state);
+  if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
   const chat = getContext().chat || [];
   const messageId = chat.length ? chat.length - 1 : null;
 
@@ -1411,6 +1665,11 @@ function registerEvents() {
   if (events.MESSAGE_SENT) source.on(events.MESSAGE_SENT, messageId => handleUserMessage(messageId));
   if (events.CHAT_LOADED) source.on(events.CHAT_LOADED, () => activateCurrentChat());
   if (events.CHAT_CHANGED) source.on(events.CHAT_CHANGED, () => activateCurrentChat());
+  if (events.CHARACTER_RENAMED) source.on(events.CHARACTER_RENAMED, (oldAvatar, newAvatar) => handleCharacterRenamed(oldAvatar, newAvatar));
+  if (events.CHARACTER_DELETED) source.on(events.CHARACTER_DELETED, eventData => handleCharacterDeleted(eventData));
+  if (events.CHAT_RENAMED) source.on(events.CHAT_RENAMED, eventData => handleChatRenamed(eventData));
+  if (events.CHAT_DELETED) source.on(events.CHAT_DELETED, eventData => handleChatDeleted(eventData));
+  if (events.GROUP_CHAT_DELETED) source.on(events.GROUP_CHAT_DELETED, eventData => handleChatDeleted(eventData, 'group'));
 
   for (const name of ['MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
     if (events[name]) source.on(events[name], () => handleBranchChange());

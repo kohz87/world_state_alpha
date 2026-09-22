@@ -193,6 +193,7 @@ Deliverables:
 - Spatial UI/manual add/edit/lock/archive/delete/merge/override/relation/route-association controls
 - branch-journal/rollback/export/import/rebuild integration
 - v0.9.0-alpha.1 version synchronization and release documentation
+- v0.9.0-alpha.2 continuity hardening: production base-map host storage, Spatial editor correctness, host identity migration, runtime cancellation/serialization, retrieval/rebuild recovery, and collapsible settings
 
 Acceptance:
 

@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-The design and runtime candidate are accepted and **Phases 1-9** are implemented. Phase 9 / 0.9.0-alpha.1 adds optional Spatial Continuity as a sibling subsystem with its own semantic reducer. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope versions remain 1. Spatial may share per-chat persistence, branch ownership, diagnostics, provider routing, settings and UI shell, but it must not become a third Reality Core record kind, mutate base-map sources, add Story Director behavior, or modify Megumin/Ukiyo.
+The design and runtime candidate are accepted and **Phases 1-9** are implemented. Phase 9 introduced optional Spatial Continuity in 0.9.0-alpha.1; the current 0.9.0-alpha.2 candidate hardens that subsystem and its SillyTavern host lifecycle without changing its architectural boundary. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope versions remain 1. Spatial may share per-chat persistence, branch ownership, diagnostics, provider routing, settings and UI shell, but it must not become a third Reality Core record kind, mutate base-map sources, add Story Director behavior, or modify Megumin/Ukiyo.
 
 ## Product boundary
 

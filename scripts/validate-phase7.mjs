@@ -35,7 +35,7 @@ for (const file of inventory.modules) {
   await import(new URL('../' + file, import.meta.url));
 }
 
-if (!['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1'].includes(pkg.version) || manifest.version !== pkg.version) {
+if (!['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2'].includes(pkg.version) || manifest.version !== pkg.version) {
   throw new Error('Phase 7 application version markers are inconsistent');
 }
 if (manifest.display_name !== 'World State Alpha'
@@ -98,6 +98,11 @@ for (const event of [
   'MESSAGE_SENT',
   'CHAT_LOADED',
   'CHAT_CHANGED',
+  'CHARACTER_RENAMED',
+  'CHARACTER_DELETED',
+  'CHAT_RENAMED',
+  'CHAT_DELETED',
+  'GROUP_CHAT_DELETED',
   'MESSAGE_EDITED',
   'MESSAGE_DELETED',
   'MESSAGE_SWIPED',
