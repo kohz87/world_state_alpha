@@ -224,15 +224,20 @@ function projectDiagnostics(rows) {
       const item = sanitizeCaptureDiagnostic(raw);
       return {
         at: item.at,
+        label: clean(item.label, 48),
         sourceMessageId: item.sourceMessageId,
         outcome: clean(item.outcome, 48) || 'unknown',
         code: clean(item.code, 80),
+        detail: clean(item.detail, 320),
         route: clean(item.route, 24),
         providerCalls: item.providerCalls,
         proposed: item.proposed,
         accepted: item.accepted,
         applied: item.applied,
         rejected: item.rejected,
+        aliasRepairs: item.aliasRepairs,
+        processedBoundaries: item.processedBoundaries,
+        totalBoundaries: item.totalBoundaries,
         candidateRecords: item.candidateRecords,
         promptChars: item.promptChars,
         responseChars: item.responseChars,
@@ -735,15 +740,26 @@ function diagnosticsHtml(model) {
   const rows = model.diagnostics.length
     ? model.diagnostics.map(item => {
       const code = item.code ? '<span>' + escapeHtml(item.code) + '</span>' : '';
+      const label = item.label ? '<span>' + escapeHtml(item.label) + '</span>' : '';
+      const detail = item.detail ? '<p class="wsa-diagnostic-detail">' + escapeHtml(item.detail) + '</p>' : '';
       const message = item.sourceMessageId === null ? 'n/a' : item.sourceMessageId;
+      const progress = item.totalBoundaries > 0
+        ? '<div><dt>Progress</dt><dd>' + item.processedBoundaries + '/' + item.totalBoundaries + '</dd></div>'
+        : '';
+      const repairs = item.aliasRepairs > 0
+        ? '<div><dt>Alias repairs</dt><dd>' + item.aliasRepairs + '</dd></div>'
+        : '';
       return '<article class="wsa-diagnostic">' +
-        '<div><strong>' + escapeHtml(item.outcome) + '</strong>' + code + '</div>' +
+        '<div><strong>' + escapeHtml(item.outcome) + '</strong>' + label + code + '</div>' +
+        detail +
         '<dl>' +
         '<div><dt>Message</dt><dd>' + message + '</dd></div>' +
         '<div><dt>Route</dt><dd>' + escapeHtml(item.route || 'local/default') + '</dd></div>' +
         '<div><dt>Calls</dt><dd>' + item.providerCalls + '</dd></div>' +
         '<div><dt>Applied</dt><dd>' + item.applied + '</dd></div>' +
         '<div><dt>Rejected</dt><dd>' + item.rejected + '</dd></div>' +
+        repairs +
+        progress +
         '<div><dt>Duration</dt><dd>' + item.durationMs + ' ms</dd></div>' +
         '</dl></article>';
     }).join('')
@@ -751,7 +767,7 @@ function diagnosticsHtml(model) {
 
   return '<section class="wsa-view wsa-single-pane" aria-label="Diagnostics">' +
     '<div class="wsa-section-head"><div><h2>Diagnostics</h2>' +
-    '<p>Bounded operational telemetry only. Story text, prompts, credentials, and provider payloads are not shown.</p></div></div>' +
+    '<p>Bounded operational telemetry only. Rebuild failures include a safe structural reason and boundary progress; story text, prompts, credentials, and provider payloads are not shown.</p></div></div>' +
     '<div class="wsa-diagnostics">' + rows + '</div></section>';
 }
 

@@ -301,10 +301,17 @@ test('diagnostic projection is allowlisted and drops private unexpected fields',
   const model = buildWorldStateUiModel(fixtureState(), {
     diagnostics: [{
       operationId: 'op',
-      outcome: 'success',
+      label: 'rebuild',
+      outcome: 'rebuild-failed',
+      code: 'WORLD_STATE_REBUILD_REALITY_WIRE_INVALID',
+      detail: 'rebuild rejected structurally invalid Reality mutation row 0: create mutation requires kind=fact|development',
       sourceMessageId: 8,
       providerCalls: 1,
       applied: 2,
+      rejected: 1,
+      aliasRepairs: 2,
+      processedBoundaries: 3,
+      totalBoundaries: 5,
       prompt: 'raw prompt',
       response: 'raw response',
       storyTranscript: 'story',
@@ -313,7 +320,17 @@ test('diagnostic projection is allowlisted and drops private unexpected fields',
   });
   assert.equal(model.diagnostics.length, 1);
   const row = model.diagnostics[0];
-  assert.equal(row.outcome, 'success');
+  assert.equal(row.outcome, 'rebuild-failed');
+  assert.equal(row.label, 'rebuild');
+  assert.match(row.detail, /structurally invalid Reality mutation row/);
+  assert.equal(row.aliasRepairs, 2);
+  assert.equal(row.processedBoundaries, 3);
+  assert.equal(row.totalBoundaries, 5);
+  const html = renderWorldStatePanel(model, { activeTab: 'diagnostics' });
+  assert.match(html, /WORLD_STATE_REBUILD_REALITY_WIRE_INVALID/);
+  assert.match(html, /Progress/);
+  assert.match(html, /3\/5/);
+  assert.match(html, /Alias repairs/);
   assert.equal(Object.hasOwn(row, 'prompt'), false);
   assert.equal(Object.hasOwn(row, 'response'), false);
   assert.equal(Object.hasOwn(row, 'storyTranscript'), false);

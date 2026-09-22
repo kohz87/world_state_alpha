@@ -267,7 +267,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -513,10 +513,19 @@ test('host rebuild never persists or reports success before completed outcome ga
   const body = source.slice(actionAt, end);
   const gateAt = body.indexOf("if (result.outcome !== 'completed' || !isCurrent())");
   const persistAt = body.indexOf('await persistState(chatKey, result.state)');
-  const successAt = body.indexOf("notify('success', 'World State Alpha rebuild completed.')");
-  const failureAt = body.indexOf("notify('error', 'World State Alpha rebuild did not complete; canonical state was left unchanged.')");
-  assert.ok(gateAt >= 0 && failureAt > gateAt && persistAt > failureAt && successAt > persistAt);
+  const failureAt = body.indexOf("outcome: 'rebuild-failed'", gateAt);
+  const persistFailureAt = body.indexOf("outcome: 'rebuild-persist-failed'", persistAt);
+  const successAt = body.indexOf("outcome: 'rebuild-completed'", persistFailureAt);
+  assert.ok(gateAt >= 0 && failureAt > gateAt && persistAt > failureAt && persistFailureAt > persistAt && successAt > persistFailureAt);
   assert.match(body.slice(gateAt, persistAt), /return;/);
+  assert.match(body, /notify\('info', 'World State Alpha rebuild started/);
+  assert.match(body, /notify\([\s\S]*'success'[\s\S]*World State Alpha rebuild completed:/);
+  assert.match(body, /diagnostics:\s*diagnosticStore/);
+  assert.match(body, /outcome:\s*'rebuild-started'/);
+  assert.match(body, /outcome:\s*'rebuild-completed'/);
+  assert.match(body, /aliasRepairs/);
+  assert.match(body, /current records/);
+  assert.match(body, /places/);
 });
 
 test('host publishes mutated canonical state only after durable sidecar success', () => {
@@ -539,7 +548,7 @@ test('host publishes mutated canonical state only after durable sidecar success'
   );
   assert.match(
     source,
-    /if \(result\.outcome !== 'completed'[\s\S]*await persistState\(chatKey, result\.state\);\s*setCachedState\(chatKey, result\.state\);/,
+    /if \(result\.outcome !== 'completed'[\s\S]*await persistState\(chatKey, result\.state\);[\s\S]*setCachedState\(chatKey, result\.state\);/,
   );
   assert.match(
     source,

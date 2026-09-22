@@ -11,6 +11,7 @@ import { clone, reduceMutations } from './state-core.js';
 
 export const CAPTURE_DEFAULT_INTERVAL = 1;
 export const CAPTURE_RESPONSE_TOKENS = 2200;
+const REALITY_MUTATION_SHAPE = '{"action":"create|update|resolve|supersede","recordId":"existing-id-for-non-create","kind":"fact|development-for-create","summary":"compact current state","status":"active|resolved when creating","trend":"emerging|rising|stable|falling|uncertain when useful","anchors":["concept"],"reason":"grounded reason","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from current exchange"}],"relatedRecordIds":["visible-id"],"newEpisodeOfRecordId":"optional visible resolved/superseded id"}';
 export const CAPTURE_LIMITS = Object.freeze({
   exchangeMessages: 4,
   exchangeChars: 12000,
@@ -32,6 +33,7 @@ export const CAPTURE_SYSTEM_PROMPT = [
   'Never invent off-screen developments, outcomes, consequences, or causal links.',
   'For every non-noop mutation, cite 1-4 short verbatim excerpts from CURRENT EXCHANGE using sourceMessageId.',
   'Use shown record IDs only for update/resolve/supersede/related links. Never create an ID.',
+  'Reality mutation field names are exact: use kind and summary. Never substitute category for kind or description for summary.',
   'Use resolve/supersede for lifecycle changes; do not smuggle them through update.',
   'Prefer updating an existing matching record. If nothing material changed, return {"mutations":[]}.',
 ].join(' ');
@@ -151,8 +153,8 @@ export function buildCapturePrompt({
     spatialEnabled ? JSON.stringify(spatialProfile || null) : '',
     'OUTPUT SHAPE:',
     spatialEnabled
-      ? '{"mutations":[...Reality mutations...],"spatialMutations":[{"action":"upsert_location|upsert_relation|upsert_route","locationId":"visible existing id only when updating","name":"grounded persistent place name","type":"generic place type","context":"established context","coordinate":{"x":1.2,"y":3.4,"authority":"narrative_explicit"},"relative":{"toLocationId":"visible anchor id","direction":"east","distanceKm":10,"distanceMode":"straight_line|route|unspecified"},"routeRefs":["visible route"],"admissionReason":"named|explicit_position|explicit_coordinate|revisited|persistent_feature|route_landmark|material_event","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from CURRENT EXCHANGE"}]}]}'
-      : '{"mutations":[{"action":"create|update|resolve|supersede","recordId":"existing-id-for-non-create","kind":"fact|development-for-create","summary":"compact current state","status":"active|resolved when creating","trend":"emerging|rising|stable|falling|uncertain when useful","anchors":["concept"],"reason":"grounded reason","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from current exchange"}],"relatedRecordIds":["visible-id"],"newEpisodeOfRecordId":"optional visible resolved/superseded id"}]}',
+      ? '{"mutations":[' + REALITY_MUTATION_SHAPE + '],"spatialMutations":[{"action":"upsert_location|upsert_relation|upsert_route","locationId":"visible existing id only when updating","name":"grounded persistent place name","type":"generic place type","context":"established context","coordinate":{"x":1.2,"y":3.4,"authority":"narrative_explicit"},"relative":{"toLocationId":"visible anchor id","direction":"east","distanceKm":10,"distanceMode":"straight_line|route|unspecified"},"routeRefs":["visible route"],"admissionReason":"named|explicit_position|explicit_coordinate|revisited|persistent_feature|route_landmark|material_event","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from CURRENT EXCHANGE"}]}]}'
+      : '{"mutations":[' + REALITY_MUTATION_SHAPE + ']}',
     spatialEnabled
       ? 'Spatial rules: track only persistent established places; never capture generic scenery. Planning/writer_state is not evidence. Do not invent precise coordinates. Route/travel distance is not straight-line displacement. Never assign manual/base/campaign_override authority. If no spatial change return spatialMutations:[] alongside mutations.'
       : '',
@@ -327,6 +329,7 @@ export function processCaptureResponse({
     rejected,
     indexDelta: reduced.indexDelta || { upsertedRecords: [], appendedLinks: [], corpusRecords: nextState.records.length },
     spatial: spatialResult,
+    aliasRepairs: wire.aliasRepairs || 0,
   };
 }
 
@@ -407,9 +410,11 @@ export async function runCaptureOperation({
     const outcome = stale ? 'stale' : (receipt.outcome || 'failure');
     diagnosticStore.record(chatKey, {
       operationId,
+      label,
       sourceMessageId,
       outcome,
       code: error?.code || 'PROVIDER_ERROR',
+      detail: String(error?.message || error).slice(0, 320),
       route: receipt.route || '',
       profileId: receipt.profileId || '',
       providerCalls,
@@ -433,9 +438,11 @@ export async function runCaptureOperation({
   if (!current()) {
     diagnosticStore.record(chatKey, {
       operationId,
+      label,
       sourceMessageId,
       outcome: 'stale',
       code: 'WORLD_STATE_CAPTURE_STALE',
+      detail: 'Operation became stale before provider output could be applied.',
       route: dispatched.receipt?.route || '',
       profileId: dispatched.receipt?.profileId || '',
       providerCalls: 1,
@@ -468,8 +475,13 @@ export async function runCaptureOperation({
     const outcome = (processed.applied.length + spatialApplied) > 0 ? 'applied' : 'no-change';
     diagnosticStore.record(chatKey, {
       operationId,
+      label,
       sourceMessageId,
       outcome,
+      code: processed.aliasRepairs ? 'WORLD_STATE_PROVIDER_ALIAS_REPAIRED' : '',
+      detail: processed.aliasRepairs
+        ? `Repaired ${processed.aliasRepairs} unambiguous provider field alias${processed.aliasRepairs === 1 ? '' : 'es'} before validation.`
+        : '',
       route: dispatched.receipt?.route || '',
       profileId: dispatched.receipt?.profileId || '',
       providerCalls: 1,
@@ -477,6 +489,7 @@ export async function runCaptureOperation({
       accepted: processed.acceptedCount + (processed.spatial?.acceptedCount || 0),
       applied: processed.applied.length + spatialApplied,
       rejected: processed.rejected.length + spatialRejected,
+      aliasRepairs: processed.aliasRepairs || 0,
       candidateRecords: Math.min(visibleRecords.length, CAPTURE_LIMITS.visibleRecords),
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,
@@ -487,9 +500,11 @@ export async function runCaptureOperation({
     if (!(error instanceof CaptureWireError)) throw error;
     diagnosticStore.record(chatKey, {
       operationId,
+      label,
       sourceMessageId,
       outcome: 'invalid-response',
       code: error.code,
+      detail: String(error.message || error).slice(0, 320),
       route: dispatched.receipt?.route || '',
       profileId: dispatched.receipt?.profileId || '',
       providerCalls: 1,

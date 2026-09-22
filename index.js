@@ -39,7 +39,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.7';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.8';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1773,8 +1773,10 @@ async function applyMaintenanceActionNow(actionId, chatKey) {
     if (!window.confirm('Rebuild World State Alpha from this chat chronology? This is an explicit provider-backed recovery operation.')) return;
     const chat = getContext().chat || [];
     const sourceMessageId = Math.max(0, chat.length - 1);
+    const totalBoundaries = chat.filter(message => messageRole(message) === 'assistant' && messageText(message).trim()).length;
     const startEpoch = epoch(chatKey);
     const startLineage = stableStringify(chatLineage(chat));
+    const operationId = 'rebuild:' + sourceMessageId + ':' + startEpoch;
     const isCurrent = () => currentChatKey() === chatKey
       && epoch(chatKey) === startEpoch
       && stableStringify(chatLineage(getContext().chat || [])) === startLineage;
@@ -1785,27 +1787,133 @@ async function applyMaintenanceActionNow(actionId, chatKey) {
       notify('error', 'Rebuild paused because the attached Spatial base map is unavailable. Reattach or restore the base map first.');
       return;
     }
-    const result = await runManualRebuild({
-      ctx: getContext(),
-      state,
-      chat,
-      chatKey,
-      route: routeSettings(),
-      operationId: 'rebuild:' + sourceMessageId + ':' + startEpoch,
-      isCurrent,
-      spatialEnabled: Boolean(settings.spatialEnabled),
-      baseMap,
-      spatialProfile: state.spatial?.profile,
+
+    diagnosticStore.record(chatKey, {
+      operationId,
+      label: 'rebuild',
+      sourceMessageId,
+      outcome: 'rebuild-started',
+      totalBoundaries,
+      detail: 'Explicit chronological rebuild started; canonical state will change only after full success.',
     });
-    if (result.outcome !== 'completed' || !isCurrent()) {
-      notify('error', 'World State Alpha rebuild did not complete; canonical state was left unchanged.');
+    refreshPanel();
+    notify('info', 'World State Alpha rebuild started (' + totalBoundaries + ' assistant boundaries).');
+
+    let result;
+    try {
+      result = await runManualRebuild({
+        ctx: getContext(),
+        state,
+        chat,
+        chatKey,
+        route: routeSettings(),
+        operationId,
+        isCurrent,
+        diagnostics: diagnosticStore,
+        spatialEnabled: Boolean(settings.spatialEnabled),
+        baseMap,
+        spatialProfile: state.spatial?.profile,
+      });
+    } catch (error) {
+      const detail = String(error?.message || error || 'unexpected rebuild failure').slice(0, 320);
+      diagnosticStore.record(chatKey, {
+        operationId,
+        label: 'rebuild',
+        sourceMessageId,
+        outcome: 'rebuild-failed',
+        code: error?.code || 'WORLD_STATE_REBUILD_EXCEPTION',
+        detail,
+        totalBoundaries,
+      });
+      refreshPanel();
+      notify('error', 'World State Alpha rebuild failed: ' + detail + ' Canonical state was left unchanged.');
       return;
     }
-    await persistState(chatKey, result.state);
+
+    const receipts = Array.isArray(result.receipts) ? result.receipts : [];
+    const applied = receipts.reduce((sum, item) => sum + (Number(item?.applied) || 0), 0);
+    const rejected = receipts.reduce((sum, item) => sum + (Number(item?.rejected) || 0), 0);
+    const aliasRepairs = receipts.reduce((sum, item) => sum + (Number(item?.aliasRepairs) || 0), 0);
+    const failedReceipt = receipts.slice().reverse().find(item => item?.messageId === result.failedBoundary) || receipts.at(-1) || null;
+    const firstRejection = failedReceipt?.rejections?.[0];
+    const failureDetail = String(
+      result.errorMessage
+      || firstRejection?.reason
+      || result.errorCode
+      || result.outcome
+      || 'rebuild did not complete',
+    ).slice(0, 320);
+
+    if (result.outcome !== 'completed' || !isCurrent()) {
+      diagnosticStore.record(chatKey, {
+        operationId,
+        label: 'rebuild',
+        sourceMessageId: Number.isInteger(result.failedBoundary) ? result.failedBoundary : sourceMessageId,
+        outcome: 'rebuild-failed',
+        code: result.errorCode || (isCurrent() ? 'WORLD_STATE_REBUILD_INCOMPLETE' : 'WORLD_STATE_REBUILD_STALE'),
+        detail: failureDetail,
+        providerCalls: result.providerCalls || 0,
+        applied,
+        rejected,
+        aliasRepairs,
+        processedBoundaries: result.processedBoundaries || 0,
+        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+      });
+      refreshPanel();
+      const atBoundary = Number.isInteger(result.failedBoundary) ? ' at message ' + result.failedBoundary : '';
+      notify('error', 'World State Alpha rebuild failed' + atBoundary + ': ' + failureDetail + '. Canonical state was left unchanged.');
+      return;
+    }
+
+    try {
+      await persistState(chatKey, result.state);
+    } catch (error) {
+      const detail = String(error?.message || error || 'persistence failure').slice(0, 320);
+      diagnosticStore.record(chatKey, {
+        operationId,
+        label: 'rebuild',
+        sourceMessageId,
+        outcome: 'rebuild-persist-failed',
+        code: error?.code || 'WORLD_STATE_REBUILD_PERSIST_FAILURE',
+        detail,
+        providerCalls: result.providerCalls || 0,
+        applied,
+        rejected,
+        aliasRepairs,
+        processedBoundaries: result.processedBoundaries || 0,
+        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+      });
+      refreshPanel();
+      notify('error', 'World State Alpha rebuild finished extraction but could not persist it: ' + detail + '. Canonical state was left unchanged.');
+      return;
+    }
+
     setCachedState(chatKey, result.state);
+    const currentCount = (result.state.records || []).filter(record => record?.status === 'active').length;
+    const placeCount = resolveEffectiveLocations(result.state.spatial, baseMap).length;
+    diagnosticStore.record(chatKey, {
+      operationId,
+      label: 'rebuild',
+      sourceMessageId,
+      outcome: 'rebuild-completed',
+      code: aliasRepairs ? 'WORLD_STATE_REBUILD_ALIAS_REPAIRED' : '',
+      detail: 'Rebuild completed and persisted: ' + currentCount + ' current records, ' + placeCount + ' places.',
+      providerCalls: result.providerCalls || 0,
+      applied,
+      rejected,
+      aliasRepairs,
+      processedBoundaries: result.processedBoundaries || 0,
+      totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+    });
     updatePrivateInjection();
     refreshPanel();
-    notify('success', 'World State Alpha rebuild completed.');
+    notify(
+      'success',
+      'World State Alpha rebuild completed: '
+        + (result.processedBoundaries || 0) + '/' + (result.plan?.assistantBoundaries ?? totalBoundaries)
+        + ' boundaries, ' + currentCount + ' current records, ' + placeCount + ' places.'
+        + (aliasRepairs ? ' Repaired ' + aliasRepairs + ' provider field alias' + (aliasRepairs === 1 ? '.' : 'es.') : ''),
+    );
   }
 }
 

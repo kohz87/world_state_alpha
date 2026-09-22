@@ -41,14 +41,33 @@ function isGenericScenery(name) {
   return GENERIC_SCENERY.has(n);
 }
 
+const GENERIC_PLACE_WORDS = new Set([
+  'road', 'street', 'lane', 'trail', 'path', 'track', 'bridge', 'ford',
+  'culvert', 'ditch', 'ditchline', 'river', 'stream', 'canal', 'harbor',
+  'harbour', 'yard', 'stockyard', 'market', 'square', 'gate', 'hall',
+  'inn', 'tavern', 'village', 'town', 'city', 'camp', 'ruin', 'shrine',
+]);
+
 function locationNameGrounded(name, evidence, exchangeById) {
   const needle = norm(name);
   if (!needle) return false;
+  const nameTokens = needle.split(' ').filter(Boolean);
+  const distinctive = nameTokens.filter(token => token.length >= 3 && !GENERIC_PLACE_WORDS.has(token));
+
   for (const item of evidence || []) {
     const source = exchangeById.get(item.sourceMessageId);
     if (!source) continue;
     const haystack = norm(source.text);
     if (needle.length >= 2 && haystack.includes(needle)) return true;
+
+    // Conservative compositional grounding for provider-normalized names such
+    // as "Applecross Culvert" when one accepted quote says
+    // "Applecross ... the culvert". Every proposed token must occur in that
+    // same grounded claim and at least one token must be distinctive.
+    if (nameTokens.length >= 2 && nameTokens.length <= 4 && distinctive.length) {
+      const claimTokens = new Set(norm(item.claim).split(' ').filter(Boolean));
+      if (nameTokens.every(token => claimTokens.has(token))) return true;
+    }
   }
   return false;
 }
@@ -510,74 +529,92 @@ export function processSpatialCapture({
         }
       }
 
-      // Check relative derivation if applicable
+      // Check relative derivation if applicable. A bad optional relation must
+      // not erase an otherwise grounded proper named place; retain the place
+      // with unknown position while dropping only unsupported precision.
       if (proposal.relative) {
         const anchor = visibleById.get(proposal.relative.toLocationId);
+        let groundedRelative = null;
+
         if (!anchor) {
-          rejected.push({ stage: 'spatial-relative', index, reason: 'relative anchor was not in bounded visible spatial context' });
-          continue;
-        }
-
-        const groundedRelative = groundRelativeProposal(
-          proposal.relative,
-          anchor,
-          proposal.evidence,
-          exchangeById,
-        );
-        if (!groundedRelative.ok) {
-          rejected.push({ stage: 'spatial-relative', index, reason: groundedRelative.reason });
-          continue;
-        }
-        proposal.relative = groundedRelative.relative;
-
-        // Deterministic derived coordinate computed in code ONLY from a
-        // grounded anchor + direction + admissible straight/direct distance.
-        if (!finalCoord && activeProfile && coordKnown(anchor.coordinate) && groundedRelative.mayDeriveStraight) {
-          const derived = deriveCoordinate(anchor.coordinate, {
-            direction: proposal.relative.direction,
-            distanceKm: proposal.relative.distanceKm,
-            distanceMode: proposal.relative.distanceMode,
-            unitKm: activeProfile.unitKm,
-            decimalStep: activeProfile.decimalStep,
-            bounds: activeProfile.bounds,
-            northAxis: activeProfile.northAxis,
-            eastAxis: activeProfile.eastAxis,
+          rejected.push({
+            stage: 'spatial-relative',
+            index,
+            reason: 'unsupported relative relation dropped; named location retained when admissible: anchor was not in bounded visible spatial context',
           });
-          if (derived) finalCoord = derived;
-        }
-
-        if (!finalCoord) {
-          finalCoord = { x: null, y: null, authority: 'relative', locked: false };
-        }
-
-        // True North Lock verification
-        if (coordKnown(finalCoord) && coordKnown(anchor.coordinate) && activeProfile?.trueNorthLocked === true) {
-          const actual = directionFromDelta(
-            finalCoord.x - anchor.coordinate.x,
-            finalCoord.y - anchor.coordinate.y,
-            activeProfile,
+        } else {
+          const checkedRelative = groundRelativeProposal(
+            proposal.relative,
+            anchor,
+            proposal.evidence,
+            exchangeById,
           );
-          if (actual && !directionsCompatible(proposal.relative.direction, actual)) {
+          if (!checkedRelative.ok) {
             rejected.push({
-              stage: 'spatial-true-north',
+              stage: 'spatial-relative',
               index,
-              reason: 'relative direction conflicts with coordinate delta under locked True North',
+              reason: 'unsupported relative relation dropped; named location retained when admissible: ' + checkedRelative.reason,
             });
-            continue;
+          } else {
+            groundedRelative = checkedRelative;
           }
         }
 
-        accepted.push({
-          action: 'upsert_relation',
-          fromId: proposal.relative.toLocationId,
-          toId: proposal.locationId || '',
-          direction: proposal.relative.direction,
-          distanceKm: proposal.relative.distanceKm,
-          distanceMode: proposal.relative.distanceMode,
-          notes: '',
-          evidence: proposal.evidence,
-          __deferredTargetName: proposal.locationId ? '' : proposal.name,
-        });
+        if (!groundedRelative) {
+          if (isGenericScenery(proposal.name)) continue;
+          proposal.relative = null;
+        } else {
+          proposal.relative = groundedRelative.relative;
+
+          // Deterministic derived coordinate computed in code ONLY from a
+          // grounded anchor + direction + admissible straight/direct distance.
+          if (!finalCoord && activeProfile && coordKnown(anchor.coordinate) && groundedRelative.mayDeriveStraight) {
+            const derived = deriveCoordinate(anchor.coordinate, {
+              direction: proposal.relative.direction,
+              distanceKm: proposal.relative.distanceKm,
+              distanceMode: proposal.relative.distanceMode,
+              unitKm: activeProfile.unitKm,
+              decimalStep: activeProfile.decimalStep,
+              bounds: activeProfile.bounds,
+              northAxis: activeProfile.northAxis,
+              eastAxis: activeProfile.eastAxis,
+            });
+            if (derived) finalCoord = derived;
+          }
+
+          if (!finalCoord) {
+            finalCoord = { x: null, y: null, authority: 'relative', locked: false };
+          }
+
+          // True North Lock verification
+          if (coordKnown(finalCoord) && coordKnown(anchor.coordinate) && activeProfile?.trueNorthLocked === true) {
+            const actual = directionFromDelta(
+              finalCoord.x - anchor.coordinate.x,
+              finalCoord.y - anchor.coordinate.y,
+              activeProfile,
+            );
+            if (actual && !directionsCompatible(proposal.relative.direction, actual)) {
+              rejected.push({
+                stage: 'spatial-true-north',
+                index,
+                reason: 'relative direction conflicts with coordinate delta under locked True North',
+              });
+              continue;
+            }
+          }
+
+          accepted.push({
+            action: 'upsert_relation',
+            fromId: proposal.relative.toLocationId,
+            toId: proposal.locationId || '',
+            direction: proposal.relative.direction,
+            distanceKm: proposal.relative.distanceKm,
+            distanceMode: proposal.relative.distanceMode,
+            notes: '',
+            evidence: proposal.evidence,
+            __deferredTargetName: proposal.locationId ? '' : proposal.name,
+          });
+        }
       }
 
       if (!finalCoord) {

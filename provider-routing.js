@@ -114,6 +114,22 @@ function receipt(record, outcome, code, finishedAt = Date.now()) {
   };
 }
 
+function providerText(response) {
+  if (typeof response === 'string') return response;
+  const direct = [
+    response?.content,
+    response?.text,
+    response?.data?.content,
+    response?.data?.text,
+    response?.choices?.[0]?.message?.content,
+    response?.data?.choices?.[0]?.message?.content,
+  ];
+  for (const value of direct) {
+    if (typeof value === 'string') return value;
+  }
+  return null;
+}
+
 export async function dispatchWorldStateRequest(ctx, options = {}, scope = {}) {
   const route = scope.route || {
     profileId: scope.profileId === undefined ? selectedWorldStateProfileId(ctx) : scope.profileId,
@@ -231,8 +247,7 @@ export async function dispatchWorldStateRequest(ctx, options = {}, scope = {}) {
     assertCurrent();
     verifyProfile();
 
-    let value = response;
-    if (profileId) value = typeof response === 'string' ? response : response?.content;
+    const value = profileId ? providerText(response) : (typeof response === 'string' ? response : providerText(response));
     if (typeof value !== 'string') {
       throw worldStateRoutingError('Provider returned no text content.', 'WORLD_STATE_PROVIDER_RESPONSE');
     }

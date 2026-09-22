@@ -16,6 +16,7 @@ Included in the current gate:
 - Phase 8 performance & release hardening: ephemeral per-chat relevance indexing, candidate cap saturation (128), unreferenced evidence compaction on mutation, deterministic PKZip archive and manifest generation, prompt/latency measurements, and live acceptance protocol
 - Phase 9 optional Spatial Continuity: separate durable spatial namespace/reducer, schema 1->2 migration, generic Cartesian base-map adapter with Ternia acceptance adapter, shared planning-evidence sanitation, manual location editing, bounded spatial relevance/injection, deterministic explicit current-location supplementation, and shared exact branch rollback
 - 0.9.0-alpha.7 audit hardening: atomic rebuild success/structural gates, unresolved-recovery injection quarantine, established elapsed chronology, provider rebuild Spatial authority parity, disabled-Spatial preservation, omission-safe Reality updates, bounded tombstone admission, grounded direct relations, and non-blocking provider-backed MESSAGE_SENT continuity
+- 0.9.0-alpha.8 live rebuild hardening: exact Reality schema in Spatial prompts, conservative provider-alias repair, shared rebuild diagnostics/status, named-place salvage from unsupported optional relation metadata, and conservative compositional place-name grounding
 - explicit coexistence hardening against NPC State Delta and Ukiyo/Megumin ownership
 - cumulative Phase 1-9 deterministic tests and validation
 

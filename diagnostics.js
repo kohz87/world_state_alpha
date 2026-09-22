@@ -19,10 +19,12 @@ function clone(value) {
 export function sanitizeCaptureDiagnostic(raw = {}) {
   return {
     operationId: clean(raw.operationId, 120),
+    label: clean(raw.label, 48),
     at: int(raw.at, Date.now()),
     sourceMessageId: Number.isInteger(raw.sourceMessageId) ? raw.sourceMessageId : null,
     outcome: clean(raw.outcome, 48),
     code: clean(raw.code, 80),
+    detail: clean(raw.detail, 320),
     route: clean(raw.route, 24),
     profileId: clean(raw.profileId, 120),
     providerCalls: int(raw.providerCalls),
@@ -30,6 +32,9 @@ export function sanitizeCaptureDiagnostic(raw = {}) {
     accepted: int(raw.accepted),
     applied: int(raw.applied),
     rejected: int(raw.rejected),
+    aliasRepairs: int(raw.aliasRepairs),
+    processedBoundaries: int(raw.processedBoundaries),
+    totalBoundaries: int(raw.totalBoundaries),
     candidateRecords: int(raw.candidateRecords),
     promptChars: int(raw.promptChars),
     responseChars: int(raw.responseChars),
@@ -70,7 +75,7 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
       diagnosticVersion: 1,
       applicationVersion: clean(applicationVersion, 40),
       chatIdentityHash: hashText(key),
-      privacy: 'Allowlisted capture telemetry only; no prompts, story transcript, credentials, provider payloads, or canonical authority.',
+      privacy: 'Allowlisted operation telemetry only; no prompts, story transcript, credentials, provider payloads, or canonical authority.',
       operations: records(key),
     };
   }

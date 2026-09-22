@@ -81,6 +81,27 @@ test('selected Connection Profile is request-scoped and does not alter RP select
   assert.equal(selectedWorldStateProfileId(ctx), 'fast');
 });
 
+test('selected Connection Profile accepts raw OpenAI-compatible choices payload without using reasoning_content', async () => {
+  const { ctx } = fixture('fast');
+  ctx.ConnectionManagerRequestService.sendRequest = async () => ({
+    _session_thinking_id: 'thinking-id',
+    model: 'gemini-3.7-flash-high',
+    choices: [{
+      index: 0,
+      finish_reason: 'stop',
+      message: {
+        role: 'assistant',
+        reasoning_content: 'private reasoning that must not be used as capture output',
+        content: '{"mutations":[]}',
+      },
+    }],
+  });
+
+  const result = await dispatchWorldStateRequest(ctx, payload, { route: { profileId: 'fast' } });
+  assert.equal(result.text, '{"mutations":[]}');
+  assert.doesNotMatch(result.text, /private reasoning/i);
+});
+
 test('profile options expose supported SillyTavern profiles and preserve a missing selection', () => {
   const { ctx, profiles } = fixture('fast');
   profiles.push(

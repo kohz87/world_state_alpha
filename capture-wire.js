@@ -43,6 +43,38 @@ function evidenceItem(raw) {
   return { sourceMessageId: raw.sourceMessageId, claim };
 }
 
+function repairProviderAliases(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { mutation: raw, repairs: 0 };
+  }
+  const mutation = { ...raw };
+  let repairs = 0;
+
+  const summary = text(mutation.summary, LIMITS.summaryChars);
+  const description = text(mutation.description, LIMITS.summaryChars);
+  if (summary && description && summary !== description) {
+    throw new CaptureWireError('conflicting summary/description provider fields');
+  }
+  if (!summary && description) {
+    mutation.summary = description;
+    repairs += 1;
+  }
+
+  if (text(mutation.action, 24) === 'create') {
+    const kind = text(mutation.kind, 40);
+    const category = text(mutation.category, 40);
+    if (kind && category && kind !== category) {
+      throw new CaptureWireError('conflicting kind/category provider fields');
+    }
+    if (!kind && category && RECORD_KINDS.includes(category)) {
+      mutation.kind = category;
+      repairs += 1;
+    }
+  }
+
+  return { mutation, repairs };
+}
+
 function normalizeMutation(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new CaptureWireError('mutation must be an object');
@@ -125,10 +157,13 @@ export function parseCaptureJson(rawText) {
 export function validateCaptureEnvelope(raw) {
   const accepted = [];
   const rejected = [];
+  let aliasRepairs = 0;
   const mutations = Array.isArray(raw?.mutations) ? raw.mutations : [];
   for (let index = 0; index < mutations.length; index += 1) {
     try {
-      accepted.push(normalizeMutation(mutations[index]));
+      const repaired = repairProviderAliases(mutations[index]);
+      aliasRepairs += repaired.repairs;
+      accepted.push(normalizeMutation(repaired.mutation));
     } catch (error) {
       rejected.push({
         index,
@@ -137,5 +172,5 @@ export function validateCaptureEnvelope(raw) {
       });
     }
   }
-  return { mutations: accepted, rejected };
+  return { mutations: accepted, rejected, aliasRepairs };
 }
