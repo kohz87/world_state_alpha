@@ -9,6 +9,7 @@ import {
   seedRootCheckpoint,
 } from '../branch.js';
 import { createState, reduceMutations } from '../state-core.js';
+import { buildWorldStateInjection, continuityInjectionBlocked } from '../injection.js';
 
 function apply(state, chat, mutation, options = {}) {
   const messageId = chat.length - 1;
@@ -125,6 +126,13 @@ test('deep destructive history change fails closed when exact boundary aged out'
   assert.equal(reconciled.exactRestored, false);
   assert.equal(reconciled.state.records[0].summary, currentSummary);
   assert.equal(reconciled.state.recoveryRequired.reason, 'exact-boundary-unavailable');
+  assert.equal(continuityInjectionBlocked(reconciled.state, { branchDirty: true }), true);
+  const injection = buildWorldStateInjection(reconciled.state, {
+    recentText: currentSummary,
+    currentMessageId: chat.length,
+  });
+  assert.equal(injection.text, '');
+  assert.equal(injection.retrievalMetrics.blockedByRecovery, true);
 });
 
 

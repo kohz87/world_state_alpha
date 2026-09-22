@@ -197,7 +197,7 @@ export function buildEvolutionContext(state, plan, {
       id: timeSupportId,
       type: 'time',
       recordIds: [...targetIds],
-      claim: plan.elapsedHint.raw,
+      claim: plan.elapsedHint.context || plan.elapsedHint.raw,
       sourceMessageId: plan.elapsedHint.sourceMessageId,
       lineageKey: plan.elapsedHint.lineageKey,
       meaningful: true,

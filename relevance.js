@@ -297,6 +297,24 @@ function indexedNeighbors(index, recordId) {
   return out;
 }
 
+function createTombstoneIndex() {
+  return {
+    byId: new Map(),
+    anchorPhrases: new Map(),
+    anchorTokens: new Map(),
+    anchorBigrams: new Map(),
+    summaryTokens: new Map(),
+    recordTerms: new Map(),
+  };
+}
+
+function ensureTombstoneIndex(index) {
+  if (!index.tombstones || typeof index.tombstones !== 'object' || !index.tombstones.byId) {
+    index.tombstones = createTombstoneIndex();
+  }
+  return index.tombstones;
+}
+
 function latestElapsedEvolutionBoundary(state) {
   let latest = -1;
   for (const evidence of Object.values(state?.evidence || {})) {
@@ -323,6 +341,7 @@ export function buildRelevanceIndex(state) {
     backgroundDevelopmentSet: new Set(),
     backgroundCursor: 0,
     backgroundElapsedBoundary: latestElapsedEvolutionBoundary(state),
+    tombstones: createTombstoneIndex(),
     corpusRecords: Array.isArray(state?.records) ? state.records.length : 0,
     activeCount: records.length,
   };
@@ -335,6 +354,11 @@ export function buildRelevanceIndex(state) {
       index.backgroundDevelopmentIds.push(record.id);
       index.backgroundDevelopmentSet.add(record.id);
     }
+  }
+  for (const record of Array.isArray(state?.records) ? state.records : []) {
+    if (!record || !['resolved', 'superseded'].includes(record.status) || !String(record.summary || '').trim()) continue;
+    index.tombstones.byId.set(record.id, record);
+    indexRecordTerms(record, index.tombstones);
   }
   for (const link of Array.isArray(state?.links) ? state.links : []) {
     addExplicitLink(index, link?.from, link?.to);
@@ -351,6 +375,7 @@ export function updateRelevanceIndex(index, delta = {}) {
   const backgroundSet = index.backgroundDevelopmentSet instanceof Set
     ? index.backgroundDevelopmentSet
     : (index.backgroundDevelopmentSet = new Set());
+  const tombstones = ensureTombstoneIndex(index);
   if (!Array.isArray(index.backgroundDevelopmentIds)) index.backgroundDevelopmentIds = [];
   if (!Number.isInteger(index.backgroundCursor) || index.backgroundCursor < 0) index.backgroundCursor = 0;
   if (!Number.isInteger(index.backgroundElapsedBoundary)) index.backgroundElapsedBoundary = -1;
@@ -360,6 +385,8 @@ export function updateRelevanceIndex(index, delta = {}) {
     backgroundSet.delete(id);
     removeRecordFromTerms(id, index);
     clearRecordRelations(index, id);
+    tombstones.byId.delete(id);
+    removeRecordFromTerms(id, tombstones);
   }
 
   for (const record of upserted) {
@@ -368,6 +395,8 @@ export function updateRelevanceIndex(index, delta = {}) {
     index.byId.delete(record.id);
     removeRecordFromTerms(record.id, index);
     clearRecordRelations(index, record.id);
+    tombstones.byId.delete(record.id);
+    removeRecordFromTerms(record.id, tombstones);
 
     if (record.status === 'active' && typeof record.summary === 'string' && record.summary.trim()) {
       index.byId.set(record.id, record);
@@ -381,6 +410,10 @@ export function updateRelevanceIndex(index, delta = {}) {
       }
     } else {
       backgroundSet.delete(record.id);
+      if (['resolved', 'superseded'].includes(record.status) && typeof record.summary === 'string' && record.summary.trim()) {
+        tombstones.byId.set(record.id, record);
+        indexRecordTerms(record, tombstones);
+      }
     }
   }
 
@@ -556,6 +589,45 @@ function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
     phraseLookups,
     candidatePoolRecords: candidateScores.size,
     visitBudget,
+  };
+}
+
+export function selectRelevantTombstones(index, {
+  recentText = '',
+  loreText = '',
+  currentMessageId = null,
+  maxRecords = 2,
+  minScore = 0.7,
+  candidateCap = 32,
+} = {}) {
+  const tombstones = index?.tombstones;
+  if (!tombstones?.byId || (!String(recentText).trim() && !String(loreText).trim())) {
+    return { selected: [], metrics: { candidateRecords: 0, selectedRecords: 0, postingVisits: 0 } };
+  }
+
+  const prepared = prepareContext({ recentText, loreText, currentMessageId });
+  const work = gatherCandidateRecords(tombstones, prepared, {
+    candidateCap: boundedInt(candidateCap, 32, 1, 128),
+  });
+  const selected = [];
+  for (const record of work.records) {
+    if (!['resolved', 'superseded'].includes(record?.status)) continue;
+    const scored = baseRelevance(record, prepared);
+    const score = Math.round(scored.score * 1000) / 1000;
+    if (score < minScore) continue;
+    selected.push({ record, score, reasons: scored.reasons, source: 'tombstone' });
+  }
+  selected.sort(rankedCompare);
+
+  return {
+    selected: selected.slice(0, boundedInt(maxRecords, 2, 1, 4)),
+    metrics: {
+      candidateRecords: work.records.length,
+      selectedRecords: Math.min(selected.length, boundedInt(maxRecords, 2, 1, 4)),
+      postingVisits: work.postingVisits,
+      phraseLookups: work.phraseLookups,
+      candidatePoolRecords: work.candidatePoolRecords,
+    },
   };
 }
 

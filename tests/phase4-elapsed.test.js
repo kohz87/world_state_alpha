@@ -65,6 +65,74 @@ test('structured opaque hint may explicitly decline meaningful evolution', () =>
   assert.equal(hint.meaningful, false);
 });
 
+test('elapsed detector ignores hidden planning, future intentions, hypotheticals, and quoted schedules', () => {
+  const hidden = detectElapsedHintFromExchange([{
+    messageId: 7,
+    lineageKey: 'ln7',
+    role: 'assistant',
+    content: '<writer_state>pending_thread: Five weeks later, resolve remote pressures.</writer_state> We are still here on the same morning.',
+  }]);
+  assert.equal(hidden, null);
+
+  const timer = detectElapsedHintFromExchange([{
+    messageId: 71,
+    lineageKey: 'ln71',
+    role: 'assistant',
+    content: '<Consequence_Timers>Five weeks later, resolve remote pressures.</Consequence_Timers> We are still here on the same morning.',
+  }]);
+  assert.equal(timer, null);
+
+  const system = detectElapsedHintFromExchange([{
+    messageId: 72,
+    lineageKey: 'ln72',
+    role: 'system',
+    content: 'Five weeks later, run maintenance.',
+  }]);
+  assert.equal(system, null);
+
+  const bareNext = detectElapsedHintFromExchange([{
+    messageId: 73,
+    lineageKey: 'ln73',
+    role: 'user',
+    content: 'Next week, I return to Southport.',
+  }]);
+  assert.equal(bareNext, null);
+
+  const future = detectElapsedHintFromExchange([{
+    messageId: 8,
+    lineageKey: 'ln8',
+    role: 'user',
+    content: 'I will come back next week, but today I stay here.',
+  }]);
+  assert.equal(future, null);
+
+  const hypothetical = detectElapsedHintFromExchange([{
+    messageId: 9,
+    lineageKey: 'ln9',
+    role: 'user',
+    content: 'If five weeks later the gate is still shut, I might leave.',
+  }]);
+  assert.equal(hypothetical, null);
+
+  const quoted = detectElapsedHintFromExchange([{
+    messageId: 10,
+    lineageKey: 'ln10',
+    role: 'assistant',
+    content: 'The clerk writes "Five weeks later" in the draft schedule, but no time passes.',
+  }]);
+  assert.equal(quoted, null);
+
+  const actual = detectElapsedHintFromExchange([{
+    messageId: 11,
+    lineageKey: 'ln11',
+    role: 'assistant',
+    content: 'Five weeks later, the caravan returns to Southport.',
+  }]);
+  assert.equal(actual?.meaningful, true);
+  assert.equal(actual?.sourceMessageId, 11);
+  assert.match(actual?.context || '', /Five weeks later/);
+});
+
 test('exchange detector binds elapsed evidence to the exact message boundary', () => {
   const hint = detectElapsedHintFromExchange([
     { messageId: 10, role: 'assistant', content: 'The dispute remains active.', lineageKey: 'ln10' },

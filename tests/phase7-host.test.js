@@ -267,7 +267,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -428,6 +428,95 @@ test('MESSAGE_RECEIVED capture is backgrounded instead of blocking SillyTavern r
   assert.match(body, /MESSAGE_RECEIVED[\s\S]*void handleAssistantMessage\(messageId\)\.catch/);
   assert.doesNotMatch(body, /MESSAGE_RECEIVED[^\n]*=>\s*handleAssistantMessage\(messageId\)/);
   assert.match(body, /MESSAGE_SENT[^\n]*=>\s*handleUserMessage\(messageId\)/);
+});
+
+test('recovery-required host state suppresses both Reality and Spatial private injection', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const start = source.indexOf('function updatePrivateInjection()');
+  const end = source.indexOf('function extendCurrentBranchFast', start);
+  const body = source.slice(start, end);
+  assert.match(body, /continuityInjectionBlocked\(state, \{ branchDirty: branchDirtyChats\.has\(chatKey\) \}\)/);
+  const guardAt = body.indexOf('continuityInjectionBlocked');
+  const realityAt = body.indexOf('buildWorldStateInjection');
+  const spatialAt = body.indexOf('buildSpatialInjection');
+  assert.ok(guardAt >= 0 && realityAt > guardAt && spatialAt > guardAt);
+});
+
+test('MESSAGE_SENT prepares from committed state without awaiting provider-backed continuity queue', async () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const start = source.indexOf('async function handleUserMessage(messageId)');
+  const end = source.indexOf('async function handleBranchChange()', start);
+  const body = source.slice(start, end).trim();
+
+  assert.doesNotMatch(body, /await\s+queueChatWork\(/);
+  assert.match(body, /await ensureChatStateLoaded\(chatKey\);[\s\S]*updatePrivateInjection\(\);[\s\S]*void queueChatWork\(chatKey, async \(\) =>/);
+  assert.match(body, /void queueChatWork\(chatKey, async \(\) =>[\s\S]*prepareWorldStateContinuity\(/);
+  assert.match(body, /background continuity failed safely/);
+  assert.ok(body.indexOf('updatePrivateInjection();') < body.indexOf('void queueChatWork'));
+
+  // Execute the real handler body with a queue that never resolves. Inner queue
+  // dependencies are deliberately not supplied because the queued closure must
+  // not run before this handler returns.
+  let injected = 0;
+  let refreshed = 0;
+  let queued = 0;
+  let queuedWork = null;
+  const factory = new Function(
+    'getWorldStateSettings',
+    'clearPrivatePrompt',
+    'getContext',
+    'messageRole',
+    'messageText',
+    'currentChatKey',
+    'ensureChatStateLoaded',
+    'hydrationErrors',
+    'updatePrivateInjection',
+    'refreshPanel',
+    'queueChatWork',
+    'console',
+    'return (' + body.replace(/^async function handleUserMessage/, 'async function') + ');',
+  );
+  const handler = factory(
+    () => ({ enabled: true }),
+    () => {},
+    () => ({ chat: [{ role: 'user', content: 'Continue.' }] }),
+    message => message.role,
+    message => message.content,
+    () => 'chat:test',
+    async () => {},
+    new Set(),
+    () => { injected += 1; },
+    () => { refreshed += 1; },
+    (_chatKey, work) => {
+      queued += 1;
+      queuedWork = work;
+      return new Promise(() => {});
+    },
+    { error() {} },
+  );
+
+  const outcome = await Promise.race([
+    handler(0).then(() => 'resolved'),
+    new Promise(resolve => setTimeout(() => resolve('blocked'), 50)),
+  ]);
+  assert.equal(outcome, 'resolved', 'MESSAGE_SENT handler must not await a blocked provider-backed queue');
+  assert.equal(injected, 1);
+  assert.equal(refreshed, 1);
+  assert.equal(queued, 1);
+  assert.equal(typeof queuedWork, 'function');
+});
+
+test('host rebuild never persists or reports success before completed outcome gate', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const actionAt = source.indexOf("if (actionId === 'rebuild')");
+  const end = source.indexOf('async function applySpatialAction(', actionAt);
+  const body = source.slice(actionAt, end);
+  const gateAt = body.indexOf("if (result.outcome !== 'completed' || !isCurrent())");
+  const persistAt = body.indexOf('await persistState(chatKey, result.state)');
+  const successAt = body.indexOf("notify('success', 'World State Alpha rebuild completed.')");
+  const failureAt = body.indexOf("notify('error', 'World State Alpha rebuild did not complete; canonical state was left unchanged.')");
+  assert.ok(gateAt >= 0 && failureAt > gateAt && persistAt > failureAt && successAt > persistAt);
+  assert.match(body.slice(gateAt, persistAt), /return;/);
 });
 
 test('host publishes mutated canonical state only after durable sidecar success', () => {

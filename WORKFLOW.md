@@ -14,7 +14,8 @@ Included in the current gate:
 - Phase 6 bounded Current/Recent/Resolved/Search/detail/evidence/diagnostics/data-maintenance projections
 - Phase 7 minimal SillyTavern manifest/bootstrap, World-State-only settings/sidecar adapter, lifecycle capture/injection/rollback wiring, and mounting the existing Phase 6 panel
 - Phase 8 performance & release hardening: ephemeral per-chat relevance indexing, candidate cap saturation (128), unreferenced evidence compaction on mutation, deterministic PKZip archive and manifest generation, prompt/latency measurements, and live acceptance protocol
-- Phase 9 optional Spatial Continuity: separate durable spatial namespace/reducer, schema 1->2 migration, generic Cartesian base-map adapter with Ternia acceptance adapter, writer-state evidence sanitation, manual location editing, bounded spatial relevance/injection, and shared exact branch rollback
+- Phase 9 optional Spatial Continuity: separate durable spatial namespace/reducer, schema 1->2 migration, generic Cartesian base-map adapter with Ternia acceptance adapter, shared planning-evidence sanitation, manual location editing, bounded spatial relevance/injection, deterministic explicit current-location supplementation, and shared exact branch rollback
+- 0.9.0-alpha.7 audit hardening: atomic rebuild success/structural gates, unresolved-recovery injection quarantine, established elapsed chronology, provider rebuild Spatial authority parity, disabled-Spatial preservation, omission-safe Reality updates, bounded tombstone admission, grounded direct relations, and non-blocking provider-backed MESSAGE_SENT continuity
 - explicit coexistence hardening against NPC State Delta and Ukiyo/Megumin ownership
 - cumulative Phase 1-9 deterministic tests and validation
 

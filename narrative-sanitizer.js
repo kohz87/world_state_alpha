@@ -4,6 +4,10 @@ const NON_CANONICAL_ASSISTANT_BLOCKS = Object.freeze([
   'CYOA',
   'Skill_Mastery',
   'Inventory',
+  'Planted_Seeds',
+  'Consequence_Timers',
+  'Arc_Phase',
+  'Scene_Phase',
 ]);
 
 function stripTaggedBlock(text, tagName) {

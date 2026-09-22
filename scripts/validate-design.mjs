@@ -57,13 +57,22 @@ for (const phrase of [
   'No external-extension state adapter is authorized in Phase 7',
   'All asynchronous provider-backed work is guarded by current chat identity',
   'Rebuild never becomes automatic',
-  'Writer State, narrative plans, Story Director output, anticipated events, and spatial hypotheses are not canonical World State evidence',
+  'Writer State, narrative plans, Story Director output, anticipated events, consequence timers, arc/scene planning, and spatial hypotheses are not canonical World State evidence',
   'Spatial state changes only from trusted base geography',
   'Spatial Continuity is an **optional sibling subsystem**',
   'never stores locations, spatial relations, or routes inside `records[]`',
   'Ternia is an adapter/acceptance fixture, not core ontology',
   'Spatial automatic capture shares the existing eligible Reality capture request',
   'Canonical schema version 2 adds the durable `spatial` namespace',
+  'suppress both Reality and Spatial private continuity injection',
+  'allowlist only explicit successful capture boundary outcomes',
+  'structurally malformed Reality or Spatial mutation row',
+  'bare prospective `next ...` phrases are not elapsed evidence',
+  'separate ephemeral bounded tombstone posting index',
+  'Provider-authored rebuild mutations are narrative authority, not operator authority',
+  'Direct relation proposals use the same grounding policy',
+  'explicit `World_State` current-location header',
+  'must likewise not keep the awaited `MESSAGE_SENT` preparation path open',
 ]) {
   if (!contract.toLowerCase().includes(phrase.toLowerCase())) {
     throw new Error('Core contract missing invariant: ' + phrase);

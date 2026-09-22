@@ -225,6 +225,13 @@ export function processCaptureResponse({
 } = {}) {
   const raw = parseCaptureJson(text);
   const wire = validateCaptureEnvelope(raw);
+  if (operation === 'rebuild' && wire.rejected.length) {
+    const first = wire.rejected[0];
+    throw new CaptureWireError(
+      `rebuild rejected structurally invalid Reality mutation row ${first.index}: ${first.reason}`,
+      'WORLD_STATE_REBUILD_REALITY_WIRE_INVALID',
+    );
+  }
   const boundedRecords = boundedVisibleRecords(visibleRecords);
   const rejected = wire.rejected.map(item => rejectedEntry('wire', item.reason, { code: item.code, index: item.index }));
   const accepted = [];
@@ -300,6 +307,15 @@ export function processCaptureResponse({
       operation,
       evidenceSourceClass,
     });
+    if (operation === 'rebuild') {
+      const structuralSpatial = (spatialResult.rejected || []).find(item => item?.stage === 'spatial-wire');
+      if (structuralSpatial) {
+        throw new CaptureWireError(
+          `rebuild rejected structurally invalid Spatial mutation row ${structuralSpatial.index ?? '?'}: ${structuralSpatial.reason}`,
+          'WORLD_STATE_REBUILD_SPATIAL_WIRE_INVALID',
+        );
+      }
+    }
     nextState.spatial = spatialResult.spatial;
   }
 

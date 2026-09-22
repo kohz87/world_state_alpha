@@ -12,6 +12,7 @@ import {
 import {
   buildRelevanceIndex,
   selectRelevantRecords,
+  selectRelevantTombstones,
   updateRelevanceIndex,
 } from '../relevance.js';
 import {
@@ -55,9 +56,9 @@ test('Phase 8 compatibility accepts current Phase 9 application versions while e
   const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
   const index = fs.readFileSync('index.js', 'utf8');
 
-  assert.ok(['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6'].includes(pkg.version));
-  assert.ok(['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6'].includes(manifest.version));
-  assert.match(index, /WORLD_STATE_ALPHA_VERSION\s*=\s*'(0\.8\.0-alpha\.1|0\.9\.0-alpha\.1|0\.9\.0-alpha\.2|0\.9\.0-alpha\.3|0\.9\.0-alpha\.4|0\.9\.0-alpha\.5|0\.9\.0-alpha\.6)'/);
+  assert.ok(['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7'].includes(pkg.version));
+  assert.ok(['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7'].includes(manifest.version));
+  assert.match(index, /WORLD_STATE_ALPHA_VERSION\s*=\s*'(0\.8\.0-alpha\.1|0\.9\.0-alpha\.1|0\.9\.0-alpha\.2|0\.9\.0-alpha\.3|0\.9\.0-alpha\.4|0\.9\.0-alpha\.5|0\.9\.0-alpha\.6|0\.9\.0-alpha\.7)'/);
   assert.ok(inventory.stage === 'phase8-release-hardening' || inventory.stage === 'phase9-spatial-continuity');
 
   assert.ok(SCHEMA_VERSION === 1 || SCHEMA_VERSION === 2);
@@ -132,6 +133,74 @@ test('1000-record rare-anchor fixture scores tiny bounded subset rather than ful
   assert.ok(result.metrics.candidateRecords <= 8, `candidateRecords was ${result.metrics.candidateRecords}`);
   assert.ok(result.metrics.scoredRecords <= 8);
   assert.equal(result.selected[0]?.record?.id, 'wsr_target');
+});
+
+test('bounded tombstone index surfaces a relevant resolved episode for ordinary capture admission', () => {
+  const records = Array.from({ length: 500 }, (_, index) => record(
+    'wsr_tomb_' + index,
+    'Unrelated resolved condition ' + index,
+    { status: 'resolved', anchors: ['unrelated-' + index], lastChangedMessage: index },
+  ));
+  records[321] = record('wsr_resolved_strike', 'The Southport dock strike ended after an agreement.', {
+    kind: 'development',
+    status: 'resolved',
+    anchors: ['Southport', 'dock strike'],
+    lastChangedMessage: 40,
+  });
+  const state = { records, links: [] };
+  const index = buildRelevanceIndex(state);
+
+  const result = selectRelevantTombstones(index, {
+    recentText: 'A dock strike begins again at Southport.',
+    currentMessageId: 100,
+    maxRecords: 2,
+    candidateCap: 32,
+  });
+
+  assert.equal(result.selected[0]?.record?.id, 'wsr_resolved_strike');
+  assert.ok(result.metrics.candidateRecords <= 32);
+  assert.ok(result.metrics.postingVisits <= 384);
+  assert.equal(index.byId.has('wsr_resolved_strike'), false, 'resolved record must remain excluded from active injection index');
+});
+
+test('incremental resolve moves an active development into bounded tombstone admission immediately', () => {
+  let state = createState('tombstone-delta');
+  const created = reduceMutations(state, {
+    chatKey: 'tombstone-delta',
+    messageId: 1,
+    lineageKey: 'ln1',
+    mutations: [{
+      action: 'create',
+      kind: 'development',
+      summary: 'The Southport dock strike is active.',
+      anchors: ['Southport', 'dock strike'],
+    }],
+  });
+  state = created.state;
+  const recordId = state.records[0].id;
+  const index = buildRelevanceIndex(state);
+  assert.equal(index.byId.has(recordId), true);
+
+  const resolved = reduceMutations(state, {
+    chatKey: 'tombstone-delta',
+    messageId: 2,
+    lineageKey: 'ln2',
+    mutations: [{
+      action: 'resolve',
+      recordId,
+      summary: 'The Southport dock strike ended after an agreement.',
+    }],
+  });
+  updateRelevanceIndex(index, resolved.indexDelta);
+
+  assert.equal(index.byId.has(recordId), false);
+  const tombstones = selectRelevantTombstones(index, {
+    recentText: 'A dock strike begins again at Southport.',
+    currentMessageId: 3,
+    maxRecords: 2,
+    candidateCap: 32,
+  });
+  assert.equal(tombstones.selected[0]?.record?.id, recordId);
 });
 
 test('candidate cap saturation behavior is deterministic and exact anchors outrank common summary tokens', () => {

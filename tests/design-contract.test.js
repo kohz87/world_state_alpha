@@ -47,13 +47,22 @@ test('core safety invariants are present', () => {
     /No external-extension state adapter is authorized in Phase 7/i,
     /All asynchronous provider-backed work is guarded by current chat identity/i,
     /Rebuild never becomes automatic/i,
-    /Writer State, narrative plans, Story Director output, anticipated events, and spatial hypotheses are not canonical World State evidence/i,
+    /Writer State, narrative plans, Story Director output, anticipated events, consequence timers, arc\/scene planning, and spatial hypotheses are not canonical World State evidence/i,
     /Spatial state changes only from trusted base geography/i,
     /Spatial Continuity is an \*\*optional sibling subsystem\*\*/i,
     /never stores locations, spatial relations, or routes inside `records\[\]`/i,
     /Ternia is an adapter\/acceptance fixture, not core ontology/i,
     /Spatial automatic capture shares the existing eligible Reality capture request/i,
     /Canonical schema version 2 adds the durable `spatial` namespace/i,
+    /suppress both Reality and Spatial private continuity injection/i,
+    /allowlist only explicit successful capture boundary outcomes/i,
+    /structurally malformed Reality or Spatial mutation row/i,
+    /bare prospective `next \.\.\.` phrases are not elapsed evidence/i,
+    /separate ephemeral bounded tombstone posting index/i,
+    /Provider-authored rebuild mutations are narrative authority, not operator authority/i,
+    /Direct relation proposals use the same grounding policy/i,
+    /explicit `World_State` current-location header/i,
+    /must likewise not keep the awaited `MESSAGE_SENT` preparation path open/i,
   ]) assert.match(contract, expected);
 });
 

@@ -27,17 +27,18 @@ const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const indexSource = fs.readFileSync('index.js', 'utf8');
 const spatialCoreSource = fs.readFileSync('spatial-core.js', 'utf8');
 const spatialBaseSource = fs.readFileSync('spatial-base-map.js', 'utf8');
+const spatialCaptureSource = fs.readFileSync('spatial-capture.js', 'utf8');
 const transferSource = fs.readFileSync('transfer.js', 'utf8');
 
 // 1. Stage and version validation
 if (inventory.stage !== 'phase9-spatial-continuity') {
   throw new Error('Phase 9 runtime inventory stage mismatch: ' + inventory.stage);
 }
-if (pkg.version !== '0.9.0-alpha.6' || manifest.version !== pkg.version) {
-  throw new Error('Phase 9 application version markers must be synchronized to 0.9.0-alpha.6');
+if (pkg.version !== '0.9.0-alpha.7' || manifest.version !== pkg.version) {
+  throw new Error('Phase 9 application version markers must be synchronized to 0.9.0-alpha.7');
 }
-if (!indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.6'")) {
-  throw new Error('Phase 9 index.js version marker not synchronized to 0.9.0-alpha.6');
+if (!indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.7'")) {
+  throw new Error('Phase 9 index.js version marker not synchronized to 0.9.0-alpha.7');
 }
 
 // 2. Canonical schema version 2 for durable spatial state
@@ -184,9 +185,25 @@ for (const required of [
     throw new Error('Phase 9 host Spatial lifecycle guard missing: ' + required);
   }
 }
-for (const required of ['preserveManualRelation', 'preserveManualRoute', 'preserveManualMetadata']) {
+for (const required of [
+  'preserveManualRelation',
+  'preserveManualRoute',
+  'preserveManualMetadata',
+  "context.operation === 'capture' || context.operation === 'rebuild'",
+  'provider narrative cannot mutate base canonical location',
+]) {
   if (!spatialCoreSource.includes(required)) {
-    throw new Error('Phase 9 manual-authority reducer guard missing: ' + required);
+    throw new Error('Phase 9 manual/automatic authority reducer guard missing: ' + required);
+  }
+}
+for (const required of [
+  'supplementExplicitWorldStateHeaders',
+  'explicitWorldStateLocationHeaders',
+  'spatial-deterministic-header',
+  'groundDirectRelationProposal',
+]) {
+  if (!spatialCaptureSource.includes(required)) {
+    throw new Error('Phase 9 Spatial capture hardening missing: ' + required);
   }
 }
 if (!spatialBaseSource.includes("['generic_v1', 'ternia_v0_9_10'].includes(declaredAdapter)")) {
@@ -210,4 +227,4 @@ if (migrated.schemaVersion !== 2 || !migrated.spatial || !Array.isArray(migrated
   throw new Error('Phase 9 schema1 migration did not produce valid schema2 spatial state');
 }
 
-console.log('World State Alpha Phase 9 validation passed: version 0.9.0-alpha.6 synchronized, schemaVersion 2 durable, spatial base map adapter verified, authority firewall validated, narrative sanitizer working, and spatial relevance indexing bounded.');
+console.log('World State Alpha Phase 9 validation passed: version 0.9.0-alpha.7 synchronized, schemaVersion 2 durable, spatial base map adapter verified, authority firewall validated, narrative sanitizer working, and spatial relevance indexing bounded.');

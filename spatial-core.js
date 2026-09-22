@@ -729,6 +729,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     operation: boundedText(batch?.operation, 24) || 'capture',
   };
 
+  const automaticNarrative = context.operation === 'capture' || context.operation === 'rebuild';
   const proposals = Array.isArray(batch?.mutations) ? batch.mutations : [];
   const applied = [];
   const rejected = [];
@@ -798,9 +799,9 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         }
       }
 
-      // Automatic capture must NOT mutate a base location without explicit manual override
-      if (isBaseLoc && context.operation === 'capture') {
-        rejected.push({ proposal, reason: 'automatic capture cannot mutate base canonical location' });
+      // Provider-authored narrative work (capture or rebuild) must NOT mutate a base location without explicit manual override
+      if (isBaseLoc && automaticNarrative) {
+        rejected.push({ proposal, reason: 'provider narrative cannot mutate base canonical location' });
         continue;
       }
 
@@ -813,8 +814,8 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
 
         if (proposedCoord) {
           const proposedKnown = Number.isFinite(proposedCoord.x) && Number.isFinite(proposedCoord.y);
-          if (context.operation === 'capture') {
-            // Automatic capture may refine a coordinate only when it has an actual
+          if (automaticNarrative) {
+            // Provider narration may refine a coordinate only when it has an actual
             // grounded coordinate pair. Unknown/null proposals never erase state.
             if (proposedKnown) {
               const priorRank = authorityRank(priorCoord.authority, priorCoord.locked);
@@ -839,9 +840,9 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
 
         const hasManualEvidence = (existingLoc.evidenceIds || [])
           .some(id => spatial.evidence?.[id]?.sourceClass === 'manual');
-        const preserveManualMetadata = context.operation === 'capture' && hasManualEvidence;
+        const preserveManualMetadata = automaticNarrative && hasManualEvidence;
 
-        // Automatic capture may add route associations and improve coordinate
+        // Provider narration may add route associations and improve coordinate
         // certainty, but must not casually rewrite operator-authored metadata.
         if (!preserveManualMetadata) {
           existingLoc.name = name;
@@ -857,7 +858,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         }
         if (Array.isArray(proposal.routeRefs)) {
           const incoming = uniqueStrings(proposal.routeRefs, SPATIAL_LIMITS.routeRefsPerLocation, 120);
-          existingLoc.routeRefs = context.operation === 'capture'
+          existingLoc.routeRefs = automaticNarrative
             ? uniqueStrings([...existingLoc.routeRefs, ...incoming], SPATIAL_LIMITS.routeRefsPerLocation, 120)
             : incoming;
         }
@@ -1046,7 +1047,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       if (existingRel) {
         const hasManualEvidence = (existingRel.evidenceIds || [])
           .some(evidenceId => spatial.evidence?.[evidenceId]?.sourceClass === 'manual');
-        const preserveManualRelation = context.operation === 'capture' && hasManualEvidence;
+        const preserveManualRelation = automaticNarrative && hasManualEvidence;
         if (!preserveManualRelation) {
           if (direction) existingRel.direction = direction;
           if (Number.isFinite(proposal.distanceKm)) existingRel.distanceKm = proposal.distanceKm;
@@ -1103,7 +1104,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       if (existingRt) {
         const hasManualEvidence = (existingRt.evidenceIds || [])
           .some(evidenceId => spatial.evidence?.[evidenceId]?.sourceClass === 'manual');
-        const preserveManualRoute = context.operation === 'capture' && hasManualEvidence;
+        const preserveManualRoute = automaticNarrative && hasManualEvidence;
         if (!preserveManualRoute) {
           if (proposal.type) existingRt.type = boundedText(proposal.type, SPATIAL_LIMITS.typeChars);
           if (Array.isArray(proposal.endpoints)) existingRt.endpoints = uniqueStrings(proposal.endpoints, 8, 120);

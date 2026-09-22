@@ -19,6 +19,7 @@ import { storeBaseMapSource, loadBaseMapSource } from './host-base-map.js';
 import {
   WORLD_STATE_PROMPT_KEY,
   buildWorldStateInjection,
+  continuityInjectionBlocked,
 } from './injection.js';
 import {
   applyWorldStateImport,
@@ -29,7 +30,7 @@ import {
 } from './manual.js';
 import { cancelWorldStateRequests, worldStateProfileOptions } from './provider-routing.js';
 import { runManualRebuild } from './rebuild.js';
-import { buildRelevanceIndex, selectRelevantRecords, updateRelevanceIndex } from './relevance.js';
+import { buildRelevanceIndex, selectRelevantRecords, selectRelevantTombstones, updateRelevanceIndex } from './relevance.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation, inspectSpatialLocation, querySpatialLocations } from './spatial-manual.js';
@@ -38,7 +39,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.6';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.7';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1157,7 +1158,7 @@ function updatePrivateInjection() {
     return null;
   }
   const state = stateCache.get(chatKey);
-  if (!state) {
+  if (!state || continuityInjectionBlocked(state, { branchDirty: branchDirtyChats.has(chatKey) })) {
     clearPrivatePrompt();
     return null;
   }
@@ -1282,12 +1283,21 @@ async function handleAssistantMessage(messageId) {
 
     const before = stateCache.get(chatKey);
     const index = getRelevanceIndex(chatKey, before);
-    const visible = selectRelevantRecords(before, {
+    const captureText = recentText(exchange);
+    const activeVisible = selectRelevantRecords(before, {
       index,
-      recentText: recentText(exchange),
+      recentText: captureText,
       currentMessageId: messageId,
       maxRecords: CAPTURE_LIMITS.visibleRecords,
     }).selected.map(item => item.record);
+    const tombstones = selectRelevantTombstones(index, {
+      recentText: captureText,
+      currentMessageId: messageId,
+      maxRecords: 2,
+      candidateCap: 32,
+    }).selected.map(item => item.record);
+    const activeSlots = Math.max(0, CAPTURE_LIMITS.visibleRecords - tombstones.length);
+    const visible = [...activeVisible.slice(0, activeSlots), ...tombstones];
 
     let visibleLocations = [];
     let baseMap = null;
@@ -1354,7 +1364,15 @@ async function handleUserMessage(messageId) {
   const chatKey = currentChatKey();
   if (chatKey === 'no-chat') return;
 
-  await queueChatWork(chatKey, async () => {
+  // Prepare this generation from the last durably committed state only.
+  // Provider-backed evolution remains serialized on the chat writer queue,
+  // but completes in the background for later injections.
+  await ensureChatStateLoaded(chatKey);
+  if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+  updatePrivateInjection();
+  refreshPanel();
+
+  void queueChatWork(chatKey, async () => {
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
     if (!getWorldStateSettings().enabled) {
@@ -1418,6 +1436,8 @@ async function handleUserMessage(messageId) {
     }
     updatePrivateInjection();
     refreshPanel();
+  }).catch(error => {
+    console.error('[World State Alpha] background continuity failed safely', error);
   });
 }
 

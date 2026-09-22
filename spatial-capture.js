@@ -92,19 +92,20 @@ function extractExplicitCoordinatesFromText(text) {
   if (typeof text !== 'string') return coords;
 
   // Form 1: [x, y]
-  const bracketMatches = text.matchAll(/\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]/g);
+  const bracketMatches = text.matchAll(/\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g);
   for (const match of bracketMatches) {
     coords.push({ x: Number(match[1]), y: Number(match[2]) });
   }
 
   // Form 2: (x, y)
-  const parenMatches = text.matchAll(/\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/g);
+  const parenMatches = text.matchAll(/\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)/g);
   for (const match of parenMatches) {
     coords.push({ x: Number(match[1]), y: Number(match[2]) });
   }
 
-  // Form 3: x=12.4, y=45.0 or x: 12.4, y: 45.0
-  const namedMatches = text.matchAll(/x\s*[:=]\s*(-?\d+(?:\.\d+)?)[,\s]+y\s*[:=]\s*(-?\d+(?:\.\d+)?)/gi);
+  // Form 3: x=12.4, y=45.0; also accepts signed values, Markdown
+  // axis labels, JSON-quoted keys, and comma/pipe/whitespace separators.
+  const namedMatches = text.matchAll(/(?:\*\*)?["']?x["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)\s*(?:,|\||\s+)\s*(?:\*\*)?["']?y["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)/gi);
   for (const match of namedMatches) {
     coords.push({ x: Number(match[1]), y: Number(match[2]) });
   }
@@ -204,6 +205,43 @@ function straightDistanceLanguageGrounded(evidence, exchangeById) {
   return false;
 }
 
+function groundDirectRelationProposal(proposal, from, to, evidence, exchangeById) {
+  if (!from || !to) return { ok: false, reason: 'direct relation requires established endpoints' };
+  if (!locationNameGrounded(from.name, evidence, exchangeById)
+      || !locationNameGrounded(to.name, evidence, exchangeById)) {
+    return { ok: false, reason: 'relation endpoint names are not grounded together in accepted narration' };
+  }
+
+  const direction = proposal.direction && directionGroundedInNarration(proposal.direction, evidence, exchangeById)
+    ? canonicalDirection(proposal.direction)
+    : null;
+  const distanceGrounded = Number.isFinite(proposal.distanceKm)
+    && distanceGroundedInNarration(proposal.distanceKm, evidence, exchangeById);
+  const routeGrounded = routeTravelLanguageGrounded(evidence, exchangeById);
+  const straightGrounded = straightDistanceLanguageGrounded(evidence, exchangeById);
+
+  let distanceKm = distanceGrounded ? proposal.distanceKm : null;
+  let distanceMode = 'unspecified';
+  if (distanceGrounded) {
+    if (routeGrounded && !straightGrounded) distanceMode = 'route';
+    else if (straightGrounded) distanceMode = 'straight_line';
+  }
+
+  if (!direction && distanceKm === null) {
+    return { ok: false, reason: 'relation has no grounded direction or numeric distance' };
+  }
+
+  return {
+    ok: true,
+    proposal: {
+      ...proposal,
+      direction,
+      distanceKm,
+      distanceMode,
+    },
+  };
+}
+
 function groundRelativeProposal(relative, anchor, evidence, exchangeById) {
   if (!relative || !anchor) return { ok: false, reason: 'relative position requires an established anchor' };
   if (!locationNameGrounded(anchor.name, evidence, exchangeById)) {
@@ -246,6 +284,138 @@ function groundRelativeProposal(relative, anchor, evidence, exchangeById) {
   };
 }
 
+function cleanHeaderText(value, max = 240) {
+  return String(value || '')
+    .replace(/[*_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+function uniqueCoordinates(coords, tolerance = 1e-9) {
+  const out = [];
+  for (const coord of coords || []) {
+    if (!Number.isFinite(coord?.x) || !Number.isFinite(coord?.y)) continue;
+    if (out.some(item => Math.abs(item.x - coord.x) <= tolerance && Math.abs(item.y - coord.y) <= tolerance)) continue;
+    out.push(coord);
+  }
+  return out;
+}
+
+function explicitWorldStateLocationHeaders(exchangeById) {
+  const headers = [];
+  for (const source of exchangeById.values()) {
+    if (!source?.text || source.role === 'system') continue;
+    const blocks = source.text.matchAll(/<World_State(?:\s+[^>]*)?>([\s\S]*?)(?:<\/World_State>|$)/gi);
+    for (const blockMatch of blocks) {
+      const body = blockMatch[1] || '';
+      for (const rawLine of body.split(/\r?\n/)) {
+        if (!/\bLoc(?:ation)?\s*:/i.test(rawLine)) continue;
+        if (/\b(?:Planted Seeds|Consequence Timers|Arc Phase|Scene Phase)\b/i.test(rawLine)) continue;
+
+        const parts = rawLine.split('|').map(part => part.trim()).filter(Boolean);
+        const locIndex = parts.findIndex(part => /\bLoc(?:ation)?\s*:/i.test(part));
+        if (locIndex < 0) continue;
+        const locPart = parts[locIndex];
+        const locMatch = locPart.match(/\bLoc(?:ation)?\s*:\s*(?:\*\*)?\s*(.+)$/i);
+        const name = cleanHeaderText(locMatch?.[1] || '');
+        if (!name || isGenericScenery(name)) continue;
+
+        const contextParts = [];
+        for (const part of parts.slice(locIndex + 1)) {
+          if (extractExplicitCoordinatesFromText(part).length) break;
+          if (/\b(?:Wx|Weather|Temp(?:erature)?|Time)\s*:/i.test(part)) break;
+          const clean = cleanHeaderText(part, 160);
+          if (clean) contextParts.push(clean);
+          if (contextParts.length >= 2) break;
+        }
+
+        const coords = uniqueCoordinates(extractExplicitCoordinatesFromText(rawLine));
+        headers.push({
+          sourceMessageId: source.messageId,
+          lineageKey: source.lineageKey,
+          name,
+          context: cleanHeaderText(contextParts.join(' | '), 320),
+          coordinate: coords.length === 1
+            ? { x: coords[0].x, y: coords[0].y, authority: 'narrative_explicit', locked: false }
+            : null,
+          ambiguousCoordinate: coords.length > 1,
+          claim: String(rawLine).trim().slice(0, 500),
+        });
+      }
+    }
+  }
+  return headers.slice(0, 4);
+}
+
+function supplementExplicitWorldStateHeaders(modelMutations, exchangeById) {
+  const mutations = (modelMutations || []).map(item => structuredClone(item));
+  const rejected = [];
+  const suppressed = new Set();
+  let added = 0;
+
+  for (const header of explicitWorldStateLocationHeaders(exchangeById)) {
+    const matches = [];
+    for (let index = 0; index < mutations.length; index += 1) {
+      const proposal = mutations[index];
+      if (proposal?.action === 'upsert_location' && norm(proposal.name) === norm(header.name)) matches.push(index);
+    }
+
+    if (header.ambiguousCoordinate || matches.length > 1) {
+      for (const index of matches) suppressed.add(index);
+      rejected.push({
+        stage: 'spatial-deterministic-header',
+        reason: header.ambiguousCoordinate
+          ? 'explicit current-location header contains conflicting coordinate pairs'
+          : 'explicit current-location header matches multiple model location proposals',
+        sourceMessageId: header.sourceMessageId,
+      });
+      continue;
+    }
+
+    if (matches.length === 1) {
+      const index = matches[0];
+      const proposal = mutations[index];
+      if (header.coordinate && coordKnown(proposal.coordinate)) {
+        const current = normalizeCoordinate(proposal.coordinate);
+        if (Math.abs(current.x - header.coordinate.x) > 1e-9 || Math.abs(current.y - header.coordinate.y) > 1e-9) {
+          suppressed.add(index);
+          rejected.push({
+            stage: 'spatial-deterministic-header',
+            reason: 'model coordinate conflicts with explicit current-location header',
+            sourceMessageId: header.sourceMessageId,
+          });
+          continue;
+        }
+      }
+      if (header.coordinate && !coordKnown(proposal.coordinate)) {
+        proposal.coordinate = header.coordinate;
+        proposal.admissionReason = 'explicit_coordinate';
+      }
+      if (!proposal.context && header.context) proposal.context = header.context;
+      if (!(proposal.evidence || []).some(item => item.sourceMessageId === header.sourceMessageId && item.claim === header.claim)) {
+        proposal.evidence = [...(proposal.evidence || []), { sourceMessageId: header.sourceMessageId, claim: header.claim }].slice(0, 4);
+      }
+      continue;
+    }
+
+    mutations.push({
+      action: 'upsert_location',
+      name: header.name,
+      type: 'landmark',
+      context: header.context,
+      coordinate: header.coordinate,
+      relative: null,
+      routeRefs: [],
+      notes: '',
+      admissionReason: header.coordinate ? 'explicit_coordinate' : 'explicit_position',
+      evidence: [{ sourceMessageId: header.sourceMessageId, claim: header.claim }],
+    });
+    added += 1;
+  }
+
+  return { mutations: mutations.filter((_item, index) => !suppressed.has(index)), rejected, added };
+}
 export function processSpatialCapture({
   rawSpatialMutations = [],
   spatial,
@@ -260,14 +430,18 @@ export function processSpatialCapture({
   evidenceSourceClass = '',
 } = {}) {
   const wire = validateSpatialEnvelope(rawSpatialMutations);
-  const rejected = wire.rejected.map(item => ({ stage: 'spatial-wire', ...item }));
-  const accepted = [];
   const exchangeById = captureExchangeIndex(exchange);
+  const supplemented = supplementExplicitWorldStateHeaders(wire.mutations, exchangeById);
+  const rejected = [
+    ...wire.rejected.map(item => ({ stage: 'spatial-wire', ...item })),
+    ...supplemented.rejected,
+  ];
+  const accepted = [];
   const visibleById = new Map((Array.isArray(visibleLocations) ? visibleLocations : []).map(item => [item.id, item]));
   const activeProfile = profile || spatial?.profile || baseMap?.profile || null;
 
-  for (let index = 0; index < wire.mutations.length; index += 1) {
-    const proposal = structuredClone(wire.mutations[index]);
+  for (let index = 0; index < supplemented.mutations.length; index += 1) {
+    const proposal = structuredClone(supplemented.mutations[index]);
     const grounded = groundEvidence(proposal.evidence, exchangeById, evidenceSourceClass);
     if (!grounded.ok) {
       rejected.push({ stage: 'spatial-source-firewall', index, reason: grounded.reason });
@@ -428,18 +602,24 @@ export function processSpatialCapture({
       }
       const from = visibleById.get(proposal.fromId);
       const to = visibleById.get(proposal.toId);
-      if (proposal.direction && coordKnown(from.coordinate) && coordKnown(to.coordinate) && activeProfile?.trueNorthLocked === true) {
+      const groundedRelation = groundDirectRelationProposal(proposal, from, to, proposal.evidence, exchangeById);
+      if (!groundedRelation.ok) {
+        rejected.push({ stage: 'spatial-relation-grounding', index, reason: groundedRelation.reason });
+        continue;
+      }
+      const groundedProposal = groundedRelation.proposal;
+      if (groundedProposal.direction && coordKnown(from.coordinate) && coordKnown(to.coordinate) && activeProfile?.trueNorthLocked === true) {
         const actual = directionFromDelta(
           to.coordinate.x - from.coordinate.x,
           to.coordinate.y - from.coordinate.y,
           activeProfile,
         );
-        if (actual && !directionsCompatible(proposal.direction, actual)) {
+        if (actual && !directionsCompatible(groundedProposal.direction, actual)) {
           rejected.push({ stage: 'spatial-true-north', index, reason: 'relation direction conflicts with authoritative coordinate delta' });
           continue;
         }
       }
-      accepted.push(proposal);
+      accepted.push(groundedProposal);
       continue;
     }
 
@@ -509,7 +689,7 @@ export function processSpatialCapture({
     spatial: next,
     applied: [...reducedLocations.applied, ...reducedOther.applied],
     rejected,
-    proposedCount: Array.isArray(rawSpatialMutations) ? rawSpatialMutations.length : 0,
+    proposedCount: (Array.isArray(rawSpatialMutations) ? rawSpatialMutations.length : 0) + supplemented.added,
     acceptedCount: accepted.length,
     indexDelta: {
       changedLocationIds: [

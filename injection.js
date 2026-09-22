@@ -138,6 +138,10 @@ export function renderWorldStateInjection(selectedEntries = [], {
   return { text, included, estimatedTokens, budgetTokens: budget };
 }
 
+export function continuityInjectionBlocked(state, { branchDirty = false } = {}) {
+  return Boolean(branchDirty || state?.recoveryRequired);
+}
+
 export function buildWorldStateInjection(state, {
   index = null,
   recentText = '',
@@ -148,6 +152,26 @@ export function buildWorldStateInjection(state, {
   depth = WORLD_STATE_INJECTION_DEFAULTS.depth,
   candidateCap = 128,
 } = {}) {
+  if (continuityInjectionBlocked(state)) {
+    const budget = normalizeBudget(budgetTokens);
+    return {
+      text: '',
+      included: [],
+      estimatedTokens: 0,
+      budgetTokens: budget,
+      selected: [],
+      retrievalMetrics: { blockedByRecovery: true, selectedRecords: 0 },
+      descriptor: {
+        namespace: WORLD_STATE_NAMESPACE,
+        key: WORLD_STATE_PROMPT_KEY,
+        text: '',
+        placement: WORLD_STATE_INJECTION_DEFAULTS.placement,
+        role: WORLD_STATE_INJECTION_DEFAULTS.role,
+        depth: normalizeDepth(depth),
+        scan: false,
+      },
+    };
+  }
   const retrieval = selectRelevantRecords(state, {
     index,
     recentText,
