@@ -19,6 +19,23 @@ export function buildWorldStateChatKey(kind, ownerId, chatId) {
   return `${prefix}:${encodeWorldStateChatKeyPart(owner)}:${encodeWorldStateChatKeyPart(chat)}`;
 }
 
+export function parseWorldStateChatKey(key) {
+  const raw = String(key || '');
+  const first = raw.indexOf(':');
+  const second = first >= 0 ? raw.indexOf(':', first + 1) : -1;
+  if (first <= 0 || second <= first + 1) return null;
+  const kind = raw.slice(0, first);
+  if (kind !== 'chat' && kind !== 'group') return null;
+  try {
+    const ownerId = decodeURIComponent(raw.slice(first + 1, second));
+    const chatId = decodeURIComponent(raw.slice(second + 1));
+    if (!ownerId || !chatId) return null;
+    return { key: raw, kind, ownerId, chatId };
+  } catch {
+    return null;
+  }
+}
+
 export function getWorldStateChatIdentity(ctx = {}) {
   const rawChatId = ctx?.chatId || ctx?.getCurrentChatId?.() || '';
   const chatId = String(rawChatId || '').replace(/\.jsonl$/i, '').trim();
