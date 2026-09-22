@@ -86,6 +86,8 @@ Routine capture examines only the completed current exchange plus the minimum al
 
 Default Alpha cadence is one eligible capture after each completed assistant exchange. A duplicate receipt for an already processed raw-message boundary must not issue a second automatic request. One automatic capture provider call is permitted per eligible boundary; malformed output is not automatically repaired with a second model call.
 
+Provider capture/rebuild output must contain exactly one JSON object. The object may be bare or enclosed by one Markdown code fence with an optional `json` language tag. Surrounding prose, multiple-object extraction, and correction retries are forbidden; malformed or structurally invalid output remains fail-closed.
+
 If no material world change is established, capture returns no mutations.
 
 Capture is bounded for completeness rather than ranked only by immediate PC salience. Before output, the single capture request must sweep the whole bounded current exchange for each distinct materially persistent current condition established there, up to the existing mutation cap.
@@ -453,7 +455,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 and 0.9.0-alpha.8 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, and 0.9.0-alpha.9 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 
@@ -521,7 +523,7 @@ Coordinate authority is deterministic. The effective precedence is:
 7. relative-only location
 8. unknown
 
-A locked or higher-authority coordinate may not be silently moved by lower authority. Unlocking a manual coordinate explicitly permits a later grounded higher-ranked observation to correct it. Provider-authored rebuild mutations are narrative authority, not operator authority, and therefore obey the same base-map, lock, coordinate-rank, and manual-metadata restrictions as automatic capture. Connection-profile transport extraction may accept either an already-extracted text/content string or the raw OpenAI-compatible `choices[0].message.content` field; hidden `reasoning_content` is never capture evidence or output. Provider wire compatibility may repair only deterministic, unambiguous field-name aliases whose values preserve the canonical meaning (currently `category` -> `kind` and `description` -> `summary`). Canonical and alias fields that conflict remain structurally invalid; compatibility repair must be counted in bounded diagnostics and must not weaken atomic rebuild failure.
+A locked or higher-authority coordinate may not be silently moved by lower authority. Unlocking a manual coordinate explicitly permits a later grounded higher-ranked observation to correct it. Provider-authored rebuild mutations are narrative authority, not operator authority, and therefore obey the same base-map, lock, coordinate-rank, and manual-metadata restrictions as automatic capture. Provider response extraction may unwrap a standard text envelope such as `choices[0].message.content`, but hidden/reasoning fields are never capture output. Provider wire compatibility may repair only deterministic, unambiguous field-name aliases whose values preserve the canonical meaning (currently `category` -> `kind` and `description` -> `summary`). Canonical and alias fields that conflict remain structurally invalid; compatibility repair must be counted in bounded diagnostics and must not weaken atomic rebuild failure. Connection-profile transport extraction may accept either an already-extracted text/content string or the raw OpenAI-compatible `choices[0].message.content` field; hidden `reasoning_content` is never capture evidence or output.
 
 Precise X/Y must never be invented merely because a location exists. Relative-only and unknown are valid durable states.
 

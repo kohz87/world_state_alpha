@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { buildCapturePrompt, CAPTURE_SYSTEM_PROMPT } from '../capture.js';
+import { parseCaptureJson } from '../capture-wire.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
 const phaseHost = ['phase7-coexistence-host', 'phase8-release-hardening', 'phase9-spatial-continuity'].includes(inventory.stage);
@@ -54,5 +55,19 @@ const sample = buildCapturePrompt({
 });
 const chars = sample.systemPrompt.length + sample.prompt.length;
 if (chars > 24000) throw new Error(`sample capture prompt exceeds Phase 2 compactness budget: ${chars}`);
+
+const fencedSample = '```json\n{"mutations":[]}\n```';
+if (!Array.isArray(parseCaptureJson(fencedSample).mutations)) {
+  throw new Error('capture parser no longer accepts one singly fenced JSON object');
+}
+let surroundingProseRejected = false;
+try {
+  parseCaptureJson('result:\n' + fencedSample);
+} catch {
+  surroundingProseRejected = true;
+}
+if (!surroundingProseRejected) {
+  throw new Error('capture parser accepted prose outside the single JSON object/fence');
+}
 
 console.log(`World State Alpha Phase 2 validation passed: ${required.length} capture modules; sample prompt ${chars} chars.`);
