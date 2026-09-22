@@ -6,10 +6,12 @@ import {
   buildWorldStateChatKey,
   getWorldStateChatIdentity,
   getWorldStateChatKey,
+  parseWorldStateChatKey,
 } from '../host-identity.js';
 import {
   WORLD_STATE_HOST_FILE_PREFIX,
   createSillyTavernWorldStateStorageAdapter,
+  worldStateHostDeterministicPath,
   worldStateHostFileName,
 } from '../host-storage.js';
 import { createState } from '../state-core.js';
@@ -41,6 +43,12 @@ test('Phase 7 owner-qualified identity distinguishes characters, groups, and no-
   };
 
   assert.equal(buildWorldStateChatKey('chat', 'alice.png', 'Shared Name.jsonl'), 'chat:alice.png:Shared%20Name');
+  assert.deepEqual(parseWorldStateChatKey('chat:alice.png:Shared%20Name'), {
+    key: 'chat:alice.png:Shared%20Name',
+    kind: 'chat',
+    ownerId: 'alice.png',
+    chatId: 'Shared Name',
+  });
   assert.notEqual(getWorldStateChatKey(one), getWorldStateChatKey(two));
   assert.notEqual(getWorldStateChatKey(one), getWorldStateChatKey(group));
   assert.match(getWorldStateChatKey(group), /^group:/);
@@ -61,6 +69,10 @@ test('Phase 7 host sidecar filenames are World State-only and deterministic', ()
   assert.equal(first, second);
   assert.equal(first.startsWith(WORLD_STATE_HOST_FILE_PREFIX), true);
   assert.equal(first, 'world-state-alpha-abc123.json');
+  assert.equal(
+    worldStateHostDeterministicPath('world_state_alpha/abc123.json'),
+    '/user/files/world-state-alpha-abc123.json',
+  );
   assert.doesNotMatch(first, /npc|delta/i);
 });
 
@@ -255,7 +267,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -311,6 +323,7 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
     'CHAT_LOADED',
     'CHAT_CHANGED',
     'CHARACTER_RENAMED',
+    'CHARACTER_RENAMED_IN_PAST_CHAT',
     'CHARACTER_DELETED',
     'CHAT_RENAMED',
     'CHAT_DELETED',
@@ -342,12 +355,21 @@ test('host identity/settings lifecycle preserves continuity across rename and di
   const source = fs.readFileSync('index.js', 'utf8');
 
   assert.match(source, /async function migrateWorldStateChatKey\(oldKey, newKey\)/);
-  assert.match(source, /settings\.dataFiles\[newKey\] = committed;\s*delete settings\.dataFiles\[oldKey\]/);
+  assert.match(source, /settings\.dataFiles\[newKey\] = committed;[\s\S]*settings\.sidecarTombstones\[oldKey\][\s\S]*delete settings\.dataFiles\[oldKey\]/);
   assert.match(source, /async function handleCharacterRenamed\(oldAvatar, newAvatar\)/);
-  assert.match(source, /function handleCharacterDeleted\(eventData = \{\}\)/);
+  assert.match(source, /async function handleCharacterRenamedInPastChat\(messages, oldAvatar, newAvatar\)/);
+  assert.match(source, /rebaseLineageMetadata\(/);
+  assert.match(source, /async function handleCharacterDeleted\(eventData = \{\}\)/);
   assert.match(source, /async function handleChatRenamed\(eventData = \{\}\)/);
-  assert.match(source, /function handleChatDeleted\(eventData, forcedKind = 'chat'\)/);
+  assert.match(source, /async function handleChatDeleted\(eventData, forcedKind = 'chat'\)/);
+  assert.match(source, /async function hostCharacterChatPresence\(/);
+  assert.match(source, /function hostGroupChatPresence\(/);
+  assert.match(source, /async function resolveDeletedWorldStateChatKey\(/);
+  assert.match(source, /settings\.sidecarTombstones\[chatKey\]/);
   assert.match(source, /delete settings\.dataFiles\[chatKey\]/);
+  assert.match(source, /async function neutralizeRetiredSidecar\(chatKey, pointer\)/);
+  assert.match(source, /retiredPointer = await neutralizeRetiredSidecar\(chatKey, retiredPointer\)/);
+  assert.match(source, /retiredSourcePointer = await neutralizeRetiredSidecar\(oldKey, sourcePointer\)/);
 
   assert.match(source, /function invalidateChatOperations\(chatKey = currentChatKey\(\)\)[\s\S]*cancelWorldStateRequests\(\{ chatKey \}\)/);
   for (const id of [
@@ -369,6 +391,43 @@ test('host identity/settings lifecycle preserves continuity across rename and di
     source,
     /settings\.spatialEnabled && state\.spatial\?\.baseMapRef\?\.id && !baseMap[\s\S]*Rebuild paused because the attached Spatial base map is unavailable/,
   );
+});
+
+test('host hydration repairs crash-window pointers and rejects stale ownership completion', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+
+  assert.match(source, /hostStorage\.deterministicPath\?\.\(makeSidecarPath\(chatKey\)\)/);
+  assert.match(source, /function pointerFromPayload\(path, payload\)/);
+  assert.match(source, /payload\.revision/);
+  assert.match(source, /loaded\.repairPointer && loaded\.pointer/);
+  assert.match(source, /settings\.dataFiles\[chatKey\] = loaded\.pointer/);
+  assert.match(source, /await persistCriticalHostSettings\('recovered World State sidecar pointer'\)/);
+  assert.match(source, /const ownerEpoch = ownershipEpoch\(chatKey\)/);
+  assert.match(source, /assertOwnershipEpoch\(chatKey, ownerEpoch\)/);
+  assert.match(source, /error\?\.code !== 'WORLD_STATE_STALE_OWNERSHIP'/);
+  assert.match(source, /sidecarTombstones/);
+});
+
+test('host panel actions are bound to the chat that opened the panel', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+
+  assert.match(source, /let panelChatKey = 'no-chat'/);
+  assert.match(source, /panelChatKey = chatKey;[\s\S]*getState: \(\) => getCachedState\(chatKey\)/);
+  assert.match(source, /onMaintenanceAction: actionId => applyMaintenanceAction\(actionId, chatKey\)/);
+  assert.match(source, /onSpatialAction: \(actionId, payload\) => applySpatialAction\(actionId, payload, chatKey\)/);
+  assert.match(source, /if \(panelChatKey !== 'no-chat' && panelChatKey !== chatKey\) closeWorldStatePanel\(\)/);
+  assert.match(source, /currentChatKey\(\) !== chatKey\) return;/);
+});
+
+test('MESSAGE_RECEIVED capture is backgrounded instead of blocking SillyTavern rendering', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const start = source.indexOf('function registerEvents()');
+  const end = source.indexOf('async function init()', start);
+  const body = source.slice(start, end);
+
+  assert.match(body, /MESSAGE_RECEIVED[\s\S]*void handleAssistantMessage\(messageId\)\.catch/);
+  assert.doesNotMatch(body, /MESSAGE_RECEIVED[^\n]*=>\s*handleAssistantMessage\(messageId\)/);
+  assert.match(body, /MESSAGE_SENT[^\n]*=>\s*handleUserMessage\(messageId\)/);
 });
 
 test('host publishes mutated canonical state only after durable sidecar success', () => {

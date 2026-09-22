@@ -195,6 +195,7 @@ Deliverables:
 - v0.9.0-alpha.1 version synchronization and release documentation
 - v0.9.0-alpha.2 continuity hardening: production base-map host storage, Spatial editor correctness, host identity migration, runtime cancellation/serialization, retrieval/rebuild recovery, and collapsible settings
 - v0.9.0-alpha.3 settings polish: replace the custom collapse shell with SillyTavern's standard inline-drawer structure and host chevron behavior
+- v0.9.0-alpha.4 hardening: deterministic sidecar recovery, ownership epochs/tombstones, historical rename-lineage migration, owner-probed deletion, chat-bound panel actions, bounded host caches, stale Spatial-ID rejection, co-located Ternia anchor preservation, and profileless generic-map handling
 
 Acceptance:
 

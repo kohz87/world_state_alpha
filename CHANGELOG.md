@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.0-alpha.4 - Host identity and spatial hardening
+
+### Fixed
+
+- Recovered deterministic World State sidecars when extension-settings pointers are missing or stale, repaired recovered revision/checksum metadata, and synchronously persisted critical ownership transitions.
+- Added ownership epochs so stale hydration/write completions cannot repopulate continuity after rename/delete lifecycle changes.
+- Hardened chat/group/character deletion with authoritative owner probing, fail-closed ambiguity handling, durable lifecycle tombstones, and best-effort neutralization of retired sidecars so deleted continuity cannot reappear after a settings crash window.
+- Migrated `CHARACTER_RENAMED_IN_PAST_CHAT` lineage metadata so SillyTavern's historical character-name rewrites do not look like destructive branch changes or roll valid World State backward.
+- Bound an open World State panel and its maintenance/spatial actions to the chat that opened it, closing the panel on navigation instead of retargeting stale UI callbacks.
+- Moved automatic `MESSAGE_RECEIVED` capture off SillyTavern's awaited render/save event path while retaining per-chat serialization and stale-result guards.
+- Bounded dormant chat-state and base-map caches instead of allowing long sessions to grow them without limit.
+- Rejected Spatial updates carrying an unknown explicit `locationId` instead of accidentally turning stale cross-chat UI identities into new locations.
+- Preserved distinct named Ternia anchors that legitimately share the same coarse coordinate instead of merging them solely by coordinate equality.
+- Kept generic base maps profileless when no coordinate profile is explicitly supplied, preventing hidden Cartesian assumptions from entering profile-neutral campaigns.
+
+### Preserved
+
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+- Reality Core remains `fact` / `development` only; Spatial Continuity remains a sibling subsystem.
+- Base-map sources remain read-only, provider routing remains request-scoped, and Megumin/Ukiyo behavior is unchanged.
+
 ## 0.9.0-alpha.3 - Standard settings drawer
 
 ### Changed

@@ -25,18 +25,21 @@
 | Mobile unreadability | desktop panel overflows or tiny controls block maintenance/inspection | <=700px full-screen stacked layout, >=44px tabs, <=420px one-column grids | static responsive CSS tests + later live browser acceptance |
 | Host namespace collision | Alpha overwrites/reads another extension's settings, prompt, DOM, global, or file | isolated `world_state_alpha` / `world-state-alpha-` namespaces + no dependency/adapters | pinned Delta coexistence/static host tests |
 | Cross-chat sidecar collision | equal chat filename shares state across character/group owners | owner-qualified character/group chat key + hashed logical sidecar | host identity fixture |
-| Rename identity loss | character/avatar or chat filename rename strands the old sidecar pointer and appears to reset continuity | durable owner-key migration on CHARACTER_RENAMED / CHAT_RENAMED, destination-collision fail-closed | host identity lifecycle tests |
-| Deleted-name resurrection | deleted chat/group-chat/character pointer survives and is reused by a later identity/name | remove active pointer/cache ownership on delete lifecycle | host delete lifecycle tests |
+| Rename identity loss | character/avatar or chat filename rename strands the old sidecar pointer, or SillyTavern rewrites historical character names and makes stored lineage look divergent | durable owner-key migration, deterministic pointer recovery, `CHARACTER_RENAMED_IN_PAST_CHAT` lineage rebase, destination-collision fail-closed | host identity/lineage lifecycle tests |
+| Deleted-name resurrection | deleted chat/group-chat/character pointer or sidecar survives and is reused by a later identity/name or after a settings-save crash | authoritative owner probe, lifecycle tombstone, ownership epoch, retired-sidecar neutralization, fail-closed ambiguity | host delete/crash-window lifecycle tests |
 | Hydration clobber | missing/corrupt durable sidecar replaced by empty state | pointer-preserving fail-closed hydration; writes blocked while hydration error exists | hydration/static transaction tests |
 | Stale host completion | capture/evolution commits after chat/branch/state or routing/enablement settings changed | chat key + lineage + state epoch currentness guard + request cancellation | stale-operation/settings host checks |
 | Manual/automatic write race | operator edit and capture persist competing revisions | one per-chat work queue for automatic, maintenance and Spatial manual mutations | host queue/static tests |
+| Stale panel retarget | panel opened on chat A invokes maintenance/spatial action after navigation and mutates chat B | bind panel controller callbacks/state projection to opening chat key and close panel on navigation | host panel ownership test |
+| Render-path blocking | awaited MESSAGE_RECEIVED listener holds SillyTavern render/save completion open for provider latency | background capture dispatch plus existing per-chat queue/currentness guards | host event wiring test |
+| Host cache growth | long session accumulates hydrated chat/base-map objects indefinitely | bounded LRU-style chat/base-map caches; never evict active/panel/in-flight owner | host cache/static measurement |
 | Host framework creep | launcher/watchdog/commands become a second UI/runtime system | settings card + existing Phase 6 panel only; no MutationObserver/generic commands | static source validator |
 | Live co-install mismatch | deterministic isolation passes but real ST/Delta event order differs | keep host shell independent and run explicit live simultaneous-install acceptance | Phase 8 live co-install run |
 | Over-ontology | schema accretes genre assumptions | no mandatory typed anchors/scope; universality fixtures | schema lint |
 | Incremental index drift | In-memory relevance index becomes out of sync with mutated state | `reduceMutations` computes exact `indexDelta`; incremental delta tested against fresh index | incremental update fixture |
 | Compaction rollback corruption | Pruned evidence causes missing reference errors on branch swipe | `undo.evidence` retains compacted entries; undo patch restores uncompacted state | 50-step compaction rollback test |
 | Non-deterministic release zip | Zip bytes vary between builds due to archive timestamps or ordering | fixed DOS timestamps (2026-01-01) and alphabetical entry sorting | package hash reproducibility test |
-| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.3) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.4) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
 
 
 | Risk | Failure mode | Mitigation | Verification |
@@ -50,6 +53,9 @@
 | Base-map mutation | campaign edit corrupts shared registry | immutable parsed base + campaign override layer | base immutability test |
 | Base-map host mismatch | host-neutral fake adapter passes while production SillyTavern import/reload cannot store or fetch the source | production storage adapter exposes and tests the JSON file API used by host-base-map | Phase 7 production-adapter test |
 | Sticky base-map outage | transient source read failure is cached as permanent absence | cache successful base maps only; failed reads retry while automatic Spatial work remains fail-closed | host lifecycle/static test |
+| Co-located anchor collapse | distinct city/institution/landmark sharing one coarse coordinate is merged as one place | deduplicate Ternia sources by explicit identity/name, never coordinate equality alone | co-located anchor parser test |
+| Implicit generic profile | generic map with no coordinate system silently inherits Cartesian/True-North assumptions | keep absent generic profile as null; derive only from explicit profile | profileless generic-map test |
+| Stale Spatial identity | old-chat panel/provider carries unknown explicit locationId and reducer mints it as a new place | explicit unknown locationId fails closed; creates omit locationId and use owned deterministic ID | stale-ID reducer test |
 | Cross-campaign leakage | generated location appears in another chat | deterministic IDs include chat owner; Spatial lives inside per-chat sidecar | campaign isolation test |
 | Dangling spatial graph | delete/merge leaves invalid relations/routes | reducer rewrites/removes graph references | merge/delete tests |
 | Spatial scan regression | large base/campaign map scanned every turn | ephemeral spatial relevance index + cached base map | 1000-location measurement/test |
