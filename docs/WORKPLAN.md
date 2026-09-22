@@ -194,6 +194,7 @@ Deliverables:
 - branch-journal/rollback/export/import/rebuild integration
 - v0.9.0-alpha.1 version synchronization and release documentation
 - v0.9.0-alpha.2 continuity hardening: production base-map host storage, Spatial editor correctness, host identity migration, runtime cancellation/serialization, retrieval/rebuild recovery, and collapsible settings
+- v0.9.0-alpha.3 settings polish: replace the custom collapse shell with SillyTavern's standard inline-drawer structure and host chevron behavior
 
 Acceptance:
 

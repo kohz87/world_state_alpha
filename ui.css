@@ -697,30 +697,18 @@
 
 /* Phase 7 SillyTavern settings mount. Kept outside the panel namespace but World State-owned. */
 #world_state_alpha_settings.world-state-alpha-settings {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-  margin: 12px 0;
-  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.12));
-  border-radius: 12px;
-  background: var(--black30a, rgba(0,0,0,.18));
   color: var(--SmartThemeBodyColor, inherit);
   line-height: 1.4;
 }
 
-#world_state_alpha_settings .world-state-alpha-settings-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 0 2px;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
+#world_state_alpha_settings .world-state-alpha-version {
+  opacity: .65;
+  font-size: .75em;
+  font-weight: 500;
 }
 
-#world_state_alpha_settings .world-state-alpha-settings-head::-webkit-details-marker {
-  display: none;
+#world_state_alpha_settings .world-state-alpha-settings-drawer {
+  padding: 10px 4px 4px;
 }
 
 #world_state_alpha_settings .world-state-alpha-settings-body {
@@ -728,57 +716,9 @@
   gap: 14px;
 }
 
-#world_state_alpha_settings:not([open]) .world-state-alpha-settings-body {
-  display: none;
-}
-
-#world_state_alpha_settings .world-state-alpha-settings-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-#world_state_alpha_settings .world-state-alpha-settings-chevron {
-  display: inline-block;
-  font-size: .9rem;
-  line-height: 1;
-  transition: transform 120ms ease;
-}
-
-#world_state_alpha_settings:not([open]) .world-state-alpha-settings-chevron {
-  transform: rotate(-90deg);
-}
-
-#world_state_alpha_settings .world-state-alpha-settings-head:focus-visible {
-  outline: 2px solid var(--SmartThemeQuoteColor, rgba(140,184,255,.72));
-  outline-offset: 4px;
-  border-radius: 6px;
-}
-
-#world_state_alpha_settings .world-state-alpha-settings-head > div {
-  display: grid;
-  gap: 2px;
-}
-
-#world_state_alpha_settings .world-state-alpha-settings-head strong {
-  font-size: 1rem;
-  line-height: 1.2;
-}
-
-#world_state_alpha_settings .world-state-alpha-settings-head small,
-#world_state_alpha_settings .world-state-alpha-settings-head > span,
 #world_state_alpha_settings .world-state-alpha-settings-group-head span,
 #world_state_alpha_settings .world-state-alpha-field > span {
   opacity: .66;
-}
-
-#world_state_alpha_settings .world-state-alpha-settings-head small {
-  font-size: .76rem;
-}
-
-#world_state_alpha_settings .world-state-alpha-settings-head > span {
-  flex: 0 0 auto;
-  font-size: .74rem;
 }
 
 #world_state_alpha_settings .world-state-alpha-settings-group {
@@ -885,10 +825,6 @@
 }
 
 @media (max-width: 700px) {
-  #world_state_alpha_settings.world-state-alpha-settings {
-    padding: 13px;
-  }
-
   #world_state_alpha_settings .world-state-alpha-settings-grid {
     grid-template-columns: 1fr;
   }

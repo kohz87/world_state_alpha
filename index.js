@@ -37,7 +37,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.2';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.3';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1005,12 +1005,16 @@ function syncSettingsControls() {
 }
 
 function buildSettingsCard() {
-  const section = document.createElement('details');
+  const section = document.createElement('div');
   section.id = WORLD_STATE_SETTINGS_ID;
-  section.className = 'world-state-alpha-settings';
-  section.open = true;
+  section.className = 'extension_container world-state-alpha-settings';
   section.innerHTML = [
-    '<summary class="world-state-alpha-settings-head"><div><strong>World State Alpha</strong><small>World continuity</small></div><span class="world-state-alpha-settings-meta">v' + WORLD_STATE_ALPHA_VERSION + '<span class="world-state-alpha-settings-chevron" aria-hidden="true">▾</span></span></summary>',
+    '<div class="inline-drawer">',
+    '<div class="inline-drawer-toggle inline-drawer-header world-state-alpha-settings-head">',
+    '<b>World State Alpha <span class="world-state-alpha-version">v' + WORLD_STATE_ALPHA_VERSION + '</span></b>',
+    '<div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>',
+    '</div>',
+    '<div class="inline-drawer-content world-state-alpha-settings-drawer">',
     '<div class="world-state-alpha-settings-body">',
     '<div class="world-state-alpha-settings-group">',
     '<div class="world-state-alpha-settings-group-head"><strong>Continuity</strong><span>Capture and inject established world state.</span></div>',
@@ -1030,6 +1034,8 @@ function buildSettingsCard() {
     '<label class="world-state-alpha-field"><span>Spatial injection budget</span><input id="world_state_alpha_spatial_inject_budget" type="number" min="1" max="2400" step="1"></label>',
     '</div>',
     '<button id="world_state_alpha_open" type="button" class="menu_button world-state-alpha-open">Open World State</button>',
+    '</div>',
+    '</div>',
     '</div>',
   ].join('');
   return section;
