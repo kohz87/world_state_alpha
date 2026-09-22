@@ -5,6 +5,7 @@ import {
   dispatchWorldStateRequest,
   selectedWorldStateProfileId,
   worldStateInflightCount,
+  worldStateProfileOptions,
 } from '../provider-routing.js';
 
 const payload = {
@@ -78,6 +79,32 @@ test('selected Connection Profile is request-scoped and does not alter RP select
   assert.ok(custom.signal instanceof AbortSignal);
   assert.deepEqual(ctx.extensionSettings, before);
   assert.equal(selectedWorldStateProfileId(ctx), 'fast');
+});
+
+test('profile options expose supported SillyTavern profiles and preserve a missing selection', () => {
+  const { ctx, profiles } = fixture('fast');
+  profiles.push(
+    { id: 'slow', name: 'Slow but careful', supported: true },
+    { id: 'image-only', name: 'Image only', supported: false },
+    { id: '', name: 'Invalid', supported: true },
+  );
+  assert.deepEqual(worldStateProfileOptions(ctx), [
+    { id: '', name: 'Use current roleplay connection' },
+    { id: 'fast', name: 'Fast' },
+    { id: 'slow', name: 'Slow but careful' },
+  ]);
+
+  ctx.extensionSettings.world_state_alpha.connectionProfile = 'deleted';
+  assert.deepEqual(worldStateProfileOptions(ctx).at(-1), {
+    id: 'deleted',
+    name: 'Unavailable profile (deleted)',
+  });
+
+  ctx.extensionSettings.disabledExtensions.push('connection-manager');
+  assert.deepEqual(worldStateProfileOptions(ctx), [
+    { id: '', name: 'Use current roleplay connection' },
+    { id: 'deleted', name: 'Unavailable profile (deleted)' },
+  ]);
 });
 
 test('missing selected profile fails closed with no fallback', async () => {

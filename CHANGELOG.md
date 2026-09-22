@@ -17,6 +17,10 @@
 - Spatial branch rollback, stale-result rejection, export/import, rebuild, and campaign-isolation coverage.
 - Spatial live-acceptance scenarios for real Ternia registry import and Megumin continuity.
 
+### Fixed
+
+- World State connection routing now exposes SillyTavern Connection Profiles as a supported-profile dropdown instead of requiring a raw profile ID, while preserving the default RP route and visibly retaining deleted selections as unavailable.
+
 ### Preserved
 
 - Reality Core retains only `fact` and `development` record kinds.

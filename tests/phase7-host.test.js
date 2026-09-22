@@ -353,6 +353,10 @@ test('host settings mount reuses Phase 6 panel without a second UI framework or 
   assert.match(source, /#extensionsMenu/);
   assert.match(source, /createWorldStateUiController\(\{/);
   assert.match(source, /panelRoot\.id\s*=\s*WORLD_STATE_PANEL_ROOT_ID/);
+  assert.match(source, /Connection profile <select id="world_state_alpha_connection_profile"/);
+  assert.match(source, /worldStateProfileOptions\(connectionProfileUiContext\(\), selected\)/);
+  assert.match(source, /addEventListener\('focusin'/);
+  assert.doesNotMatch(source, /Connection Profile ID <input/);
   assert.doesNotMatch(source, /MutationObserver|pointerdown|pointermove|watchdog|registerSlash|SlashCommand/);
 });
 
