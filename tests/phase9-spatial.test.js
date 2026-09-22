@@ -33,7 +33,7 @@ import {
   unitsToKm,
   validateBounds,
 } from '../spatial-core.js';
-import { parseBaseMap } from '../spatial-base-map.js';
+import { parseBaseMap, parseGenericBaseMap, parseTerniaBaseMap } from '../spatial-base-map.js';
 import { loadBaseMapSource, storeBaseMapSource } from '../host-base-map.js';
 import { processSpatialCapture } from '../spatial-capture.js';
 import { validateSpatialEnvelope } from '../spatial-wire.js';
@@ -329,6 +329,56 @@ test('Authority ranking and precedence hierarchy', () => {
   assert.ok(derived > relative, 'derived > relative');
   assert.ok(relative > unknown, 'relative > unknown');
   assert.equal(authorityRank('invalid_authority'), 0);
+});
+
+test('unknown explicit Spatial location IDs fail closed instead of becoming creates', () => {
+  const spatial = createSpatialState();
+  const result = reduceSpatialMutations(spatial, {
+    chatKey: 'chat:test:stale-spatial-id',
+    messageId: 1,
+    lineageKey: 'ln1',
+    operation: 'manual',
+    mutations: [{
+      action: 'upsert_location',
+      locationId: 'wsloc_from_another_chat',
+      name: 'Stale Old-Chat Inn',
+      type: 'inn',
+    }],
+  }, null, { visibleLocations: [] });
+
+  assert.equal(result.applied.length, 0);
+  assert.equal(result.spatial.locations.length, 0);
+  assert.match(result.rejected[0].reason, /locationId.*existing location/i);
+});
+
+test('Ternia base-map parsing preserves distinct co-located named anchors', () => {
+  const baseMap = parseTerniaBaseMap({
+    world: 'Ternia',
+    version: 'audit',
+    coordinate_system: {
+      north: '+y',
+      east: '+x',
+      unit_km: 5,
+      bounds: { x: [-10, 10], y: [-10, 10] },
+    },
+    locations: [
+      { id: 'city', name: 'Crownspire City', type: 'capital', coord: [2, 3] },
+      { id: 'academy', name: 'Royal Academy', type: 'institution', coord: [2, 3] },
+    ],
+  });
+
+  assert.equal(baseMap.locations.length, 2);
+  assert.deepEqual(baseMap.locations.map(item => item.name).sort(), ['Crownspire City', 'Royal Academy']);
+});
+
+test('generic base map without an explicit coordinate profile remains profileless', () => {
+  const baseMap = parseGenericBaseMap({
+    name: 'Profileless Generic Map',
+    version: '1',
+    locations: [{ name: 'Dockside', type: 'district' }],
+  });
+
+  assert.equal(baseMap.profile, null);
 });
 
 test('Base map parsing on real Ternia v0.9.10 sample fixture', () => {

@@ -114,6 +114,14 @@ No fixture may require schema code specific to its setting.
 - server-side sidecar revision differs from pointer -> conflict before upload
 - server upload returns a non-logical path -> pointer stores returned path, not guessed filename
 - existing sidecar pointer GET/parse fails -> no empty replacement write
+- missing/stale settings pointer with intact deterministic sidecar -> recover exact owned state and repair revision/checksum pointer
+- rename/delete while hydration or write is in flight -> ownership epoch discards stale completion
+- character rename that rewrites past chat display names -> proven lineage metadata rebases without rolling back current world truth
+- duplicate chat filename under multiple owners then bare CHAT_DELETED -> authoritative host ownership probe selects only the removed owner; ambiguity preserves data
+- whole-group deletion event emitted before host group list settles -> one delayed owner-resolution retry, never current-group guessing
+- delete/rename ownership retirement -> lifecycle tombstone plus neutralized sidecar prevents stale-state resurrection after settings-save crash
+- World State panel opened on chat A then navigation to chat B -> stale panel closes and cannot mutate chat B
+- MESSAGE_RECEIVED capture -> listener returns without awaiting provider work; per-chat queue/currentness still serialize commit
 - chat/branch changes during capture/evolution/rebuild -> stale result discarded
 - Alpha + Delta pinned namespace fixture -> no settings/prompt/DOM/global/file/load-order collision
 - disabling Alpha/injection -> clear only `world_state_alpha_private_continuity`
@@ -220,21 +228,23 @@ Base map:
 
 67. Generic Cartesian base map parses without Ternia-specific code path.
 68. Ternia v0.9.10 adapter reads profile, major locations and route anchors from the supplied registry shape.
-69. Base source remains immutable and campaign overrides remain per-chat.
-70. Route draw/path geometry is never treated as straight-line displacement.
+69. Distinct named Ternia anchors sharing one coarse coordinate remain distinct unless identity/name proves they are the same source location.
+70. Generic base map with no explicit coordinate profile remains profileless.
+71. Base source remains immutable and campaign overrides remain per-chat.
+72. Route draw/path geometry is never treated as straight-line displacement.
 
 Manual/UI:
 
-71. Spatial panel exposes add/save/authority/lock/archive/delete/merge/override/relative/distance/route fields.
-72. Delete removes dangling relations/route references.
-73. Merge rewires relations/routes and archives the duplicate source.
-74. Base location is read-only until Create Campaign Override.
-75. Provenance/evidence is visible without exposing mutable canonical references.
+73. Spatial panel exposes add/save/authority/lock/archive/delete/merge/override/relative/distance/route fields.
+74. Delete removes dangling relations/route references.
+75. Merge rewires relations/routes and archives the duplicate source.
+76. Base location is read-only until Create Campaign Override.
+77. Provenance/evidence is visible without exposing mutable canonical references.
 
 Performance/injection:
 
-76. Disabled Spatial produces no Spatial injection and no extra provider call.
-77. Reality + Spatial extraction shares one eligible capture request.
-78. 1000-location campaign/base projection retrieves a bounded candidate subset.
-79. Injection remains budgeted and does not dump the map.
-80. Normal turns do not reparse the base source or scan every route/polyline.
+78. Disabled Spatial produces no Spatial injection and no extra provider call.
+79. Reality + Spatial extraction shares one eligible capture request.
+80. 1000-location campaign/base projection retrieves a bounded candidate subset.
+81. Injection remains budgeted and does not dump the map.
+82. Normal turns do not reparse the base source or scan every route/polyline.

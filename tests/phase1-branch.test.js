@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   chatLineage,
   commitMutationBoundary,
+  rebaseLineageMetadata,
   reconcileBranch,
   seedRootCheckpoint,
 } from '../branch.js';
@@ -124,4 +125,43 @@ test('deep destructive history change fails closed when exact boundary aged out'
   assert.equal(reconciled.exactRestored, false);
   assert.equal(reconciled.state.records[0].summary, currentSummary);
   assert.equal(reconciled.state.recoveryRequired.reason, 'exact-boundary-unavailable');
+});
+
+
+test('cosmetic character-name rewrite can rebase branch ownership without rolling back world state', () => {
+  const oldChat = [{
+    name: 'Old Character Name',
+    is_user: false,
+    is_system: false,
+    mes: 'The East Gate has collapsed.',
+  }];
+  let state = seedRootCheckpoint(createState('rename-lineage'));
+  state = apply(state, oldChat, {
+    action: 'create',
+    kind: 'fact',
+    summary: 'The East Gate is collapsed.',
+    anchors: ['East Gate'],
+  });
+  assert.equal(state.records.length, 1);
+
+  const newChat = [{
+    name: 'New Character Name',
+    is_user: false,
+    is_system: false,
+    mes: 'The East Gate has collapsed.',
+  }];
+  const previousLineage = chatLineage(oldChat);
+  const nextLineage = chatLineage(newChat);
+  assert.notEqual(previousLineage[0].lineageKey, nextLineage[0].lineageKey);
+
+  const rebased = rebaseLineageMetadata(state, previousLineage, nextLineage);
+  assert.equal(rebased.lineage[0].lineageKey, nextLineage[0].lineageKey);
+  assert.equal(rebased.rollbackHead.lineageKey, nextLineage[0].lineageKey);
+  assert.equal(rebased.records.length, 1);
+
+  const reconciled = reconcileBranch(rebased, newChat);
+  assert.equal(reconciled.failClosed, false);
+  assert.equal(reconciled.action, 'same');
+  assert.equal(reconciled.state.records.length, 1);
+  assert.equal(reconciled.state.records[0].summary, 'The East Gate is collapsed.');
 });

@@ -784,6 +784,11 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         }
       }
 
+      if (targetId && !existingLoc) {
+        rejected.push({ proposal, reason: 'locationId does not reference a visible existing location' });
+        continue;
+      }
+
       if (!existingLoc && !targetId) {
         // Name consolidation for duplicates
         const normName = name.toLowerCase();

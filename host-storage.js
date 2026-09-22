@@ -56,6 +56,10 @@ export function worldStateHostFileName(path) {
     : WORLD_STATE_HOST_FILE_PREFIX + leaf;
 }
 
+export function worldStateHostDeterministicPath(path) {
+  return '/user/files/' + worldStateHostFileName(path);
+}
+
 function isLogicalPath(path) {
   return /^world_state_alpha\//.test(text(path));
 }
@@ -173,5 +177,11 @@ export function createSillyTavernWorldStateStorageAdapter({
     });
   }
 
-  return Object.freeze({ read, write, uploadJsonFile, fetchJsonFile });
+  return Object.freeze({
+    read,
+    write,
+    uploadJsonFile,
+    fetchJsonFile,
+    deterministicPath: worldStateHostDeterministicPath,
+  });
 }

@@ -311,10 +311,12 @@ export function parseTerniaBaseMap(raw) {
     }
   }
 
-  // Deduplicate same-name / same-anchor locations deterministically
+  // Deduplicate by explicit source identity or normalized name only.
+  // Coordinate equality is corroboration, never identity: a city, academy,
+  // palace, gate, or district may legitimately share one coarse map anchor.
   const locationMap = new Map(); // key -> unified location candidate
   const nameToKey = new Map();
-  const coordToKey = new Map();
+  const sourceIdToKey = new Map();
 
   for (let index = 0; index < rawSources.length; index += 1) {
     const src = rawSources[index];
@@ -322,15 +324,22 @@ export function parseTerniaBaseMap(raw) {
     if (!locName) continue;
     const coord = extractCoord(src);
     const normName = locName.toLowerCase();
-    const coordSig = (coord.x !== null && coord.y !== null) ? `${coord.x.toFixed(2)},${coord.y.toFixed(2)}` : null;
+    const sourceId = boundedText(src.id, 120);
 
-    let existingKey = nameToKey.get(normName) || (coordSig ? coordToKey.get(coordSig) : null);
+    let existingKey = sourceId ? sourceIdToKey.get(sourceId) : nameToKey.get(normName);
+    if (!existingKey && sourceId) {
+      const byName = nameToKey.get(normName);
+      const namedCandidate = byName ? locationMap.get(byName) : null;
+      if (namedCandidate && !namedCandidate._sourceId) existingKey = byName;
+    }
 
     if (existingKey && locationMap.has(existingKey)) {
-      // Merge into existing candidate
+      // Merge another representation of the same explicit/name identity.
       const existing = locationMap.get(existingKey);
+      if (sourceId && !existing._sourceId) existing._sourceId = sourceId;
+      if (sourceId) sourceIdToKey.set(sourceId, existingKey);
       if (src._priority < existing._priority) {
-        // Preferred source overwrites primary name/type
+        // Preferred source overwrites primary name/type.
         existing.name = locName;
         existing.type = boundedText(src.type, SPATIAL_LIMITS.typeChars) || existing.type;
         existing._priority = src._priority;
@@ -338,12 +347,10 @@ export function parseTerniaBaseMap(raw) {
       if ((existing.coord.x === null || existing.coord.y === null) && coord.x !== null && coord.y !== null) {
         existing.coord = coord;
       }
-      // Merge context/description
       const extraContext = boundedText(src.description || src.context || src.notes, SPATIAL_LIMITS.contextChars);
       if (extraContext && !existing.context.includes(extraContext)) {
         existing.context = existing.context ? `${existing.context} ${extraContext}`.slice(0, SPATIAL_LIMITS.contextChars) : extraContext;
       }
-      // Merge routes
       const srcRoutes = Array.isArray(src.routes || src.routeRefs) ? (src.routes || src.routeRefs) : [];
       for (const r of srcRoutes) {
         if (typeof r === 'string' && r.trim() && !existing.routeRefs.includes(r.trim())) {
@@ -351,7 +358,7 @@ export function parseTerniaBaseMap(raw) {
         }
       }
     } else {
-      const key = `bloc_cand_${normName}_${coordSig || index}`;
+      const key = `bloc_cand_${sourceId || normName}_${index}`;
       const context = boundedText(src.description || src.context || src.notes, SPATIAL_LIMITS.contextChars);
       const rawRoutes = Array.isArray(src.routes || src.routeRefs) ? (src.routes || src.routeRefs) : [];
       const routeRefs = [];
@@ -368,11 +375,12 @@ export function parseTerniaBaseMap(raw) {
         context,
         routeRefs,
         _priority: src._priority,
+        _sourceId: sourceId,
       };
 
       locationMap.set(key, candidate);
-      nameToKey.set(normName, key);
-      if (coordSig) coordToKey.set(coordSig, key);
+      if (!nameToKey.has(normName)) nameToKey.set(normName, key);
+      if (sourceId) sourceIdToKey.set(sourceId, key);
     }
   }
 
@@ -438,19 +446,21 @@ export function parseGenericBaseMap(raw) {
 
   const rawProfile = raw.profile && typeof raw.profile === 'object'
     ? raw.profile
-    : (raw.coordinate_system && typeof raw.coordinate_system === 'object' ? raw.coordinate_system : {});
-  const rawUnitKm = Number(rawProfile.unitKm ?? rawProfile.unit_km);
-  const profile = normalizeSpatialProfile({
-    system: rawProfile.system || 'cartesian2d',
-    northAxis: normalizeAxis(rawProfile.northAxis || rawProfile.north_axis || rawProfile.north, '+y'),
-    eastAxis: normalizeAxis(rawProfile.eastAxis || rawProfile.east_axis || rawProfile.east, '+x'),
-    unitKm: Number.isFinite(rawUnitKm) && rawUnitKm > 0 ? rawUnitKm : null,
-    bounds: parseBounds(rawProfile.bounds, null),
-    decimalStep: Number(rawProfile.decimalStep ?? rawProfile.decimal_step) || SPATIAL_LIMITS.defaultDecimalStep,
-    trueNorthLocked: rawProfile.trueNorthLocked !== false
-      && rawProfile.true_north_locked !== false
-      && rawProfile.true_north_lock !== false,
-  });
+    : (raw.coordinate_system && typeof raw.coordinate_system === 'object' ? raw.coordinate_system : null);
+  const rawUnitKm = Number(rawProfile?.unitKm ?? rawProfile?.unit_km);
+  const profile = rawProfile
+    ? normalizeSpatialProfile({
+      system: rawProfile.system || 'cartesian2d',
+      northAxis: normalizeAxis(rawProfile.northAxis || rawProfile.north_axis || rawProfile.north, '+y'),
+      eastAxis: normalizeAxis(rawProfile.eastAxis || rawProfile.east_axis || rawProfile.east, '+x'),
+      unitKm: Number.isFinite(rawUnitKm) && rawUnitKm > 0 ? rawUnitKm : null,
+      bounds: parseBounds(rawProfile.bounds, null),
+      decimalStep: Number(rawProfile.decimalStep ?? rawProfile.decimal_step) || SPATIAL_LIMITS.defaultDecimalStep,
+      trueNorthLocked: rawProfile.trueNorthLocked !== false
+        && rawProfile.true_north_locked !== false
+        && rawProfile.true_north_lock !== false,
+    })
+    : null;
 
   const locations = [];
   for (let index = 0; index < (Array.isArray(raw.locations) ? raw.locations : []).length; index += 1) {

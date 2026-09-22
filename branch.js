@@ -39,6 +39,49 @@ export function chatLineage(chat = []) {
   return out;
 }
 
+function rewriteOwnedLineageMetadata(value, previousLineage, nextLineage) {
+  if (Array.isArray(value)) {
+    return value.map(item => rewriteOwnedLineageMetadata(item, previousLineage, nextLineage));
+  }
+  if (!value || typeof value !== 'object') return value;
+
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    out[key] = rewriteOwnedLineageMetadata(item, previousLineage, nextLineage);
+  }
+
+  const sourceMessageId = Number.isInteger(out.sourceMessageId) ? out.sourceMessageId : null;
+  const messageId = sourceMessageId ?? (Number.isInteger(out.messageId) ? out.messageId : null);
+  if (messageId !== null && messageId >= 0 && messageId < previousLineage.length) {
+    const previous = previousLineage[messageId];
+    const next = nextLineage[messageId];
+    if (previous && next && out.lineageKey === previous.lineageKey) {
+      out.lineageKey = next.lineageKey;
+    }
+    if (previous && next && out.parentLineageKey === previous.parentLineageKey) {
+      out.parentLineageKey = next.parentLineageKey;
+    }
+  }
+  return out;
+}
+
+export function rebaseLineageMetadata(state, previousLineage, nextLineage) {
+  const previous = Array.isArray(previousLineage) ? previousLineage : [];
+  const next = Array.isArray(nextLineage) ? nextLineage : [];
+  if (previous.length !== next.length) throw new Error('lineage rebase requires equal message counts');
+
+  const normalized = normalizeState(clone(state));
+  const stored = Array.isArray(normalized.lineage) ? normalized.lineage : [];
+  if (stored.length !== previous.length
+    || stored.some((entry, index) => entry?.lineageKey !== previous[index]?.lineageKey)) {
+    throw new Error('lineage rebase source does not match stored branch');
+  }
+
+  const rebased = rewriteOwnedLineageMetadata(normalized, previous, next);
+  rebased.lineage = clone(next);
+  return normalizeState(rebased);
+}
+
 export function extendChatLineage(previous = [], chat = []) {
   const prior = Array.isArray(previous) ? previous : [];
   const rows = Array.isArray(chat) ? chat : [];

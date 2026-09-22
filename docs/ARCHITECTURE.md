@@ -257,7 +257,7 @@ Recommended sidecar identity:
 
 Use owner-qualified per-chat keys and revision-guarded sidecar writes.
 
-Phase 7 maps the logical `world_state_alpha/<hash>.json` sidecar to a SillyTavern uploaded filename prefixed `world-state-alpha-`. The actual server-returned path is persisted in `extension_settings.world_state_alpha.dataFiles[chatKey]`. Equal chat filenames owned by different characters/groups therefore remain separate. In 0.9.0-alpha.2, character/chat rename events migrate that owner-qualified key by durably writing the re-owned sidecar before moving the pointer; delete lifecycle removes the active pointer/cache ownership so later filename reuse cannot resurrect an unrelated campaign.
+Phase 7 maps the logical `world_state_alpha/<hash>.json` sidecar to a SillyTavern uploaded filename prefixed `world-state-alpha-`. The actual server-returned path is persisted in `extension_settings.world_state_alpha.dataFiles[chatKey]`. Equal chat filenames owned by different characters/groups therefore remain separate. Character/chat rename events migrate that owner-qualified key by durably writing the re-owned sidecar before moving ownership. In 0.9.0-alpha.4, missing/stale settings pointers may be repaired from the deterministic host-side path, ownership epochs reject stale hydration/write completions, historical character-name rewrites rebase owned lineage metadata, and delete lifecycle uses owner probes plus lifecycle tombstones. Retired sidecars are neutralized to a fresh empty state when possible so a settings-save crash cannot resurrect deleted continuity.
 
 Hydration is fail-closed. An existing pointer that cannot be read/decoded is preserved; the host must not overwrite it with a fresh empty state.
 
@@ -615,7 +615,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`, and the current UI-standardization candidate is `0.9.0-alpha.3`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
+Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; and the current host-identity/spatial hardening candidate is `0.9.0-alpha.4`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

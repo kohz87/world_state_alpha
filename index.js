@@ -4,15 +4,16 @@ import {
   extension_prompt_types,
   extension_prompt_roles,
   getRequestHeaders,
+  saveSettings,
 } from '../../../../script.js';
 
-import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintMessage, reconcileBranch, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintMessage, rebaseLineageMetadata, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { CAPTURE_LIMITS, runCaptureOperation } from './capture.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
 import { stableStringify } from './hash.js';
-import { buildWorldStateChatKey, getWorldStateChatIdentity, getWorldStateChatKey } from './host-identity.js';
+import { buildWorldStateChatKey, getWorldStateChatIdentity, getWorldStateChatKey, parseWorldStateChatKey } from './host-identity.js';
 import { createSillyTavernWorldStateStorageAdapter } from './host-storage.js';
 import { storeBaseMapSource, loadBaseMapSource } from './host-base-map.js';
 import {
@@ -34,10 +35,10 @@ import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation, inspectSpatialLocation, querySpatialLocations } from './spatial-manual.js';
 import { resolveEffectiveLocations } from './spatial-core.js';
 import { clone, createState, normalizeState } from './state-core.js';
-import { readSidecar, writeSidecar } from './storage.js';
+import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.3';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.4';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -51,6 +52,7 @@ const DEFAULTS = Object.freeze({
   injectBudgetTokens: 800,
   connectionProfile: '',
   dataFiles: {},
+  sidecarTombstones: {},
   spatialEnabled: false,
   spatialInject: true,
   spatialInjectBudgetTokens: 500,
@@ -65,9 +67,20 @@ const loadedChats = new Set();
 const hydrationErrors = new Map();
 const loadingChats = new Map();
 const stateEpochs = new Map();
+const ownershipEpochs = new Map();
 const chatQueues = new Map();
 const branchDirtyChats = new Set();
+const chatCacheTouches = new Map();
+const baseMapCacheTouches = new Map();
+const pendingCharacterRenames = new Map();
+const deleteRetryTimers = new Map();
 const diagnosticStore = createDiagnosticStore({ limit: 40 });
+
+const CHAT_CACHE_LIMIT = 6;
+const BASE_MAP_CACHE_LIMIT = 8;
+const CHARACTER_RENAME_CONTEXT_LIMIT = 8;
+const DELETE_OWNERSHIP_RETRY_MS = 1000;
+let cacheTouchSequence = 0;
 
 let activeChatKey = 'no-chat';
 let initialized = false;
@@ -75,6 +88,7 @@ let eventsRegistered = false;
 let settingsMountTimer = null;
 let panelController = null;
 let panelRoot = null;
+let panelChatKey = 'no-chat';
 
 const hostStorage = createSillyTavernWorldStateStorageAdapter({
   fetchFn: (...args) => globalThis.fetch(...args),
@@ -91,6 +105,16 @@ function notify(level, message) {
 function persistHostSettings() {
   const ctx = getContext();
   if (typeof ctx?.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+}
+
+async function persistHostSettingsNow() {
+  if (typeof saveSettings === 'function') {
+    await saveSettings();
+    return;
+  }
+  const ctx = getContext();
+  const pending = ctx?.saveSettingsDebounced?.();
+  if (pending && typeof pending.then === 'function') await pending;
 }
 
 export function getWorldStateSettings() {
@@ -123,6 +147,10 @@ export function getWorldStateSettings() {
     settings.dataFiles = {};
     dirty = true;
   }
+  if (!settings.sidecarTombstones || typeof settings.sidecarTombstones !== 'object' || Array.isArray(settings.sidecarTombstones)) {
+    settings.sidecarTombstones = {};
+    dirty = true;
+  }
 
   // Phase 9 Spatial settings
   settings.spatialEnabled = Boolean(settings.spatialEnabled);
@@ -146,6 +174,89 @@ function currentChatIdentity() {
 
 function currentChatKey() {
   return getWorldStateChatKey(getContext());
+}
+
+function ownershipEpoch(chatKey) {
+  return Number(ownershipEpochs.get(String(chatKey || '')) || 0);
+}
+
+function bumpOwnershipEpoch(chatKey) {
+  const key = String(chatKey || '');
+  if (!key || key === 'no-chat') return 0;
+  const next = ownershipEpoch(key) + 1;
+  ownershipEpochs.set(key, next);
+  loadingChats.delete(key);
+  return next;
+}
+
+function assertOwnershipEpoch(chatKey, expectedEpoch) {
+  if (ownershipEpoch(chatKey) === Number(expectedEpoch || 0)) return;
+  const error = new Error('World State Alpha ownership changed while hydration was in flight.');
+  error.code = 'WORLD_STATE_STALE_OWNERSHIP';
+  throw error;
+}
+
+function touchChatCache(chatKey) {
+  const key = String(chatKey || '');
+  if (!key || key === 'no-chat') return;
+  cacheTouchSequence += 1;
+  chatCacheTouches.set(key, cacheTouchSequence);
+}
+
+function touchBaseMapCache(cacheKey) {
+  const key = String(cacheKey || '');
+  if (!key) return;
+  cacheTouchSequence += 1;
+  baseMapCacheTouches.set(key, cacheTouchSequence);
+}
+
+function cacheBaseMap(cacheKey, baseMap) {
+  const key = String(cacheKey || '');
+  if (!key || !baseMap) return;
+  baseMapCache.set(key, baseMap);
+  touchBaseMapCache(key);
+  while (baseMapCache.size > BASE_MAP_CACHE_LIMIT) {
+    const candidate = [...baseMapCache.keys()]
+      .sort((a, b) => Number(baseMapCacheTouches.get(a) || 0) - Number(baseMapCacheTouches.get(b) || 0))[0];
+    if (!candidate) break;
+    baseMapCache.delete(candidate);
+    baseMapCacheTouches.delete(candidate);
+  }
+}
+
+function getCachedBaseMap(ref) {
+  const key = baseMapCacheKey(ref);
+  if (!key || !baseMapCache.has(key)) return null;
+  touchBaseMapCache(key);
+  return baseMapCache.get(key) || null;
+}
+
+function forgetCachedChat(chatKey) {
+  const key = String(chatKey || '');
+  if (!key || key === 'no-chat') return false;
+  if (key === currentChatKey() || key === activeChatKey || key === panelChatKey) return false;
+  if (loadingChats.has(key) || chatQueues.has(key)) return false;
+  cancelWorldStateRequests({ chatKey: key });
+  stateCache.delete(key);
+  relevanceIndices.delete(key);
+  spatialRelevanceIndices.delete(key);
+  loadedChats.delete(key);
+  hydrationErrors.delete(key);
+  branchDirtyChats.delete(key);
+  chatCacheTouches.delete(key);
+  diagnosticStore.clear(key);
+  return true;
+}
+
+function evictDormantChatStates(activeKey = currentChatKey()) {
+  while (stateCache.size > CHAT_CACHE_LIMIT) {
+    const candidate = [...stateCache.keys()]
+      .filter(key => key !== activeKey)
+      .sort((a, b) => Number(chatCacheTouches.get(a) || 0) - Number(chatCacheTouches.get(b) || 0))
+      .find(key => key !== currentChatKey() && key !== activeChatKey && key !== panelChatKey
+        && !loadingChats.has(key) && !chatQueues.has(key));
+    if (!candidate || !forgetCachedChat(candidate)) break;
+  }
 }
 
 function getRelevanceIndex(chatKey, state) {
@@ -180,9 +291,13 @@ async function getChatBaseMap(chatKey, state) {
   const cacheKey = baseMapCacheKey(ref);
   if (cacheKey && baseMapCache.has(cacheKey)) {
     const cached = baseMapCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      touchBaseMapCache(cacheKey);
+      return cached;
+    }
     // Do not negatively cache a transient base-map read failure.
     baseMapCache.delete(cacheKey);
+    baseMapCacheTouches.delete(cacheKey);
   }
 
   const settings = getWorldStateSettings();
@@ -198,7 +313,7 @@ async function getChatBaseMap(chatKey, state) {
   try {
     const baseMap = await loadBaseMapSource(hostStorage, pointer);
     if (baseMap) {
-      baseMapCache.set(baseMapCacheKey(pointer) || cacheKey, baseMap);
+      cacheBaseMap(baseMapCacheKey(pointer) || cacheKey, baseMap);
       return baseMap;
     }
   } catch (error) {
@@ -238,6 +353,7 @@ function invalidateChatOperations(chatKey = currentChatKey()) {
 function setCachedState(chatKey, state, { indexMode = 'rebuild', indexDelta = null, spatialIndexDelta = null } = {}) {
   const normalized = normalizeState(clone(state), { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
+  touchChatCache(chatKey);
   stateEpochs.set(chatKey, epoch(chatKey) + 1);
 
   if (indexMode === 'delta') {
@@ -246,12 +362,12 @@ function setCachedState(chatKey, state, { indexMode = 'rebuild', indexDelta = nu
     else resetRelevanceIndex(chatKey, normalized);
 
     const spIndex = spatialRelevanceIndices.get(chatKey);
-    const baseMap = baseMapCache.get(baseMapCacheKey(normalized.spatial?.baseMapRef)) || null;
+    const baseMap = getCachedBaseMap(normalized.spatial?.baseMapRef);
     if (spIndex) updateSpatialRelevanceIndex(spIndex, spatialIndexDelta || {});
     else resetSpatialRelevanceIndex(chatKey, normalized.spatial, baseMap);
   } else if (indexMode !== 'preserve') {
     resetRelevanceIndex(chatKey, normalized);
-    const baseMap = baseMapCache.get(baseMapCacheKey(normalized.spatial?.baseMapRef)) || null;
+    const baseMap = getCachedBaseMap(normalized.spatial?.baseMapRef);
     resetSpatialRelevanceIndex(chatKey, normalized.spatial, baseMap);
   }
   return normalized;
@@ -259,6 +375,7 @@ function setCachedState(chatKey, state, { indexMode = 'rebuild', indexDelta = nu
 
 function getCachedState(chatKey = currentChatKey()) {
   const state = stateCache.get(chatKey);
+  if (state) touchChatCache(chatKey);
   return state ? clone(state) : null;
 }
 
@@ -271,6 +388,61 @@ function pointerFor(chatKey) {
   return pointer && typeof pointer === 'object' ? structuredClone(pointer) : null;
 }
 
+function tombstoneFor(chatKey) {
+  const value = getWorldStateSettings().sidecarTombstones?.[chatKey];
+  return value && typeof value === 'object' ? structuredClone(value) : null;
+}
+
+function pointerFromPayload(path, payload) {
+  if (!path || !payload?.state) return null;
+  return {
+    path: String(path),
+    revision: Math.max(0, Math.trunc(Number(payload.revision) || 0)),
+    checksum: String(payload.checksum || ''),
+  };
+}
+
+async function recoverExistingSidecarPointer(chatKey, preferredPointer = null) {
+  const deterministicPath = hostStorage.deterministicPath?.(makeSidecarPath(chatKey)) || '';
+  const candidates = [
+    preferredPointer?.path ? String(preferredPointer.path) : '',
+    deterministicPath,
+  ].filter((path, index, rows) => path && rows.indexOf(path) === index);
+
+  for (const path of candidates) {
+    const payload = await readSidecar({
+      adapter: hostStorage,
+      pointer: { path },
+      expectedChatKey: chatKey,
+    });
+    if (payload?.state) return { pointer: pointerFromPayload(path, payload), payload };
+  }
+  return null;
+}
+
+async function persistCriticalHostSettings(label) {
+  try {
+    await persistHostSettingsNow();
+    return true;
+  } catch (error) {
+    console.warn('[World State Alpha] could not synchronously persist ' + label + '; deterministic sidecar recovery remains available.', error);
+    persistHostSettings();
+    return false;
+  }
+}
+
+async function neutralizeRetiredSidecar(chatKey, pointer) {
+  if (!pointer?.path) return null;
+  const emptyState = seedRootCheckpoint(createState(chatKey));
+  return writeSidecar({
+    adapter: hostStorage,
+    chatKey,
+    state: emptyState,
+    pointer,
+    appVersion: WORLD_STATE_ALPHA_VERSION,
+  });
+}
+
 async function persistState(chatKey, state = stateCache.get(chatKey)) {
   if (!chatKey || chatKey === 'no-chat') return null;
   if (hydrationErrors.has(chatKey)) {
@@ -280,8 +452,21 @@ async function persistState(chatKey, state = stateCache.get(chatKey)) {
   }
   if (!state) throw new Error('World State Alpha has no loaded state to persist.');
 
+  const ownerEpoch = ownershipEpoch(chatKey);
   const settings = getWorldStateSettings();
-  const pointer = pointerFor(chatKey);
+  const existingSettingsPointer = pointerFor(chatKey);
+  const tombstone = tombstoneFor(chatKey);
+  let pointer = existingSettingsPointer;
+
+  // A recreated chat may intentionally replace a retired sidecar. Recover only
+  // its revision/checksum as the write predecessor; never resurrect its state.
+  if (!pointer && tombstone) {
+    pointer = tombstone.pointer?.path ? structuredClone(tombstone.pointer) : null;
+    const recovered = await recoverExistingSidecarPointer(chatKey, pointer);
+    assertOwnershipEpoch(chatKey, ownerEpoch);
+    if (recovered?.pointer) pointer = recovered.pointer;
+  }
+
   const committed = await writeSidecar({
     adapter: hostStorage,
     chatKey,
@@ -289,26 +474,62 @@ async function persistState(chatKey, state = stateCache.get(chatKey)) {
     pointer,
     appVersion: WORLD_STATE_ALPHA_VERSION,
   });
+  assertOwnershipEpoch(chatKey, ownerEpoch);
 
   settings.dataFiles[chatKey] = committed;
-  persistHostSettings();
+  if (settings.sidecarTombstones?.[chatKey]) delete settings.sidecarTombstones[chatKey];
+
+  if (!existingSettingsPointer?.path || tombstone) {
+    await persistCriticalHostSettings('World State sidecar ownership');
+  } else {
+    // Revision drift after a crash is self-repairing during hydration, so
+    // ordinary revision advancement can stay on the host's debounced path.
+    persistHostSettings();
+  }
   return committed;
 }
 
 async function loadChatState(chatKey) {
+  const settings = getWorldStateSettings();
   const pointer = pointerFor(chatKey);
-  if (!pointer?.path) return seedRootCheckpoint(createState(chatKey));
-  const payload = await readSidecar({
-    adapter: hostStorage,
-    pointer,
-    expectedChatKey: chatKey,
-  });
-  if (!payload?.state) {
-    const error = new Error('World State Alpha sidecar pointer exists but the sidecar is unavailable.');
-    error.code = 'WORLD_STATE_SIDECAR_MISSING';
-    throw error;
+  const tombstone = tombstoneFor(chatKey);
+
+  if (tombstone) {
+    return {
+      state: seedRootCheckpoint(createState(chatKey)),
+      pointer: null,
+      repairPointer: false,
+      tombstoned: true,
+    };
   }
-  return normalizeState(payload.state, { strictSchema: true, chatKey });
+
+  const recovered = await recoverExistingSidecarPointer(chatKey, pointer);
+  if (!recovered) {
+    if (pointer?.path) {
+      const error = new Error('World State Alpha sidecar pointer exists but the sidecar is unavailable.');
+      error.code = 'WORLD_STATE_SIDECAR_MISSING';
+      throw error;
+    }
+    return {
+      state: seedRootCheckpoint(createState(chatKey)),
+      pointer: null,
+      repairPointer: false,
+      tombstoned: false,
+    };
+  }
+
+  const actualPointer = recovered.pointer;
+  const repairPointer = !pointer?.path
+    || pointer.path !== actualPointer.path
+    || Number(pointer.revision || 0) !== actualPointer.revision
+    || String(pointer.checksum || '') !== actualPointer.checksum;
+
+  return {
+    state: normalizeState(recovered.payload.state, { strictSchema: true, chatKey }),
+    pointer: actualPointer,
+    repairPointer,
+    tombstoned: false,
+  };
 }
 
 function clearChatRuntimeState(chatKey) {
@@ -321,29 +542,45 @@ function clearChatRuntimeState(chatKey) {
   hydrationErrors.delete(chatKey);
   loadingChats.delete(chatKey);
   branchDirtyChats.delete(chatKey);
-  stateEpochs.delete(chatKey);
+  chatCacheTouches.delete(chatKey);
+  diagnosticStore.clear(chatKey);
 }
-
 async function migrateWorldStateChatKey(oldKey, newKey) {
   if (!oldKey || oldKey === 'no-chat' || !newKey || newKey === 'no-chat' || oldKey === newKey) return true;
 
+  const oldOwnerEpoch = bumpOwnershipEpoch(oldKey);
+  const newOwnerEpoch = bumpOwnershipEpoch(newKey);
   invalidateChatOperations(oldKey);
+  invalidateChatOperations(newKey);
+
+  const pendingOldWork = chatQueues.get(oldKey);
+  if (pendingOldWork) await pendingOldWork.catch(() => {});
+  assertOwnershipEpoch(oldKey, oldOwnerEpoch);
+  assertOwnershipEpoch(newKey, newOwnerEpoch);
+
   const settings = getWorldStateSettings();
   const oldPointer = settings.dataFiles?.[oldKey] || null;
   const newPointer = settings.dataFiles?.[newKey] || null;
-  if (newPointer) {
-    console.warn('[World State Alpha] identity migration refused because the destination already has World State:', newKey);
+  if (newPointer || settings.sidecarTombstones?.[newKey]) {
+    console.warn('[World State Alpha] identity migration refused because the destination already has World State ownership:', newKey);
+    return false;
+  }
+
+  const destinationOrphan = await recoverExistingSidecarPointer(newKey, null);
+  assertOwnershipEpoch(oldKey, oldOwnerEpoch);
+  assertOwnershipEpoch(newKey, newOwnerEpoch);
+  if (destinationOrphan?.payload?.state) {
+    console.warn('[World State Alpha] identity migration refused because the destination deterministic sidecar already exists:', newKey);
     return false;
   }
 
   let sourceState = stateCache.get(oldKey) || null;
-  if (!sourceState && oldPointer?.path) {
-    const payload = await readSidecar({
-      adapter: hostStorage,
-      pointer: oldPointer,
-      expectedChatKey: oldKey,
-    });
-    sourceState = payload?.state || null;
+  let sourcePointer = oldPointer;
+  const recoveredSource = await recoverExistingSidecarPointer(oldKey, oldPointer);
+  assertOwnershipEpoch(oldKey, oldOwnerEpoch);
+  if (recoveredSource?.payload?.state) {
+    sourcePointer = recoveredSource.pointer;
+    if (!sourceState) sourceState = recoveredSource.payload.state;
   }
 
   if (!sourceState) {
@@ -363,10 +600,26 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
     pointer: null,
     appVersion: WORLD_STATE_ALPHA_VERSION,
   });
+  assertOwnershipEpoch(oldKey, oldOwnerEpoch);
+  assertOwnershipEpoch(newKey, newOwnerEpoch);
+
+  let retiredSourcePointer = sourcePointer;
+  if (sourcePointer?.path) {
+    try {
+      retiredSourcePointer = await neutralizeRetiredSidecar(oldKey, sourcePointer);
+      assertOwnershipEpoch(oldKey, oldOwnerEpoch);
+    } catch (error) {
+      console.warn('[World State Alpha] renamed source sidecar could not be neutralized; durable ownership tombstone remains authoritative.', error);
+    }
+  }
 
   settings.dataFiles[newKey] = committed;
+  settings.sidecarTombstones[oldKey] = {
+    reason: 'renamed',
+    pointer: retiredSourcePointer ? structuredClone(retiredSourcePointer) : null,
+  };
   delete settings.dataFiles[oldKey];
-  persistHostSettings();
+  await persistCriticalHostSettings('renamed World State ownership');
 
   const wasLoaded = loadedChats.has(oldKey);
   clearChatRuntimeState(oldKey);
@@ -374,6 +627,7 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
   if (wasLoaded) loadedChats.add(newKey);
   hydrationErrors.delete(newKey);
   if (activeChatKey === oldKey) activeChatKey = newKey;
+  if (panelChatKey === oldKey) closeWorldStatePanel();
   return true;
 }
 
@@ -383,7 +637,27 @@ function characterOwnerKeyPrefix(ownerId) {
   return splitAt >= 0 ? probe.slice(0, splitAt + 1) : '';
 }
 
+function rememberCharacterRename(oldAvatar, newAvatar) {
+  const ctx = getContext();
+  const oldName = String(
+    ctx?.characters?.find?.(item => String(item?.avatar || '') === String(oldAvatar || ''))?.name
+      || ctx?.character?.name
+      || '',
+  ).trim();
+  if (!oldName) return;
+  pendingCharacterRenames.set(String(oldAvatar || ''), {
+    oldAvatar: String(oldAvatar || ''),
+    newAvatar: String(newAvatar || ''),
+    oldName,
+  });
+  while (pendingCharacterRenames.size > CHARACTER_RENAME_CONTEXT_LIMIT) {
+    pendingCharacterRenames.delete(pendingCharacterRenames.keys().next().value);
+  }
+}
+
 async function handleCharacterRenamed(oldAvatar, newAvatar) {
+  rememberCharacterRename(oldAvatar, newAvatar);
+
   const oldPrefix = characterOwnerKeyPrefix(oldAvatar);
   const newPrefix = characterOwnerKeyPrefix(newAvatar);
   if (!oldPrefix || !newPrefix || oldPrefix === newPrefix) return;
@@ -406,28 +680,145 @@ async function handleCharacterRenamed(oldAvatar, newAvatar) {
   }
 }
 
-function handleCharacterDeleted(eventData = {}) {
+function renamedGroupMessage(message, newAvatar) {
+  if (!message || message.is_user || message.is_system) return false;
+  if (String(message.original_avatar || '') === String(newAvatar || '')) return true;
+  const forceAvatar = String(message.force_avatar || '');
+  return Boolean(forceAvatar && forceAvatar.includes(encodeURIComponent(String(newAvatar || ''))));
+}
+
+function stateLineageMatchesPrefix(state, lineage) {
+  const stored = Array.isArray(state?.lineage) ? state.lineage : [];
+  if (!stored.length || stored.length > lineage.length) return false;
+  return stored.every((entry, index) => entry?.lineageKey === lineage[index]?.lineageKey);
+}
+
+async function handleCharacterRenamedInPastChat(messages, oldAvatar, newAvatar) {
+  if (!Array.isArray(messages) || !messages.length) return;
+  const renameContext = pendingCharacterRenames.get(String(oldAvatar || ''));
+  const oldName = String(renameContext?.oldName || '').trim();
+  const newName = String(
+    getContext()?.characters?.find?.(item => String(item?.avatar || '') === String(newAvatar || ''))?.name
+      || '',
+  ).trim();
+  if (!oldName || !newName || oldName === newName) return;
+
+  // SillyTavern's past-chat payload may include the persisted chat header,
+  // while getContext().chat and Alpha lineage never do.
+  const renamedMessages = messages.filter(message => !Object.hasOwn(message || {}, 'chat_metadata'));
+  if (!renamedMessages.length) return;
+  const isGroupEvent = renamedMessages.some(message => renamedGroupMessage(message, newAvatar));
+  const previousMessages = structuredClone(renamedMessages);
+  let affected = 0;
+  for (let index = 0; index < previousMessages.length; index += 1) {
+    const current = renamedMessages[index];
+    const prior = previousMessages[index];
+    if (!prior || prior.is_user || prior.is_system || String(prior.name || '') !== newName) continue;
+    if (isGroupEvent && !renamedGroupMessage(current, newAvatar)) continue;
+    prior.name = oldName;
+    affected += 1;
+  }
+  if (!affected) return;
+
+  const previousLineage = chatLineage(previousMessages);
+  const nextLineage = chatLineage(renamedMessages);
+  const settings = getWorldStateSettings();
+  const directPrefix = characterOwnerKeyPrefix(newAvatar);
+  const candidates = new Set([
+    ...Object.keys(settings.dataFiles || {}),
+    ...stateCache.keys(),
+  ]);
+  const matches = [];
+
+  for (const chatKey of candidates) {
+    if (settings.sidecarTombstones?.[chatKey]) continue;
+    if (isGroupEvent ? !chatKey.startsWith('group:') : !chatKey.startsWith(directPrefix)) continue;
+
+    let candidateState = stateCache.get(chatKey) || null;
+    let candidatePointer = pointerFor(chatKey);
+    if (!candidateState) {
+      try {
+        const recovered = await recoverExistingSidecarPointer(chatKey, candidatePointer);
+        if (recovered?.payload?.state) {
+          candidateState = recovered.payload.state;
+          candidatePointer = recovered.pointer;
+        }
+      } catch (error) {
+        console.warn('[World State Alpha] past-chat rename lineage probe skipped one sidecar:', chatKey, error);
+        continue;
+      }
+    }
+    if (!candidateState || !stateLineageMatchesPrefix(candidateState, previousLineage)) continue;
+    matches.push({ chatKey, pointer: candidatePointer, wasLoaded: loadedChats.has(chatKey) });
+  }
+
+  if (matches.length !== 1) {
+    if (matches.length > 1) {
+      console.warn('[World State Alpha] past-chat rename matched multiple continuity states; lineage migration was preserved fail-closed.');
+    }
+    return;
+  }
+
+  const { chatKey } = matches[0];
+  const ownerEpoch = bumpOwnershipEpoch(chatKey);
+  invalidateChatOperations(chatKey);
+
+  await queueChatWork(chatKey, async () => {
+    assertOwnershipEpoch(chatKey, ownerEpoch);
+    const currentSettings = getWorldStateSettings();
+    let currentState = stateCache.get(chatKey) || null;
+    let actualPointer = pointerFor(chatKey);
+    const recovered = await recoverExistingSidecarPointer(chatKey, actualPointer);
+    assertOwnershipEpoch(chatKey, ownerEpoch);
+    if (recovered?.payload?.state) {
+      actualPointer = recovered.pointer;
+      if (!currentState) currentState = recovered.payload.state;
+    }
+    if (!currentState || !stateLineageMatchesPrefix(currentState, previousLineage)) return;
+
+    const length = currentState.lineage.length;
+    const rebased = rebaseLineageMetadata(
+      currentState,
+      previousLineage.slice(0, length),
+      nextLineage.slice(0, length),
+    );
+    const committed = await writeSidecar({
+      adapter: hostStorage,
+      chatKey,
+      state: rebased,
+      pointer: actualPointer,
+      appVersion: WORLD_STATE_ALPHA_VERSION,
+    });
+    assertOwnershipEpoch(chatKey, ownerEpoch);
+
+    currentSettings.dataFiles[chatKey] = committed;
+    await persistCriticalHostSettings('past-chat rename lineage');
+    if (matches[0].wasLoaded || stateCache.has(chatKey)) {
+      setCachedState(chatKey, rebased);
+      loadedChats.add(chatKey);
+    }
+    if (currentChatKey() === chatKey) {
+      updatePrivateInjection();
+      refreshPanel();
+    }
+  });
+}
+
+async function handleCharacterDeleted(eventData = {}) {
   const avatar = String(eventData?.character?.avatar || eventData?.avatar || '').trim();
   const prefix = characterOwnerKeyPrefix(avatar);
   if (!prefix) return;
 
+  pendingCharacterRenames.delete(avatar);
   const settings = getWorldStateSettings();
   const keys = new Set([
     ...Object.keys(settings.dataFiles || {}),
     ...stateCache.keys(),
   ]);
-  let settingsChanged = false;
   for (const chatKey of keys) {
     if (!chatKey.startsWith(prefix)) continue;
-    invalidateChatOperations(chatKey);
-    if (settings.dataFiles?.[chatKey]) {
-      delete settings.dataFiles[chatKey];
-      settingsChanged = true;
-    }
-    clearChatRuntimeState(chatKey);
-    if (activeChatKey === chatKey) activeChatKey = 'no-chat';
+    await removeWorldStateChatOwnership(chatKey, 'character-deleted');
   }
-  if (settingsChanged) persistHostSettings();
 }
 
 async function handleChatRenamed(eventData = {}) {
@@ -475,19 +866,129 @@ function matchingWorldStateChatKeys(kind, chatId) {
   return [...keys].filter(key => key.startsWith(kind + ':') && key.endsWith(suffix));
 }
 
-function removeWorldStateChatOwnership(chatKey) {
-  if (!chatKey || chatKey === 'no-chat') return;
-  const settings = getWorldStateSettings();
-  invalidateChatOperations(chatKey);
-  if (settings.dataFiles?.[chatKey]) {
-    delete settings.dataFiles[chatKey];
-    persistHostSettings();
+async function hostCharacterChatPresence(ownerId, rawId) {
+  const owner = String(ownerId || '').trim();
+  const id = String(rawId || '').replace(/\.jsonl$/i, '').trim();
+  if (!owner || !id || typeof globalThis.fetch !== 'function') return null;
+  try {
+    const response = await globalThis.fetch('/api/characters/chats', {
+      method: 'POST',
+      headers: getRequestHeaders(),
+      body: JSON.stringify({ avatar_url: owner, simple: true }),
+    });
+    if (!response?.ok) return null;
+    const data = typeof response.json === 'function' ? await response.json() : null;
+    if (!data || typeof data !== 'object') return null;
+    const chats = Array.isArray(data) ? data : Object.values(data);
+    return chats.some(item => String(item?.file_name ?? item?.fileName ?? item?.name ?? '')
+      .replace(/\.jsonl$/i, '').trim() === id);
+  } catch (error) {
+    console.debug('[World State Alpha] character chat ownership probe failed:', owner, id, error);
+    return null;
   }
-  clearChatRuntimeState(chatKey);
-  if (activeChatKey === chatKey) activeChatKey = 'no-chat';
 }
 
-function handleChatDeleted(eventData, forcedKind = 'chat') {
+function hostGroupChatPresence(ownerId, rawId) {
+  const owner = String(ownerId || '').trim();
+  const id = String(rawId || '').replace(/\.jsonl$/i, '').trim();
+  const groups = getContext()?.groups;
+  if (!owner || !id || !Array.isArray(groups)) return null;
+  const group = groups.find(item => String(item?.id ?? '').trim() === owner);
+  if (!group) return false;
+  const chats = [
+    ...(Array.isArray(group.chats) ? group.chats : []),
+    group.chat_id,
+  ].map(value => String(value ?? '').replace(/\.jsonl$/i, '').trim()).filter(Boolean);
+  return chats.includes(id);
+}
+
+async function resolveDeletedWorldStateChatKey(chatId, kind, explicitOwnerId = '') {
+  const id = String(chatId || '').replace(/\.jsonl$/i, '').trim();
+  if (!id || !['chat', 'group'].includes(kind)) return '';
+  const owner = String(explicitOwnerId || '').trim();
+  if (owner) return buildWorldStateChatKey(kind, owner, id);
+
+  const candidates = matchingWorldStateChatKeys(kind, id);
+  if (!candidates.length) return '';
+
+  const presence = [];
+  for (const chatKey of candidates) {
+    const parsed = parseWorldStateChatKey(chatKey);
+    if (!parsed) continue;
+    const value = kind === 'group'
+      ? hostGroupChatPresence(parsed.ownerId, id)
+      : await hostCharacterChatPresence(parsed.ownerId, id);
+    presence.push({ chatKey, value });
+  }
+
+  if (presence.some(item => item.value === null)) {
+    console.warn('[World State Alpha] delete ownership could not be proven; continuity was preserved fail-closed:', kind, id);
+    return '';
+  }
+  const removed = presence.filter(item => item.value === false);
+  if (removed.length === 1 && presence.length === candidates.length) return removed[0].chatKey;
+
+  console.warn('[World State Alpha] delete ownership remained ambiguous; continuity was preserved fail-closed:', kind, id);
+  return '';
+}
+
+async function removeWorldStateChatOwnership(chatKey, reason = 'chat-deleted') {
+  if (!chatKey || chatKey === 'no-chat') return false;
+
+  const ownerEpoch = bumpOwnershipEpoch(chatKey);
+  invalidateChatOperations(chatKey);
+  const pending = chatQueues.get(chatKey);
+  if (pending) await pending.catch(() => {});
+  assertOwnershipEpoch(chatKey, ownerEpoch);
+
+  const settings = getWorldStateSettings();
+  let retiredPointer = pointerFor(chatKey);
+  try {
+    const recovered = await recoverExistingSidecarPointer(chatKey, retiredPointer);
+    assertOwnershipEpoch(chatKey, ownerEpoch);
+    if (recovered?.pointer) retiredPointer = recovered.pointer;
+  } catch (error) {
+    console.warn('[World State Alpha] retiring chat ownership without refreshed sidecar metadata:', chatKey, error);
+  }
+
+  if (retiredPointer?.path) {
+    try {
+      retiredPointer = await neutralizeRetiredSidecar(chatKey, retiredPointer);
+      assertOwnershipEpoch(chatKey, ownerEpoch);
+    } catch (error) {
+      console.warn('[World State Alpha] retired sidecar could not be neutralized; settings tombstone will remain authoritative.', error);
+    }
+  }
+
+  settings.sidecarTombstones[chatKey] = {
+    reason: String(reason || 'chat-deleted'),
+    pointer: retiredPointer ? structuredClone(retiredPointer) : null,
+  };
+  delete settings.dataFiles[chatKey];
+  await persistCriticalHostSettings('retired World State ownership');
+
+  clearChatRuntimeState(chatKey);
+  if (activeChatKey === chatKey) {
+    activeChatKey = 'no-chat';
+    clearPrivatePrompt();
+  }
+  if (panelChatKey === chatKey) closeWorldStatePanel();
+  return true;
+}
+
+function scheduleDeleteOwnershipRetry(chatId, kind) {
+  const key = kind + ':' + String(chatId || '');
+  if (deleteRetryTimers.has(key)) return;
+  const timer = setTimeout(() => {
+    deleteRetryTimers.delete(key);
+    void handleChatDeleted({ chatId, __worldStateRetry: true }, kind).catch(error => {
+      console.warn('[World State Alpha] delayed delete ownership resolution failed safely:', error);
+    });
+  }, DELETE_OWNERSHIP_RETRY_MS);
+  deleteRetryTimers.set(key, timer);
+}
+
+async function handleChatDeleted(eventData, forcedKind = 'chat') {
   const deletedChatId = String(
     typeof eventData === 'string'
       ? eventData
@@ -501,45 +1002,59 @@ function handleChatDeleted(eventData, forcedKind = 'chat') {
     ? String(eventObject?.groupId || '').trim()
     : String(eventObject?.avatarId || eventObject?.avatar || '').trim();
 
-  if (explicitOwnerId) {
-    removeWorldStateChatOwnership(buildWorldStateChatKey(kind, explicitOwnerId, deletedChatId));
+  const resolved = await resolveDeletedWorldStateChatKey(deletedChatId, kind, explicitOwnerId);
+  if (resolved) {
+    await removeWorldStateChatOwnership(resolved, kind === 'group' ? 'group-chat-deleted' : 'chat-deleted');
     return;
   }
 
-  // SillyTavern 1.18 emits CHAT_DELETED / GROUP_CHAT_DELETED as a bare
-  // chat name in several paths. Never guess the owner from the currently
-  // selected chat because deletion may target a different character/group.
-  const candidates = matchingWorldStateChatKeys(kind, deletedChatId);
-  if (candidates.length === 1) {
-    removeWorldStateChatOwnership(candidates[0]);
-  } else if (candidates.length > 1) {
-    console.warn('[World State Alpha] delete event owner is ambiguous; preserved pointers fail-closed:', kind, deletedChatId);
+  if (!eventObject?.__worldStateRetry && matchingWorldStateChatKeys(kind, deletedChatId).length) {
+    // Whole-group deletion in SillyTavern 1.18 can emit before its in-memory
+    // group list is refreshed. Retry once after the host settles, without guessing.
+    scheduleDeleteOwnershipRetry(deletedChatId, kind);
   }
 }
 
 async function ensureChatStateLoaded(chatKey = currentChatKey()) {
   if (!chatKey || chatKey === 'no-chat') return null;
-  if (loadedChats.has(chatKey) && !hydrationErrors.has(chatKey)) return stateCache.get(chatKey);
+  if (loadedChats.has(chatKey) && !hydrationErrors.has(chatKey)) {
+    touchChatCache(chatKey);
+    return stateCache.get(chatKey);
+  }
   if (loadingChats.has(chatKey)) return loadingChats.get(chatKey);
 
-  const loading = (async () => {
+  const ownerEpoch = ownershipEpoch(chatKey);
+  let loading;
+  loading = (async () => {
     try {
-      const state = await loadChatState(chatKey);
-      setCachedState(chatKey, state);
+      const loaded = await loadChatState(chatKey);
+      assertOwnershipEpoch(chatKey, ownerEpoch);
+
+      if (loaded.repairPointer && loaded.pointer) {
+        const settings = getWorldStateSettings();
+        settings.dataFiles[chatKey] = loaded.pointer;
+        await persistCriticalHostSettings('recovered World State sidecar pointer');
+        assertOwnershipEpoch(chatKey, ownerEpoch);
+      }
+
+      setCachedState(chatKey, loaded.state);
       const loadedState = stateCache.get(chatKey);
       if (loadedState?.spatial?.baseMapRef?.id) {
         const baseMap = await getChatBaseMap(chatKey, loadedState);
+        assertOwnershipEpoch(chatKey, ownerEpoch);
         if (baseMap) resetSpatialRelevanceIndex(chatKey, loadedState.spatial, baseMap);
       }
+      assertOwnershipEpoch(chatKey, ownerEpoch);
       loadedChats.add(chatKey);
       hydrationErrors.delete(chatKey);
+      touchChatCache(chatKey);
       return loadedState;
     } catch (error) {
-      hydrationErrors.set(chatKey, error);
+      if (error?.code !== 'WORLD_STATE_STALE_OWNERSHIP') hydrationErrors.set(chatKey, error);
       loadedChats.delete(chatKey);
       throw error;
     } finally {
-      loadingChats.delete(chatKey);
+      if (loadingChats.get(chatKey) === loading) loadingChats.delete(chatKey);
     }
   })();
 
@@ -667,7 +1182,7 @@ function updatePrivateInjection() {
   let spatialText = '';
   if (settings.spatialEnabled && settings.spatialInject) {
     const baseRef = state.spatial?.baseMapRef;
-    const baseMap = baseMapCache.get(baseMapCacheKey(baseRef)) || null;
+    const baseMap = getCachedBaseMap(baseRef);
     // If a campaign declares a base authority but that source is unavailable,
     // omit Spatial injection rather than presenting a partial generated-only map.
     if (!baseRef?.id || baseMap) {
@@ -932,24 +1447,34 @@ async function handleBranchChange() {
 async function activateCurrentChat() {
   const previousKey = activeChatKey;
   const identity = currentChatIdentity();
-  activeChatKey = identity.key;
-  if (previousKey && previousKey !== 'no-chat' && previousKey !== activeChatKey) {
+  const chatKey = identity.key;
+  activeChatKey = chatKey;
+
+  if (panelChatKey !== 'no-chat' && panelChatKey !== chatKey) closeWorldStatePanel();
+  if (previousKey && previousKey !== 'no-chat' && previousKey !== chatKey) {
     cancelWorldStateRequests({ chatKey: previousKey });
   }
 
-  if (!identity.ready || activeChatKey === 'no-chat') {
+  if (!identity.ready || chatKey === 'no-chat') {
     clearPrivatePrompt();
     refreshPanel();
     return;
   }
 
   try {
-    await ensureChatStateLoaded(activeChatKey);
-    if (currentChatKey() !== activeChatKey) return;
-    await reconcileCurrentBranch(activeChatKey, { persistRestore: true });
+    await ensureChatStateLoaded(chatKey);
+    if (currentChatKey() !== chatKey) return;
+    await reconcileCurrentBranch(chatKey, { persistRestore: true });
+    if (currentChatKey() !== chatKey) return;
     updatePrivateInjection();
     refreshPanel();
+    evictDormantChatStates(chatKey);
   } catch (error) {
+    if (currentChatKey() !== chatKey) return;
+    if (error?.code === 'WORLD_STATE_STALE_OWNERSHIP') {
+      void activateCurrentChat();
+      return;
+    }
     clearPrivatePrompt();
     console.error('[World State Alpha] chat hydration failed; durable state was not overwritten.', error);
     notify('error', 'World State Alpha could not load this chat state. Existing durable data was preserved.');
@@ -1133,9 +1658,14 @@ function closeWorldStatePanel() {
   panelController = null;
   panelRoot?.remove?.();
   panelRoot = null;
+  panelChatKey = 'no-chat';
 }
 
 function refreshPanel() {
+  if (panelChatKey !== 'no-chat' && currentChatKey() !== panelChatKey) {
+    closeWorldStatePanel();
+    return;
+  }
   panelController?.refresh?.();
 }
 
@@ -1169,9 +1699,9 @@ function chooseImportFile() {
   });
 }
 
-async function applyMaintenanceAction(actionId) {
-  const chatKey = currentChatKey();
-  if (chatKey === 'no-chat') return;
+async function applyMaintenanceAction(actionId, expectedChatKey = currentChatKey()) {
+  const chatKey = String(expectedChatKey || '');
+  if (!chatKey || chatKey === 'no-chat' || currentChatKey() !== chatKey) return;
   return queueChatWork(chatKey, () => applyMaintenanceActionNow(actionId, chatKey));
 }
 
@@ -1259,9 +1789,9 @@ async function applyMaintenanceActionNow(actionId, chatKey) {
   }
 }
 
-async function applySpatialAction(actionId, payload = {}) {
-  const chatKey = currentChatKey();
-  if (chatKey === 'no-chat') return;
+async function applySpatialAction(actionId, payload = {}, expectedChatKey = currentChatKey()) {
+  const chatKey = String(expectedChatKey || '');
+  if (!chatKey || chatKey === 'no-chat' || currentChatKey() !== chatKey) return;
   return queueChatWork(chatKey, () => applySpatialActionNow(actionId, payload, chatKey));
 }
 
@@ -1586,7 +2116,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     const sourceKey = stored.pointer.digest || baseMapCacheKey(stored.pointer);
     settings.spatialBaseMaps[sourceKey] = stored.pointer;
     persistHostSettings();
-    baseMapCache.set(baseMapCacheKey(stored.pointer), stored.baseMap);
+    cacheBaseMap(baseMapCacheKey(stored.pointer), stored.baseMap);
 
     const steps = [
       {
@@ -1631,29 +2161,30 @@ export async function openWorldStatePanel() {
   try {
     await ensureChatStateLoaded(chatKey);
   } catch {
-    notify('error', 'World State Alpha cannot open this chat until its durable state can be loaded safely.');
+    if (currentChatKey() === chatKey) {
+      notify('error', 'World State Alpha cannot open this chat until its durable state can be loaded safely.');
+    }
     return false;
   }
+  if (currentChatKey() !== chatKey) return false;
 
-  if (panelController && panelRoot?.isConnected) {
+  if (panelController && panelRoot?.isConnected && panelChatKey === chatKey) {
     panelController.refresh();
     return true;
   }
 
   closeWorldStatePanel();
+  panelChatKey = chatKey;
   panelRoot = document.createElement('div');
   panelRoot.id = WORLD_STATE_PANEL_ROOT_ID;
   document.body.appendChild(panelRoot);
   panelController = createWorldStateUiController({
     root: panelRoot,
-    getState: () => getCachedState(currentChatKey()) || createState(currentChatKey()),
-    getBaseMap: () => {
-      const ref = stateCache.get(currentChatKey())?.spatial?.baseMapRef;
-      return baseMapCache.get(baseMapCacheKey(ref)) || null;
-    },
-    getDiagnostics: () => diagnosticStore.records(currentChatKey()),
-    onMaintenanceAction: actionId => applyMaintenanceAction(actionId),
-    onSpatialAction: (actionId, payload) => applySpatialAction(actionId, payload),
+    getState: () => getCachedState(chatKey) || createState(chatKey),
+    getBaseMap: () => getCachedBaseMap(stateCache.get(chatKey)?.spatial?.baseMapRef),
+    getDiagnostics: () => diagnosticStore.records(chatKey),
+    onMaintenanceAction: actionId => applyMaintenanceAction(actionId, chatKey),
+    onSpatialAction: (actionId, payload) => applySpatialAction(actionId, payload, chatKey),
     onClose: closeWorldStatePanel,
   });
   return true;
@@ -1667,11 +2198,23 @@ function registerEvents() {
   if (!source?.on) return;
   eventsRegistered = true;
 
-  if (events.MESSAGE_RECEIVED) source.on(events.MESSAGE_RECEIVED, messageId => handleAssistantMessage(messageId));
+  if (events.MESSAGE_RECEIVED) {
+    source.on(events.MESSAGE_RECEIVED, messageId => {
+      // Capture is serialized in Alpha's per-chat queue, but it must not hold
+      // SillyTavern's awaited MESSAGE_RECEIVED render/save pipeline open.
+      void handleAssistantMessage(messageId).catch(error => {
+        console.error('[World State Alpha] background capture failed safely', error);
+      });
+    });
+  }
   if (events.MESSAGE_SENT) source.on(events.MESSAGE_SENT, messageId => handleUserMessage(messageId));
   if (events.CHAT_LOADED) source.on(events.CHAT_LOADED, () => activateCurrentChat());
   if (events.CHAT_CHANGED) source.on(events.CHAT_CHANGED, () => activateCurrentChat());
   if (events.CHARACTER_RENAMED) source.on(events.CHARACTER_RENAMED, (oldAvatar, newAvatar) => handleCharacterRenamed(oldAvatar, newAvatar));
+  if (events.CHARACTER_RENAMED_IN_PAST_CHAT) {
+    source.on(events.CHARACTER_RENAMED_IN_PAST_CHAT, (messages, oldAvatar, newAvatar) =>
+      handleCharacterRenamedInPastChat(messages, oldAvatar, newAvatar));
+  }
   if (events.CHARACTER_DELETED) source.on(events.CHARACTER_DELETED, eventData => handleCharacterDeleted(eventData));
   if (events.CHAT_RENAMED) source.on(events.CHAT_RENAMED, eventData => handleChatRenamed(eventData));
   if (events.CHAT_DELETED) source.on(events.CHAT_DELETED, eventData => handleChatDeleted(eventData));
