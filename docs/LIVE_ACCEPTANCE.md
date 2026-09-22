@@ -313,7 +313,6 @@ Using the same provider/model that produced the live rebuild failure, reset a po
 
 - a raw OpenAI-compatible provider envelope is reduced to `choices[0].message.content`; `reasoning_content` does not enter the capture parser
 - the rebuild immediately shows a started notification with the number of assistant boundaries
-- the Connection Profile may return either extracted text or the demonstrated raw OpenAI-compatible `choices[0].message.content` body; `reasoning_content` must never become capture output
 - a provider response using `category:"development"` and `description:"..."` is repaired to canonical `kind`/`summary`, but conflicting canonical/alias values fail closed
 - Current repopulates after full success
 - Brackenford, North Road, Northgate Stockyard, and Applecross Culvert can repopulate from the demonstrated live payload
@@ -321,6 +320,19 @@ Using the same provider/model that produced the live rebuild failure, reset a po
 - Diagnostics retains per-boundary rebuild rows plus a final rebuild summary with safe failure/success detail, alias repair count, and processed/total boundaries
 - success notification reports boundary progress and resulting Current/Places counts; failure notification reports the failed message boundary and safe bounded reason
 - reload confirms the rebuilt state was persisted durably
+
+### L25. Alpha.9 fenced final rebuild response
+
+Run a five-boundary rebuild where the first four provider replies are bare JSON and the fifth reply is the same single JSON object wrapped in a `json` Markdown code fence.
+
+Pass criteria:
+
+- exactly five provider requests are made
+- all five boundaries are reported in rebuild diagnostics
+- the fifth response is parsed without a correction retry
+- the rebuild completes rather than atomically reverting the first four boundaries
+- Current and Places reflect the full five-boundary chronology after durable persistence
+- adding any prose before or after the fence still fails closed and leaves prior canonical state unchanged
 
 ## 3. Contractual bounds to verify live
 
@@ -375,6 +387,7 @@ L21 Megumin World_State spatial continuity: PASS / FAIL / NOT RUN
 L22 Persistent off-screen capture completeness: PASS / FAIL / NOT RUN
 L23 Alpha.7 audit hardening: PASS / FAIL / NOT RUN
 L24 Alpha.8 live rebuild interoperability: PASS / FAIL / NOT RUN
+L25 Alpha.9 fenced final rebuild response: PASS / FAIL / NOT RUN
 
 Measured:
 RP TTFT baseline:

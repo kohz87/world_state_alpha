@@ -832,6 +832,113 @@ test('live Gemini alias payload rebuild repopulates Current and Places after res
   assert.equal(rows.some(row => row.label === 'rebuild' && row.sourceMessageId === 2), true);
 });
 
+test('five-boundary rebuild accepts a fenced final Gemini response without rolling back prior state', async () => {
+  const chat = [
+    { role: 'assistant', content: 'Morning mist clung to the North Road as Brackenford came into view ahead.' },
+    { role: 'user', content: 'I take the boar work.' },
+    { role: 'assistant', content: 'A sounder of seven trench-boars is rooted down at the Applecross culvert south of Brackenford.' },
+    { role: 'user', content: 'I attack one.' },
+    { role: 'assistant', content: 'One trench-boar is dead and the remaining six surge into the culvert mud.' },
+    { role: 'user', content: 'I continue the fight.' },
+    { role: 'assistant', content: 'Two trench-boars are dead or dying, two bolt south, and three remain near the hornbeam.' },
+    { role: 'user', content: 'I finish the tusker.' },
+    { role: 'assistant', content: 'Three trench-boars are dead, two yearlings are trapped by the fallen hornbeam, and two fled south. Further south, past the bend where the drainage ditch cut through the edge of the Applecross orchard lane, two trails of muddy foam marked where the first pair of runners had bolted into the low weeds.\n<World_State>\n**Loc:** Applecross Culvert | South of Brackenford | [31.4, 163.6]\n</World_State>' },
+  ];
+  const diagnostics = createDiagnosticStore();
+  let calls = 0;
+  const dispatcher = async (_ctx, options) => {
+    calls += 1;
+    const visibleRecordMatch = options.prompt.match(/VISIBLE CURRENT WORLD STATE \(current authority; use only these IDs\):\n(\[[^\n]*\])/);
+    const visibleRecords = visibleRecordMatch ? JSON.parse(visibleRecordMatch[1]) : [];
+    const boars = visibleRecords.find(record => /trench-boar/i.test(record.summary || ''));
+    const visibleSpatialMatch = options.prompt.match(/VISIBLE SPATIAL CONTINUITY \(current\/base authority; use only shown IDs\):\n(\[[^\n]*\])/);
+    const visibleSpatial = visibleSpatialMatch ? JSON.parse(visibleSpatialMatch[1]) : [];
+    const brackenford = visibleSpatial.find(item => item.name === 'Brackenford');
+
+    let payload;
+    if (calls === 1) {
+      payload = {
+        mutations: [{
+          action: 'create', kind: 'fact', summary: 'Noc Xu reached Brackenford by the North Road.',
+          anchors: ['Noc Xu', 'Brackenford'],
+          evidence: [{ sourceMessageId: 0, claim: 'Morning mist clung to the North Road as Brackenford came into view ahead.' }],
+        }],
+        spatialMutations: [
+          {
+            action: 'upsert_location', name: 'Brackenford', type: 'village', context: 'Village on the North Road', admissionReason: 'named',
+            evidence: [{ sourceMessageId: 0, claim: 'Morning mist clung to the North Road as Brackenford came into view ahead.' }],
+          },
+          {
+            action: 'upsert_route', name: 'North Road', type: 'road', context: 'Road leading toward Brackenford',
+            evidence: [{ sourceMessageId: 0, claim: 'Morning mist clung to the North Road as Brackenford came into view ahead.' }],
+          },
+        ],
+      };
+    } else if (calls === 2) {
+      assert.ok(brackenford?.id);
+      payload = {
+        mutations: [{
+          action: 'create', kind: 'development', summary: 'Seven trench-boars are active at the Applecross culvert.', trend: 'stable',
+          anchors: ['trench-boars', 'Applecross culvert'],
+          evidence: [{ sourceMessageId: 2, claim: 'A sounder of seven trench-boars is rooted down at the Applecross culvert south of Brackenford.' }],
+        }],
+        spatialMutations: [{
+          action: 'upsert_location', name: 'Applecross Culvert', type: 'culvert', context: 'Drainage culvert south of Brackenford', admissionReason: 'named',
+          relative: { toLocationId: brackenford.id, direction: 'south', distanceKm: null, distanceMode: 'route' },
+          evidence: [{ sourceMessageId: 2, claim: 'A sounder of seven trench-boars is rooted down at the Applecross culvert south of Brackenford.' }],
+        }],
+      };
+    } else if (calls === 3) {
+      assert.ok(boars?.id);
+      payload = { mutations: [{
+        action: 'update', recordId: boars.id, summary: 'One trench-boar is dead and six remain active in the culvert mud.', trend: 'rising',
+        evidence: [{ sourceMessageId: 4, claim: 'One trench-boar is dead and the remaining six surge into the culvert mud.' }],
+      }], spatialMutations: [] };
+    } else if (calls === 4) {
+      assert.ok(boars?.id);
+      payload = { mutations: [{
+        action: 'update', recordId: boars.id, kind: 'fact', status: 'active',
+        summary: 'Two trench-boars are dead or dying, two fled south, and three remain near the hornbeam.', trend: null,
+        evidence: [{ sourceMessageId: 6, claim: 'Two trench-boars are dead or dying, two bolt south, and three remain near the hornbeam.' }],
+      }], spatialMutations: [] };
+    } else {
+      assert.equal(calls, 5);
+      assert.ok(boars?.id);
+      payload = { mutations: [{
+        action: 'update', recordId: boars.id, summary: 'Three trench-boars are dead, two yearlings are trapped, and two fled south.', status: 'active', trend: null,
+        evidence: [{ sourceMessageId: 8, claim: 'Three trench-boars are dead, two yearlings are trapped by the fallen hornbeam, and two fled south.' }],
+      }], spatialMutations: [{
+        action: 'upsert_location',
+        name: 'Applecross Culvert',
+        type: 'culvert',
+        context: 'A drainage culvert and ditch bordering an orchard lane south of Brackenford.',
+        coordinate: { x: 31.4, y: 163.6, authority: 'narrative_explicit' },
+        relative: { toLocationId: brackenford.id, direction: 'south', distanceMode: 'unspecified' },
+        admissionReason: 'named',
+        evidence: [{
+          sourceMessageId: 8,
+          claim: 'Further south, past the bend where the drainage ditch cut through the edge of the Applecross orchard lane, two trails of muddy foam marked where the first pair of runners had bolted into the low weeds.',
+        }],
+      }] };
+      const fence = '`' + '``';
+      return { text: fence + 'json\n' + JSON.stringify(payload, null, 2) + '\n' + fence, receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: 'gemini-3.7-flash-high' } };
+    }
+
+    return { text: JSON.stringify(payload), receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: 'gemini-3.7-flash-high' } };
+  };
+
+  const result = await runManualRebuild({
+    ctx: {}, dispatcher, diagnostics, state: createState('five-boundary-fenced'), chat, chatKey: 'five-boundary-fenced', spatialEnabled: true, isCurrent: () => true,
+  });
+
+  assert.equal(calls, 5);
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.processedBoundaries, 5);
+  assert.equal(result.state.records.some(record => /Three trench-boars are dead/i.test(record.summary)), true);
+  assert.equal(result.state.spatial.locations.some(location => location.name === 'Brackenford'), true);
+  assert.equal(result.state.spatial.locations.some(location => location.name === 'Applecross Culvert'), true);
+  assert.equal(diagnostics.records('five-boundary-fenced').some(row => row.outcome === 'invalid-response'), false);
+});
 test('empty/no-assistant chat rebuild is local and does not require a provider guard', async () => {
   const state = reduceMutations(createState('empty-rebuild'), {
     chatKey: 'empty-rebuild',
