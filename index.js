@@ -8,7 +8,7 @@ import {
 } from '../../../../script.js';
 
 import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintMessage, rebaseLineageMetadata, reconcileBranch, seedRootCheckpoint } from './branch.js';
-import { CAPTURE_LIMITS, runCaptureOperation } from './capture.js';
+import { assistantBoundaryExchange, CAPTURE_LIMITS, runCaptureOperation } from './capture.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
@@ -1285,7 +1285,10 @@ async function handleAssistantMessage(messageId) {
     const liveChat = getContext().chat || [];
     if (messageId >= liveChat.length || messageRole(liveChat[messageId]) !== 'assistant') return;
     const currentState = stateCache.get(chatKey);
-    const exchange = boundedExchange(liveChat, messageId, CAPTURE_LIMITS.exchangeMessages, currentState?.lineage);
+    // Match rebuild's exact assistant-boundary semantics. A rolling window
+    // includes the previous assistant turn and can bias capture toward stale
+    // already-seen material instead of the newly completed exchange.
+    const exchange = assistantBoundaryExchange(liveChat, messageId, currentState?.lineage);
     const sourceLineageKey = currentState?.lineage?.[messageId]?.lineageKey || '';
     if (!sourceLineageKey) return;
 
