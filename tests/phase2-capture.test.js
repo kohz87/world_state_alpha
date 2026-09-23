@@ -179,11 +179,123 @@ test('capture prompt requires persistent off-screen completeness instead of PC-o
   assert.match(prompt.prompt, /STRUCTURED CURRENT-STATE COMPLETENESS CHECKLIST/);
   assert.match(prompt.prompt, /Orson blocks an elderly farmer/);
   assert.match(prompt.prompt, /Extortion at Brackenford market stalls by local carters went uninterrupted/);
-  assert.match(prompt.prompt, /off-screen, ignored by the PC/i);
+  assert.match(prompt.prompt, /off-screen.*ignored/i);
   assert.equal(prompt.completenessHints.some(item => /Extortion at Brackenford/i.test(item.text)), true);
   assert.equal(prompt.completenessHints.some(item => /brush-thieves targeting cart wheels/i.test(item.text)), false);
 });
 
+test('persistent rumor/news can be captured as information state without promoting quoted claims to fact', () => {
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Persistent information state is eligible/i);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Quoted dialogue alone may establish only the speech act/i);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /never promote its external claim to objective fact/i);
+
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: [
+      '**Around the central stone hearth, voices clashed above the scrape of iron spoons.**',
+      '**"The high switchbacks past Cairnwatch are washing out," a mule-driver in sheepskin barked. "Kesselpass is taking fifty Aon a team at the lower gate. Pay the toll. Wait three days in the mud. Those are the choices."**',
+      '**"It is not the toll," an older trader countered. "The Gloamwood Verge has run wild. A pack of quill-fiends pushed past the second boundary stones two nights back. A wood-hauler died behind the lime pits."**',
+    ].join('\n'),
+  }]);
+
+  const reported = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        summary: 'Reports are circulating among traders that quill-fiends crossed the second Gloamwood Verge boundary stones and that a wood-hauler was killed behind the lime pits.',
+        anchors: ['Gloamwood Verge', 'quill-fiends', 'boundary stones'],
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'A pack of quill-fiends pushed past the second boundary stones two nights back. A wood-hauler died behind the lime pits.',
+        }],
+      }],
+    }),
+    state: createState('reported-information'),
+    exchange,
+    chatKey: 'reported-information',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(reported.acceptedCount, 1);
+  assert.equal(reported.rejected.length, 0);
+  assert.match(reported.state.records[0].summary, /^Reports are circulating/i);
+
+  const promoted = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        summary: 'Quill-fiends crossed the second Gloamwood Verge boundary stones and killed a wood-hauler behind the lime pits.',
+        anchors: ['Gloamwood Verge', 'quill-fiends', 'boundary stones'],
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'A pack of quill-fiends pushed past the second boundary stones two nights back. A wood-hauler died behind the lime pits.',
+        }],
+      }],
+    }),
+    state: createState('reported-promotion-blocked'),
+    exchange,
+    chatKey: 'reported-promotion-blocked',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(promoted.acceptedCount, 0);
+  assert.equal(promoted.state.records.length, 0);
+  assert.equal(promoted.rejected[0].stage, 'source-firewall');
+  assert.match(promoted.rejected[0].reason, /quoted dialogue alone.*speech act.*underlying claim/i);
+
+  const nounStatePromotion = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        summary: 'The state of the Gloamwood Verge is dangerous because quill-fiends crossed the second boundary stones.',
+        anchors: ['Gloamwood Verge', 'quill-fiends'],
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'A pack of quill-fiends pushed past the second boundary stones two nights back. A wood-hauler died behind the lime pits.',
+        }],
+      }],
+    }),
+    state: createState('reported-state-noun-blocked'),
+    exchange,
+    chatKey: 'reported-state-noun-blocked',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+  assert.equal(nounStatePromotion.acceptedCount, 0);
+  assert.equal(nounStatePromotion.rejected[0].stage, 'source-firewall');
+
+  const speechActExchange = withLineage([{
+    role: 'assistant',
+    content: 'The magistrate struck the table with his seal. "I declare the north gate closed until dawn."',
+  }]);
+  const speechAct = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'fact',
+        summary: 'The magistrate declares the north gate closed until dawn.',
+        anchors: ['north gate', 'magistrate'],
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'I declare the north gate closed until dawn.',
+        }],
+      }],
+    }),
+    state: createState('quoted-speech-act'),
+    exchange: speechActExchange,
+    chatKey: 'quoted-speech-act',
+    sourceMessageId: 0,
+    sourceLineageKey: speechActExchange[0].lineageKey,
+  });
+  assert.equal(speechAct.acceptedCount, 1);
+  assert.equal(speechAct.rejected.length, 0);
+  assert.match(speechAct.state.records[0].summary, /declares the north gate closed/i);
+});
 
 test('World_State Off-Screen and Unresolved Threads become a bounded completeness checklist', () => {
   const assistant = [
@@ -218,7 +330,7 @@ test('World_State Off-Screen and Unresolved Threads become a bounded completenes
   const prompt = buildCapturePrompt({ exchange, operation: 'rebuild' });
   assert.match(prompt.prompt, /STRUCTURED CURRENT-STATE COMPLETENESS CHECKLIST/);
   assert.match(prompt.prompt, /Extortion at Brackenford market stalls by local carters went uninterrupted/);
-  assert.match(prompt.prompt, /Re-check each entry before returning/);
+  assert.match(prompt.prompt, /Re-check each.*exchange/i);
   assert.equal(prompt.completenessHints.length, hints.length);
 });
 
