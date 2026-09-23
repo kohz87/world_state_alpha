@@ -10,6 +10,8 @@
 - Rebuild progress/completion moved out of normal layout flow into a dismissible floating toast, so tabs/navigation no longer shift downward while rebuild status is visible.
 - Data & Maintenance, statistics, health, and operation rows use flatter separators and reduced card depth.
 - Scoped WebKit scrollbar arrow buttons are suppressed while scrolling remains available.
+- Capture now admits materially persistent rumor/news circulation as information state when the summary explicitly preserves reported/rumored/believed status instead of asserting the underlying claim as verified reality.
+- The source firewall now detects mutations supported only by quoted dialogue and rejects summaries that drop that epistemic framing, preventing tavern talk or other hearsay from silently becoming objective world truth.
 
 ### Responsive behavior
 

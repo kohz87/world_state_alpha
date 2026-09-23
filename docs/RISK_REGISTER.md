@@ -3,6 +3,7 @@
 | Risk | Failure mode | Primary mitigation | Acceptance evidence |
 | --- | --- | --- | --- |
 | Hallucinated world movement | Model invents off-screen changes | mutation proposal + source firewall + causal evidence + conservative evolution | lore-trap/no-change/provider tests |
+| Hearsay promotion | quoted rumor/report is stored as if the underlying event were verified objective reality | allow persistent information-state capture only with explicit reported/rumored/believed framing; quoted-only evidence is rejected when the summary drops that epistemic status | Cairnwatch tavern-rumor admission/promotion regression |
 | Persistent off-screen under-capture | extractor stops after the most PC-salient change and drops an explicitly established ongoing condition that continues after the PC leaves | one-call persistence completeness sweep; PC proximity/objective are not admission criteria; source firewall remains mandatory | Brackenford-style multi-condition capture regression |
 | Duplicate threads | Same development stored repeatedly | normalized anchors + semantic summary/evidence overlap + deterministic consolidation | duplicate fixture |
 | Stale lore overwrites state | baseline revives/reverts campaign reality | current-state authority + resolved tombstone | resurrection test |
