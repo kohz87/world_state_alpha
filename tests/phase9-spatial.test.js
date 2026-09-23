@@ -1064,6 +1064,108 @@ test('campaign override remains editable by its stored overrideId', () => {
   assert.equal(edited.state.spatial.locations[0].context, 'Edited campaign context');
 });
 
+test('strict Spatial normalization rejects duplicate identities and evidence key/id drift', () => {
+  const duplicateLocations = {
+    ...createSpatialState(),
+    locations: [
+      { id: 'wsloc_dup', name: 'First Place' },
+      { id: 'wsloc_dup', name: 'Conflicting Place' },
+    ],
+  };
+  assert.throws(
+    () => normalizeSpatialState(duplicateLocations, { strict: true }),
+    /duplicate spatial location id: wsloc_dup/,
+  );
+
+  const duplicateRelations = {
+    ...createSpatialState(),
+    relations: [
+      { id: 'wsrel_dup', fromId: 'a', toId: 'b' },
+      { id: 'wsrel_dup', fromId: 'b', toId: 'c' },
+    ],
+  };
+  assert.throws(
+    () => normalizeSpatialState(duplicateRelations, { strict: true }),
+    /duplicate spatial relation id: wsrel_dup/,
+  );
+
+  const duplicateRoutes = {
+    ...createSpatialState(),
+    routes: [
+      { id: 'wsroute_dup', name: 'North Road' },
+      { id: 'wsroute_dup', name: 'South Road' },
+    ],
+  };
+  assert.throws(
+    () => normalizeSpatialState(duplicateRoutes, { strict: true }),
+    /duplicate spatial route id: wsroute_dup/,
+  );
+
+  const evidenceKeyDrift = {
+    ...createSpatialState(),
+    evidence: {
+      wrong_key: {
+        id: 'wse_spatial_actual',
+        sourceMessageId: 0,
+        lineageKey: 'ln0',
+        sourceClass: 'assistant_narration',
+        claim: 'The road reaches the gate.',
+        locationIds: [],
+      },
+    },
+  };
+  assert.throws(
+    () => normalizeSpatialState(evidenceKeyDrift, { strict: true }),
+    /spatial evidence map key\/id mismatch: wrong_key != wse_spatial_actual/,
+  );
+
+  const danglingEvidence = {
+    ...createSpatialState(),
+    locations: [{
+      id: 'wsloc_live',
+      name: 'Live Place',
+      evidenceIds: ['wse_spatial_missing'],
+    }],
+  };
+  assert.throws(
+    () => normalizeSpatialState(danglingEvidence, { strict: true }),
+    /spatial location wsloc_live references missing evidence: wse_spatial_missing/,
+  );
+
+  const danglingRelationEvidence = {
+    ...createSpatialState(),
+    relations: [{
+      id: 'wsrel_live',
+      fromId: 'base:a',
+      toId: 'base:b',
+      evidenceIds: ['wse_spatial_missing'],
+    }],
+  };
+  assert.throws(
+    () => normalizeSpatialState(danglingRelationEvidence, { strict: true }),
+    /spatial relation wsrel_live references missing evidence: wse_spatial_missing/,
+  );
+
+  const danglingRouteEvidence = {
+    ...createSpatialState(),
+    routes: [{
+      id: 'wsroute_live',
+      name: 'Live Route',
+      evidenceIds: ['wse_spatial_missing'],
+    }],
+  };
+  assert.throws(
+    () => normalizeSpatialState(danglingRouteEvidence, { strict: true }),
+    /spatial route wsroute_live references missing evidence: wse_spatial_missing/,
+  );
+
+  assert.equal(
+    normalizeSpatialState(duplicateLocations).locations.length,
+    1,
+    'non-strict Spatial normalization keeps repair semantics',
+  );
+});
+
 test('Schema 1 to Schema 2 migration and old checkpoint rollback safety', () => {
   const schema1 = {
     schemaVersion: 1,

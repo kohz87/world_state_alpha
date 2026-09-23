@@ -552,6 +552,7 @@ function clearChatRuntimeState(chatKey) {
   branchDirtyChats.delete(chatKey);
   chatCacheTouches.delete(chatKey);
   diagnosticStore.clear(chatKey);
+  rebuildStatuses.delete(chatKey);
 }
 async function migrateWorldStateChatKey(oldKey, newKey) {
   if (!oldKey || oldKey === 'no-chat' || !newKey || newKey === 'no-chat' || oldKey === newKey) return true;

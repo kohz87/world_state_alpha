@@ -370,6 +370,10 @@ test('host identity/settings lifecycle preserves continuity across rename and di
   assert.match(source, /async function neutralizeRetiredSidecar\(chatKey, pointer\)/);
   assert.match(source, /retiredPointer = await neutralizeRetiredSidecar\(chatKey, retiredPointer\)/);
   assert.match(source, /retiredSourcePointer = await neutralizeRetiredSidecar\(oldKey, sourcePointer\)/);
+  assert.match(
+    source,
+    /function clearChatRuntimeState\(chatKey\)[\s\S]*diagnosticStore\.clear\(chatKey\);[\s\S]*rebuildStatuses\.delete\(chatKey\);/,
+  );
 
   assert.match(source, /function invalidateChatOperations\(chatKey = currentChatKey\(\)\)[\s\S]*cancelWorldStateRequests\(\{ chatKey \}\)/);
   for (const id of [

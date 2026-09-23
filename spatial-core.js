@@ -272,10 +272,12 @@ export function normalizeSpatialState(raw, { strict = false } = {}) {
   for (const item of Array.isArray(raw.locations) ? raw.locations : []) {
     try {
       const loc = normalizeSpatialLocation(item);
-      if (!locIds.has(loc.id)) {
-        locIds.add(loc.id);
-        spatial.locations.push(loc);
+      if (locIds.has(loc.id)) {
+        if (strict) throw new Error(`duplicate spatial location id: ${loc.id}`);
+        continue;
       }
+      locIds.add(loc.id);
+      spatial.locations.push(loc);
     } catch (error) {
       if (strict) throw error;
     }
@@ -285,10 +287,12 @@ export function normalizeSpatialState(raw, { strict = false } = {}) {
   for (const item of Array.isArray(raw.relations) ? raw.relations : []) {
     try {
       const rel = normalizeSpatialRelation(item);
-      if (!relIds.has(rel.id)) {
-        relIds.add(rel.id);
-        spatial.relations.push(rel);
+      if (relIds.has(rel.id)) {
+        if (strict) throw new Error(`duplicate spatial relation id: ${rel.id}`);
+        continue;
       }
+      relIds.add(rel.id);
+      spatial.relations.push(rel);
     } catch (error) {
       if (strict) throw error;
     }
@@ -298,22 +302,48 @@ export function normalizeSpatialState(raw, { strict = false } = {}) {
   for (const item of Array.isArray(raw.routes) ? raw.routes : []) {
     try {
       const rt = normalizeSpatialRoute(item);
-      if (!routeIds.has(rt.id)) {
-        routeIds.add(rt.id);
-        spatial.routes.push(rt);
+      if (routeIds.has(rt.id)) {
+        if (strict) throw new Error(`duplicate spatial route id: ${rt.id}`);
+        continue;
       }
+      routeIds.add(rt.id);
+      spatial.routes.push(rt);
     } catch (error) {
       if (strict) throw error;
     }
   }
 
   if (raw.evidence && typeof raw.evidence === 'object' && !Array.isArray(raw.evidence)) {
-    for (const item of Object.values(raw.evidence)) {
+    const evidenceIds = new Set();
+    for (const [key, item] of Object.entries(raw.evidence)) {
       try {
         const ev = normalizeSpatialEvidence(item);
+        if (strict && key !== ev.id) {
+          throw new Error(`spatial evidence map key/id mismatch: ${key} != ${ev.id}`);
+        }
+        if (evidenceIds.has(ev.id)) {
+          if (strict) throw new Error(`duplicate spatial evidence id: ${ev.id}`);
+          continue;
+        }
+        evidenceIds.add(ev.id);
         spatial.evidence[ev.id] = ev;
       } catch (error) {
         if (strict) throw error;
+      }
+    }
+  }
+
+  if (strict) {
+    const entities = [
+      ...spatial.locations.map(item => ['location', item]),
+      ...spatial.relations.map(item => ['relation', item]),
+      ...spatial.routes.map(item => ['route', item]),
+    ];
+    for (const [kind, entity] of entities) {
+      for (const evidenceId of entity.evidenceIds || []) {
+        if (!spatial.evidence[evidenceId]) {
+          throw new Error(`spatial ${kind} ${entity.id} references missing evidence: ${evidenceId}`);
+        }
       }
     }
   }
