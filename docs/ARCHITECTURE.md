@@ -610,8 +610,9 @@ Phase 8 also removes full-chat lineage hashing from ordinary user/assistant even
 - Bounded exchange extraction reuses cached lineage.
 - Provider currentness guards compare the owned source-message fingerprint plus chat/state epoch instead of rebuilding the whole lineage.
 - Capture/evolution journal commits receive the already-known lineage.
+- After a successful live capture, the host retains only an ephemeral candidate for that latest captured assistant boundary. While that candidate exists, the suffix fast path performs one O(1) fingerprint check on that boundary in addition to its normal tail check, so a delayed older rewrite cannot hide behind a newer unchanged tail. If host/regex/reasoning post-processing changes the candidate without a branch event, exact reconciliation may rebase its lineage metadata rather than replaying the boundary undo. The rebase requires the divergence to equal `lastCaptureMessage` and every later already-owned raw fingerprint to remain unchanged.
 
-Full `chatLineage` / exact `reconcileBranch` work remains appropriate for chat hydration, edit/delete/swipe recovery, explicit rebuild, and other operations that genuinely need whole-history proof. Branch-changing events bump the local epoch and cancel Alpha requests immediately before queued exact reconciliation.
+Full `chatLineage` / exact `reconcileBranch` work remains appropriate for chat hydration, edit/delete/swipe recovery, explicit rebuild, and other operations that genuinely need whole-history proof. Branch-changing events bump the local epoch, clear the passive-capture candidate, and cancel Alpha requests immediately before queued exact reconciliation, so a genuine abandoned branch can never use the passive rebase path.
 
 ### C. Canonical evidence compaction
 
@@ -623,7 +624,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; Background Development Catch-up landed in `0.9.0-alpha.6`; recovery/evidence/Spatial hardening landed in `0.9.0-alpha.7`; live rebuild interoperability/observability landed in `0.9.0-alpha.8`; fenced-response interoperability landed in `0.9.0-alpha.9`; structured completeness-checklist hardening landed in `0.9.0-alpha.10`; responsive Operations/rebuild UX landed in `0.9.0-alpha.11`; and the current flat disclosure workspace candidate is `0.9.0-alpha.12`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
+Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; Background Development Catch-up landed in `0.9.0-alpha.6`; recovery/evidence/Spatial hardening landed in `0.9.0-alpha.7`; live rebuild interoperability/observability landed in `0.9.0-alpha.8`; fenced-response interoperability landed in `0.9.0-alpha.9`; structured completeness-checklist hardening landed in `0.9.0-alpha.10`; responsive Operations/rebuild UX landed in `0.9.0-alpha.11`; the flat disclosure workspace landed in `0.9.0-alpha.12`; and the current passive-lineage rewrite hardening candidate is `0.9.0-alpha.13`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

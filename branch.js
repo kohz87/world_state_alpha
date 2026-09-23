@@ -283,6 +283,25 @@ function restoreByJournal(state, previousLineage, divergence) {
   return { state: working, headSeq: seq, targetMessageId };
 }
 
+function canRebasePassiveCaptureRewrite(state, chat, previousLineage, currentLineage, divergence, candidateMessageId) {
+  if (!Number.isInteger(candidateMessageId) || candidateMessageId < 0) return false;
+  if (divergence !== candidateMessageId || state.lastCaptureMessage !== candidateMessageId) return false;
+  if (currentLineage.length < previousLineage.length || candidateMessageId >= previousLineage.length) return false;
+
+  const message = Array.isArray(chat) ? chat[candidateMessageId] : null;
+  const role = message?.role || (message?.is_user === true ? 'user' : (message?.is_system === true ? 'system' : 'assistant'));
+  if (role !== 'assistant') return false;
+
+  // Lineage keys after the rewritten message necessarily cascade, so compare
+  // their raw fingerprints instead. This admits exactly one passive rewrite:
+  // the most recently captured assistant boundary. Any independently changed
+  // later message still forces ordinary rollback/fail-closed handling.
+  for (let index = candidateMessageId + 1; index < previousLineage.length; index += 1) {
+    if (previousLineage[index]?.fingerprint !== currentLineage[index]?.fingerprint) return false;
+  }
+  return true;
+}
+
 export function reconcileBranch(inputState, chat, options = {}) {
   const state = normalizeState(clone(inputState));
   const currentLineage = chatLineage(chat);
@@ -296,6 +315,30 @@ export function reconcileBranch(inputState, chat, options = {}) {
       state,
       divergence: divergence === -1 ? -1 : divergence,
       action: divergence === -1 ? 'same' : 'forward-extension',
+      exactRestored: true,
+      failClosed: false,
+    };
+  }
+
+  if (canRebasePassiveCaptureRewrite(
+    state,
+    chat,
+    previousLineage,
+    currentLineage,
+    divergence,
+    options.passiveCaptureMessageId,
+  )) {
+    const rebasedPrefix = rebaseLineageMetadata(
+      state,
+      previousLineage,
+      currentLineage.slice(0, previousLineage.length),
+    );
+    rebasedPrefix.lineage = currentLineage;
+    rebasedPrefix.recoveryRequired = null;
+    return {
+      state: normalizeState(rebasedPrefix),
+      divergence,
+      action: 'passive-capture-rebase',
       exactRestored: true,
       failClosed: false,
     };

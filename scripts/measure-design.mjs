@@ -307,7 +307,7 @@ const canonicalSidecar = encodeSidecar({
   chatKey: sequentialState.chatKey,
   state: sequentialState,
   revision: 1000,
-  appVersion: '0.9.0-alpha.12',
+  appVersion: '0.9.0-alpha.13',
 });
 
 // Rollback storage is capped at 256 entries. Measure one full retained window separately
@@ -354,7 +354,7 @@ const journalSidecar = encodeSidecar({
   chatKey: journalState.chatKey,
   state: journalState,
   revision: rollbackWindow,
-  appVersion: '0.9.0-alpha.12',
+  appVersion: '0.9.0-alpha.13',
 });
 
 console.log(JSON.stringify({

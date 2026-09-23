@@ -267,7 +267,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -343,7 +343,8 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
   assert.match(source, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, payload, chatKey\)\)/);
   assert.match(source, /return queueChatWork\(chatKey, \(\) => applySpatialActionNow\(actionId, payload, chatKey\)\)/);
   assert.match(source, /const baseMap = await getChatBaseMap\(chatKey, state\);\s*if \(currentChatKey\(\) !== chatKey \|\| hydrationErrors\.has\(chatKey\)\) return;/);
-  assert.match(source, /reconcileBranch\(state, getContext\(\)\.chat \|\| \[\]\)/);
+  assert.match(source, /reconcileBranch\(state, getContext\(\)\.chat \|\| \[\], \{/);
+  assert.match(source, /passiveCaptureMessageId:/);
   assert.match(source, /commitMutationBoundary\(before, result\.state, liveChat, messageId, 'capture'(?:,|\))/);
   assert.match(source, /commitMutationBoundary\(before, prepared\.state, liveChat, messageId, 'evolution'(?:,|\))/);
 
@@ -464,6 +465,40 @@ test('live assistant capture uses the exact assistant boundary rather than a rol
   assert.doesNotMatch(body, /boundedExchange\(liveChat, messageId, CAPTURE_LIMITS\.exchangeMessages/);
 });
 
+test('host guards the latest captured boundary against passive post-processing rewrites without masking real branch events', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+
+  assert.match(source, /const passiveCaptureRebaseCandidates = new Map\(\)/);
+  assert.match(source, /passiveCaptureRebaseCandidates\.set\(chatKey, messageId\)/);
+  assert.match(source, /passiveCaptureRebaseCandidates\.get\(chatKey\)/);
+  assert.match(source, /passiveCaptureMessageId:/);
+  assert.match(source, /'passive-capture-rebase'/);
+  assert.match(source, /WORLD_STATE_PASSIVE_CAPTURE_REBASE/);
+  assert.match(source, /WORLD_STATE_BRANCH_RECONCILED/);
+
+  const fastStart = source.indexOf('function extendCurrentBranchFast(chatKey)');
+  const fastEnd = source.indexOf('async function reconcileCurrentBranch', fastStart);
+  const fastBody = source.slice(fastStart, fastEnd);
+  assert.match(fastBody, /passiveCaptureRebaseCandidates\.get\(chatKey\)/);
+  assert.match(fastBody, /fingerprintMessage\(current\) !== stored\.fingerprint/);
+  assert.doesNotMatch(fastBody, /chatLineage\(/);
+
+  const maintenanceStart = source.indexOf('async function applyMaintenanceActionNow');
+  const maintenanceEnd = source.indexOf('async function applySpatialAction', maintenanceStart);
+  const maintenanceBody = source.slice(maintenanceStart, maintenanceEnd);
+  assert.match(maintenanceBody, /if \(actionId === 'import'\)[\s\S]*setCachedState\(chatKey, next\);\s*passiveCaptureRebaseCandidates\.delete\(chatKey\)/);
+  assert.match(maintenanceBody, /if \(actionId === 'reset'\)[\s\S]*setCachedState\(chatKey, next\);\s*passiveCaptureRebaseCandidates\.delete\(chatKey\)/);
+  assert.match(maintenanceBody, /setCachedState\(chatKey, result\.state\);\s*passiveCaptureRebaseCandidates\.delete\(chatKey\)/);
+
+  const branchStart = source.indexOf('async function handleBranchChange()');
+  const branchEnd = source.indexOf('async function activateCurrentChat()', branchStart);
+  const branchBody = source.slice(branchStart, branchEnd);
+  const dirtyAt = branchBody.indexOf('branchDirtyChats.add(chatKey)');
+  const clearAt = branchBody.indexOf('passiveCaptureRebaseCandidates.delete(chatKey)');
+  const reconcileAt = branchBody.indexOf('reconcileCurrentBranch(chatKey');
+  assert.ok(dirtyAt >= 0 && clearAt > dirtyAt && reconcileAt > clearAt);
+});
+
 test('recovery-required host state suppresses both Reality and Spatial private injection', () => {
   const source = fs.readFileSync('index.js', 'utf8');
   const start = source.indexOf('function updatePrivateInjection()');
@@ -579,7 +614,7 @@ test('host publishes mutated canonical state only after durable sidecar success'
   );
   assert.match(
     source,
-    /if \(changed && durableRestore\) \{\s*await persistState\(chatKey, result\.state\);\s*setCachedState\(chatKey, result\.state\);/,
+    /if \(changed && durableRestore\) \{\s*await persistState\(chatKey, result\.state\);\s*setCachedState\(chatKey, result\.state,[\s\S]*?\);/,
   );
   assert.match(
     source,

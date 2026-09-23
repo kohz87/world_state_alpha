@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0-alpha.13 - Passive lineage rewrite hardening
+
+### Fixed
+
+- Prevented a post-`MESSAGE_RECEIVED` host/regex/reasoning rewrite of the latest captured assistant message from being mistaken for a real branch change and replaying that boundary's undo patch.
+- Added a narrowly scoped ephemeral rebase candidate for only the latest successfully captured assistant boundary. Rebase is allowed only when it is still `lastCaptureMessage`, later already-owned message fingerprints are unchanged, and no edit/delete/swipe event marked the chat dirty.
+- Genuine branch events still clear the candidate before exact reconciliation, so abandoned-branch state continues to roll back normally.
+- Import, reset, and successful rebuild clear any stale passive-rebase candidate.
+- Branch reconciliation now emits bounded Operations diagnostics for passive rebases, exact rollbacks, and fail-closed recovery, including before/after record counts without retaining story text.
+
+### Preserved
+
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+- No provider call, prompt, evidence-firewall, Spatial authority, or Story Director behavior was added.
+
 ## 0.9.0-alpha.12 - Flat disclosure workspace
 
 ### Changed
@@ -13,6 +28,7 @@
 - Capture now admits materially persistent rumor/news circulation as information state when the summary explicitly preserves reported/rumored/believed status instead of asserting the underlying claim as verified reality.
 - The source firewall now detects mutations supported only by quoted dialogue and rejects summaries that drop that epistemic framing, preventing tavern talk or other hearsay from silently becoming objective world truth.
 - Live automatic capture now uses the exact completed assistant boundary (messages after the previous assistant through the current assistant), matching chronological rebuild semantics instead of feeding the previous turn into a rolling capture window.
+- A passively rewritten latest captured assistant message no longer masquerades as a branch change and roll back its freshly captured state. Alpha may rebase that one runtime-owned boundary when no edit/delete/swipe event was observed; genuine branch events still clear the guard and use exact rollback.
 
 ### Responsive behavior
 

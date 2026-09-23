@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.12 keeps the Alpha.11 rebuild/range semantics and refines the operator surface into a flatter disclosure workspace: continuity icon + title branding, inline expandable Reality records, expandable Operations diagnostics/JSON, dismissible floating rebuild status that never shifts navigation, flatter Data/maintenance sections, and suppressed scrollbar arrow buttons. Responsive tablet/mobile behavior remains intact. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.13 retains the Alpha.12 flat responsive workspace and hardens branch ownership against passive post-processing of the latest captured assistant boundary, preventing a host/regex/reasoning rewrite from replaying the capture undo on the following turn. Genuine edit/delete/swipe events still use exact rollback. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

@@ -39,7 +39,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.12';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.13';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -71,6 +71,7 @@ const stateEpochs = new Map();
 const ownershipEpochs = new Map();
 const chatQueues = new Map();
 const branchDirtyChats = new Set();
+const passiveCaptureRebaseCandidates = new Map();
 const chatCacheTouches = new Map();
 const baseMapCacheTouches = new Map();
 const pendingCharacterRenames = new Map();
@@ -248,6 +249,7 @@ function forgetCachedChat(chatKey) {
   loadedChats.delete(key);
   hydrationErrors.delete(key);
   branchDirtyChats.delete(key);
+  passiveCaptureRebaseCandidates.delete(key);
   chatCacheTouches.delete(key);
   diagnosticStore.clear(key);
   rebuildStatuses.delete(key);
@@ -550,6 +552,7 @@ function clearChatRuntimeState(chatKey) {
   hydrationErrors.delete(chatKey);
   loadingChats.delete(chatKey);
   branchDirtyChats.delete(chatKey);
+  passiveCaptureRebaseCandidates.delete(chatKey);
   chatCacheTouches.delete(chatKey);
   diagnosticStore.clear(chatKey);
   rebuildStatuses.delete(chatKey);
@@ -1221,6 +1224,18 @@ function extendCurrentBranchFast(chatKey) {
   if (state?.recoveryRequired) return null;
   if (!state || currentChatKey() !== chatKey) return null;
   const chat = getContext().chat || [];
+
+  // The suffix fast path normally verifies only the stored tail. While a
+  // freshly captured boundary is eligible for passive rewrite protection,
+  // also verify that exact older boundary in O(1) so a delayed host rewrite
+  // cannot hide behind an unchanged newer tail.
+  const passiveCaptureMessageId = passiveCaptureRebaseCandidates.get(chatKey);
+  if (Number.isInteger(passiveCaptureMessageId)) {
+    const stored = state.lineage?.[passiveCaptureMessageId];
+    const current = chat[passiveCaptureMessageId];
+    if (stored && current && fingerprintMessage(current) !== stored.fingerprint) return null;
+  }
+
   const appended = extendChatLineage(state.lineage, chat);
   if (appended === null) return null;
   if (appended.length) {
@@ -1240,18 +1255,54 @@ function extendCurrentBranchFast(chatKey) {
 async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) {
   const state = await ensureChatStateLoaded(chatKey);
   if (!state || currentChatKey() !== chatKey) return null;
-  const result = reconcileBranch(state, getContext().chat || []);
+
+  const passiveCaptureMessageId = branchDirtyChats.has(chatKey)
+    ? null
+    : passiveCaptureRebaseCandidates.get(chatKey);
+  const result = reconcileBranch(state, getContext().chat || [], {
+    passiveCaptureMessageId: Number.isInteger(passiveCaptureMessageId) ? passiveCaptureMessageId : null,
+  });
   const changed = stateChanged(state, result.state);
+  const passiveRebase = result.action === 'passive-capture-rebase';
   const durableRestore = persistRestore
-    && ['rollback-journal', 'exact-checkpoint', 'fail-closed'].includes(result.action);
+    && ['rollback-journal', 'exact-checkpoint', 'fail-closed', 'passive-capture-rebase'].includes(result.action);
 
   if (changed && durableRestore) {
     await persistState(chatKey, result.state);
-    setCachedState(chatKey, result.state);
+    setCachedState(chatKey, result.state, { indexMode: passiveRebase ? 'preserve' : 'rebuild' });
   } else if (changed) {
-    // Forward lineage extension changes chronology only; canonical relevance data is unchanged.
+    // Forward lineage extension and passive lineage rebases change chronology
+    // metadata only; canonical relevance data is unchanged.
     setCachedState(chatKey, result.state, { indexMode: 'preserve' });
   }
+
+  if (passiveRebase) {
+    passiveCaptureRebaseCandidates.delete(chatKey);
+    diagnosticStore.record(chatKey, {
+      operationId: 'branch-rebase:' + result.divergence,
+      label: 'branch',
+      sourceMessageId: result.divergence,
+      outcome: 'rebased',
+      code: 'WORLD_STATE_PASSIVE_CAPTURE_REBASE',
+      detail: 'Preserved canonical state while rebasing a passively rewritten latest captured assistant boundary.',
+      providerCalls: 0,
+    });
+  } else if (!['same', 'forward-extension'].includes(result.action)) {
+    passiveCaptureRebaseCandidates.delete(chatKey);
+    const beforeRecords = Array.isArray(state?.records) ? state.records.length : 0;
+    const afterRecords = Array.isArray(result.state?.records) ? result.state.records.length : 0;
+    diagnosticStore.record(chatKey, {
+      operationId: 'branch:' + result.action + ':' + result.divergence,
+      label: 'branch',
+      sourceMessageId: result.divergence,
+      outcome: result.action,
+      code: result.failClosed ? 'WORLD_STATE_BRANCH_FAIL_CLOSED' : 'WORLD_STATE_BRANCH_RECONCILED',
+      detail: 'Branch reconciliation at message ' + result.divergence
+        + ' changed current record count from ' + beforeRecords + ' to ' + afterRecords + '.',
+      providerCalls: 0,
+    });
+  }
+
   if (result.failClosed) branchDirtyChats.add(chatKey);
   else branchDirtyChats.delete(chatKey);
   return result;
@@ -1357,6 +1408,11 @@ async function handleAssistantMessage(messageId) {
       indexDelta: result.indexDelta,
       spatialIndexDelta: result.spatial?.indexDelta,
     });
+    // The host may still normalize the just-received assistant message after
+    // this background capture finishes. Remember only this latest captured
+    // boundary so an unannounced presentation-only rewrite can rebase lineage
+    // metadata instead of being mistaken for a branch rollback.
+    passiveCaptureRebaseCandidates.set(chatKey, messageId);
     updatePrivateInjection();
     refreshPanel();
   });
@@ -1459,6 +1515,7 @@ async function handleBranchChange() {
     return;
   }
   branchDirtyChats.add(chatKey);
+  passiveCaptureRebaseCandidates.delete(chatKey);
   stateEpochs.set(chatKey, epoch(chatKey) + 1);
   cancelWorldStateRequests({ chatKey });
   await queueChatWork(chatKey, async () => {
@@ -1785,6 +1842,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const next = seedRootCheckpoint(applyWorldStateImport(preview, { confirmed: true }));
     await persistState(chatKey, next);
     setCachedState(chatKey, next);
+    passiveCaptureRebaseCandidates.delete(chatKey);
     if (next.spatial?.baseMapRef?.id) {
       const reboundBaseMap = await getChatBaseMap(chatKey, stateCache.get(chatKey));
       if (reboundBaseMap) {
@@ -1803,6 +1861,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     rebuildStatuses.delete(chatKey);
     await persistState(chatKey, next);
     setCachedState(chatKey, next);
+    passiveCaptureRebaseCandidates.delete(chatKey);
     updatePrivateInjection();
     refreshPanel();
     return;
@@ -2044,6 +2103,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     }
 
     setCachedState(chatKey, result.state);
+    passiveCaptureRebaseCandidates.delete(chatKey);
     const currentCount = (result.state.records || []).filter(record => record?.status === 'active').length;
     const placeCount = resolveEffectiveLocations(result.state.spatial, baseMap).length;
     rebuildStatuses.set(chatKey, {
