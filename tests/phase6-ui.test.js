@@ -314,8 +314,12 @@ test('diagnostic projection is allowlisted and drops private unexpected fields',
       processedBoundaries: 3,
       totalBoundaries: 5,
       prompt: 'raw prompt',
-      response: 'raw response',
+      response: 'raw transport response',
+      responseJson: '{"mutations":[{"action":"create","kind":"fact","summary":"safe model JSON"}]}',
+      rejectionsJson: '[{"stage":"wire","reason":"bad field"}]',
       storyTranscript: 'story',
+      reasoning_content: 'private reasoning',
+      headers: { authorization: 'secret' },
       apiKey: 'credential',
     }],
   });
@@ -338,7 +342,15 @@ test('diagnostic projection is allowlisted and drops private unexpected fields',
   assert.equal(Object.hasOwn(row, 'prompt'), false);
   assert.equal(Object.hasOwn(row, 'response'), false);
   assert.equal(Object.hasOwn(row, 'storyTranscript'), false);
+  assert.equal(Object.hasOwn(row, 'reasoning_content'), false);
+  assert.equal(Object.hasOwn(row, 'headers'), false);
   assert.equal(Object.hasOwn(row, 'apiKey'), false);
+  assert.match(row.responseJson, /safe model JSON/);
+  assert.match(row.rejectionsJson, /bad field/);
+  assert.match(html, /Model response JSON/);
+  assert.match(html, /Rejected mutations \/ reasons/);
+  assert.match(html, /safe model JSON/);
+  assert.doesNotMatch(html, /private reasoning|authorization|raw transport response/);
 });
 
 test('maintenance surface contains explicit intent descriptors only', () => {
@@ -382,16 +394,75 @@ test('1000-record UI fixture remains bounded', () => {
   assert.equal(model.truncation.current > 0, true);
 });
 
-test('Phase 6 CSS has desktop and mobile readability boundaries', () => {
+test('Phase 6 CSS has desktop, tablet, and mobile adaptive boundaries', () => {
   const css = fs.readFileSync('ui.css', 'utf8');
-  assert.match(css, /width:\s*min\(1040px,\s*calc\(100vw - 32px\)\)/);
-  assert.match(css, /grid-template-columns:\s*minmax\(260px,\s*360px\)\s+minmax\(0,\s*1fr\)/);
-  assert.match(css, /@media \(max-width:\s*700px\)/);
+  assert.match(css, /width:\s*min\(1180px,\s*calc\(100vw - 32px\)\)/);
+  assert.match(css, /@media \(max-width:\s*1099px\) and \(min-width:\s*768px\)/);
+  assert.match(css, /@media \(max-width:\s*767px\)/);
+  assert.match(css, /@media \(max-width:\s*599px\)/);
+  assert.match(css, /\.wsa-mobile-nav\s*\{/);
+  assert.match(css, /\.wsa-rebuild-sheet\s*\{/);
+  assert.match(css, /\.wsa-operation\s*\{/);
   assert.match(css, /width:\s*100vw/);
   assert.match(css, /height:\s*100dvh/);
-  assert.match(css, /\.wsa-tab\s*\{[\s\S]*?min-height:\s*44px/s);
-  assert.match(css, /@media \(max-width:\s*420px\)/);
+  assert.match(css, /min-height:\s*44px/);
   assert.match(css, /focus-visible/);
+});
+
+test('responsive renderer exposes Operations, Places, mobile navigation, atomic rebuild sheet, and danger zone', () => {
+  const idleModel = buildWorldStateUiModel(fixtureState(), {
+    runtimeInfo: {
+      chatMessages: 42,
+      assistantBoundaries: 18,
+      defaultRebuildBoundaries: 1024,
+      maxRebuildBoundaries: 4096,
+      spatialEnabled: true,
+    },
+  });
+  const html = renderWorldStatePanel(idleModel, {
+    activeTab: 'current',
+    rebuildOpen: true,
+    rebuildForm: { mode: 'from', startMessageId: 10, lastMessages: 20, maxBoundaries: 2048 },
+  });
+  assert.match(html, />Operations</);
+  assert.match(html, />Places</);
+  assert.match(html, /wsa-mobile-nav/);
+  assert.match(html, /Rebuild from Chat/);
+  assert.match(html, /Full chat/);
+  assert.match(html, /Last N messages/);
+  assert.match(html, /Start message/);
+  assert.match(html, /Maximum assistant boundaries/);
+  assert.match(html, /Atomic replacement/);
+
+  const runningModel = buildWorldStateUiModel(fixtureState(), {
+    runtimeInfo: {
+      chatMessages: 42,
+      assistantBoundaries: 18,
+      defaultRebuildBoundaries: 1024,
+      maxRebuildBoundaries: 4096,
+      spatialEnabled: true,
+      rebuildStatus: {
+        phase: 'running',
+        operationId: 'rebuild:41:2:0',
+        processedBoundaries: 7,
+        totalBoundaries: 18,
+        providerCalls: 7,
+        applied: 9,
+        rejected: 1,
+        currentRecords: 5,
+        places: 4,
+        detail: 'Processed message 15.',
+      },
+    },
+  });
+  const runningHtml = renderWorldStatePanel(runningModel, { activeTab: 'current', rebuildOpen: true });
+  assert.match(runningHtml, /7\/18 boundaries/);
+  assert.match(runningHtml, /Cancel/);
+  assert.doesNotMatch(runningHtml, /Start Rebuild/);
+
+  const dataHtml = renderWorldStatePanel(idleModel, { activeTab: 'maintenance' });
+  assert.match(dataHtml, /Danger zone/);
+  assert.match(dataHtml, /Rebuild does not require Clear/);
 });
 
 test('Phase 6 UI namespace is isolated from NPC State and host/bootstrap code', () => {

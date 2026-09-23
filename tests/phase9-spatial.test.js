@@ -1162,7 +1162,7 @@ test('UI projections: escaped HTML rendering and spatial tab model', () => {
   assert.ok(!html.includes('<img src=x onerror=alert(1)>'));
   assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
   assert.ok(html.includes('data-wsa-tab="spatial"'));
-  assert.ok(html.includes('aria-label="Spatial continuity"'));
+  assert.ok(html.includes('aria-label="Places"'));
   assert.ok(html.includes('Manual 🔒'));
 });
 

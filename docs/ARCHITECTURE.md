@@ -275,16 +275,16 @@ Primary views:
 - Resolved: resolved and superseded tombstones, bounded to 80 rows
 - Search: free-text summary/anchor search using the Phase 5 manual-query semantics, bounded to 100 rows
 - Details/evidence: current summary/status/trend, anchors, created/changed/evaluated boundaries, optional time anchor, at most 32 evidence items, and at most 24 causal/related rows
-- Diagnostics: at most 40 rows after the existing diagnostics allowlist sanitizer
-- Data & maintenance: safe counts/recovery health plus export/import/rebuild/reset action intents
+- Operations: at most 80 allowlisted telemetry rows, newest first, with expandable bounded model response/rejection content when available
+- Data & maintenance: safe counts/recovery health plus export/import/rebuild/clear action intents, with Clear isolated in a danger zone
 
-Current answers "what is happening now?" without exposing backend mechanics. Recent may translate a journal reason into a human label such as "Captured from story" or "Manual correction", but raw journal sequence numbers, lineage keys, undo patches, checksums, raw record/evidence IDs, prompts, transcripts, credentials, and provider payloads are not ordinary UI output.
+Current answers "what is happening now?" without exposing backend mechanics. Recent may translate a journal reason into a human label such as "Captured from story" or "Manual correction". Raw journal sequence numbers, lineage keys, undo patches, checksums, raw record/evidence IDs, prompts, transcripts, credentials, transport headers, and reasoning content are not ordinary UI output. The explicit Operations view may show bounded escaped model response content and rejection JSON as ephemeral operator telemetry.
 
 All state/evidence/diagnostic text is escaped before HTML rendering. Search and record-detail projections return cloned data rather than mutable references to canonical state.
 
-The host-neutral controller accepts a caller-supplied root, `getState()`, optional `getDiagnostics()`, `onMaintenanceAction()`, and `onClose()`. Maintenance buttons emit an intent only. Phase 5/caller wiring retains preview/confirm and mutation authority.
+The host-neutral controller accepts a caller-supplied root, `getState()`, optional `getDiagnostics()` / `getRuntimeInfo()`, `onMaintenanceAction()`, and `onClose()`. Maintenance buttons and rebuild-range controls emit intents only. Phase 5/caller wiring retains provider routing, exact-prefix validation, preview/confirm, persistence, and mutation authority.
 
-Desktop uses a centered panel up to roughly 1040 px with a list/detail split. At 700 px and below the panel becomes full-screen `100vw × 100dvh` with a vertically scrollable stacked body and >=44 px tab targets. At 420 px and below dense grids collapse to one column.
+Desktop uses a centered workspace up to roughly 1180 px with a master/detail split. Tablet landscape (768-1099 px) uses an adaptive 40/60 pane; tablet portrait (<768 px) switches to list/detail single-pane navigation. Mobile (<600 px) uses full-screen `100vw × 100dvh`, bottom navigation (Current / Places / Ops / More), safe-area-aware controls, >=44 px touch targets, and a full-height rebuild sheet. Dense operation/detail grids collapse progressively rather than shrinking typography.
 
 Phase 6 itself remains host-neutral. Phase 7 mounts it through one `world_state_alpha_panel_root` plus a compact, natively collapsible World State settings card. Phase 7 still deliberately omits a launcher/watchdog/MutationObserver framework, generic slash-command surface, and cross-extension adapter.
 
@@ -623,7 +623,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; Background Development Catch-up landed in `0.9.0-alpha.6`; recovery/evidence/Spatial hardening landed in `0.9.0-alpha.7`; live rebuild interoperability/observability landed in `0.9.0-alpha.8`; fenced-response interoperability landed in `0.9.0-alpha.9`; and the current structured completeness-checklist candidate is `0.9.0-alpha.10`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
+Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; Background Development Catch-up landed in `0.9.0-alpha.6`; recovery/evidence/Spatial hardening landed in `0.9.0-alpha.7`; live rebuild interoperability/observability landed in `0.9.0-alpha.8`; fenced-response interoperability landed in `0.9.0-alpha.9`; structured completeness-checklist hardening landed in `0.9.0-alpha.10`; and the current responsive Operations/rebuild UX candidate is `0.9.0-alpha.11`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

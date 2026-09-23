@@ -159,18 +159,20 @@ Observe:
 - rebuild does not replay hidden background evolution between narrated boundaries
 - failed/stale rebuild leaves the prior canonical state unchanged
 
-### L13. Desktop and mobile UI
+### L13. Desktop / tablet / mobile UI
 
-Open the World State panel at desktop width and at <=700 px mobile width.
+Open the World State panel at representative desktop (>=1100 px), tablet landscape (768-1099 px), tablet portrait (<768 px), and mobile (<600 px) widths.
 
 Observe:
 
-- all primary tabs remain usable
-- details/evidence stay bounded
-- raw backend IDs/lineage/credentials/provider payloads are not ordinary UI output
-- touch targets and scrolling remain practical
+- desktop uses the wider master/detail workspace without nested-card clutter
+- tablet landscape keeps an adaptive split; tablet portrait uses list -> detail navigation rather than squeezed columns
+- mobile exposes Current / Places / Ops / More bottom navigation and a full-height rebuild sheet
+- detail/evidence and Operations JSON viewers scroll internally without page-wide horizontal overflow
+- ordinary views hide raw backend IDs/lineage/prompts/headers/reasoning/credentials; only explicit Operations expansion shows bounded escaped model response/rejection content
+- touch controls remain >=44 px and safe-area padding works on phone layouts
 
-Record screenshots/notes if useful; do not infer this PASS from CSS unit tests.
+Record screenshots/notes at each width; do not infer this PASS from CSS unit tests.
 
 ### L14. NPC State Delta co-install
 
@@ -348,6 +350,23 @@ Pass criteria:
 - Diagnostics shows a nonzero `State checklist` count for the affected rebuild boundary
 - Current retains the extortion development after the later boar-only boundaries complete
 
+### L27. Alpha.11 responsive Operations and rebuild controls
+
+Use a chat with existing canonical state plus enough history for multiple rebuild boundaries.
+
+Pass criteria:
+
+- Rebuild works over the existing state without running Clear first; canonical state remains visible/authoritative until successful persistence
+- Full chat rebuild is available after Reset
+- Last N / From message succeeds only when exact canonical prefix history is provable; after Reset a nonzero start fails before any provider call with an explicit Full-chat instruction
+- maximum assistant-boundary input can be raised above the default up to the hard 4096 ceiling
+- progress visibly updates boundary/current/place/provider counts while the rebuild is running
+- Cancel aborts the active provider request promptly rather than waiting behind the rebuild queue, and failed/cancelled rebuild leaves canonical state unchanged
+- Operations lists newest entries first and each capture/rebuild/evolution row can expand bounded response/rejection content
+- model response inspection never includes provider transport headers, `reasoning_content`, session IDs, prompts, story transcript, API keys or credentials
+- Data separates Export/Import, Recovery/Rebuild, and a visible Danger zone for Clear World State
+- desktop/tablet/mobile layouts satisfy L13
+
 ## 3. Contractual bounds to verify live
 
 These are behavioral ceilings, not latency predictions:
@@ -389,7 +408,7 @@ L09 Lore possibility trap: PASS / FAIL / NOT RUN
 L10 Swipe/edit/delete rollback: PASS / FAIL / NOT RUN
 L11 Storage/reload: PASS / FAIL / NOT RUN
 L12 Manual data operations: PASS / FAIL / NOT RUN
-L13 Desktop/mobile UI: PASS / FAIL / NOT RUN
+L13 Desktop/tablet/mobile UI: PASS / FAIL / NOT RUN
 L14 NPC State Delta co-install: PASS / FAIL / NOT RUN
 L15 Story-prompt non-interference: PASS / FAIL / NOT RUN
 L16 Live latency/request measurements: PASS / FAIL / NOT RUN
@@ -403,6 +422,7 @@ L23 Alpha.7 audit hardening: PASS / FAIL / NOT RUN
 L24 Alpha.8 live rebuild interoperability: PASS / FAIL / NOT RUN
 L25 Alpha.9 fenced final rebuild response: PASS / FAIL / NOT RUN
 L26 Alpha.10 structured completeness checklist: PASS / FAIL / NOT RUN
+L27 Alpha.11 responsive Operations/rebuild controls: PASS / FAIL / NOT RUN
 
 Measured:
 RP TTFT baseline:

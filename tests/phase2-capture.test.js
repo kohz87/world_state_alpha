@@ -900,7 +900,7 @@ test('summary-only capture update preserves omitted anchors and trend while expl
   assert.equal(replaced.state.records[0].trend, null);
 });
 
-test('diagnostics are allowlisted and never retain prompt, story, or provider response', async () => {
+test('diagnostics retain bounded model response content but never prompt, story, headers, reasoning, or credentials', async () => {
   const secretStory = 'PRIVATE_STORY_PAYLOAD_91827';
   const exchange = withLineage([
     { role: 'user', content: 'I listen.' },
@@ -918,6 +918,8 @@ test('diagnostics are allowlisted and never retain prompt, story, or provider re
     ...sourceBoundary(exchange),
   });
   const exported = JSON.stringify(diagnostics.bundle('diagnostics', '0.2.0-alpha.1'));
-  assert.doesNotMatch(exported, /PRIVATE_STORY_PAYLOAD_91827|CURRENT EXCHANGE/);
+  assert.doesNotMatch(exported, /PRIVATE_STORY_PAYLOAD_91827|CURRENT EXCHANGE|authorization|reasoning_content|session-id|api[_-]?key/i);
   assert.match(exported, /capture-1/);
+  assert.match(exported, /responseJson/);
+  assert.match(exported, /mutations/);
 });

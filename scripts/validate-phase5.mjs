@@ -48,6 +48,10 @@ for (const required of [
   "'WORLD_STATE_REBUILD_CURRENT_GUARD_REQUIRED'",
   "result.outcome === 'applied' || result.outcome === 'no-change'",
   "candidate.spatial = clone(original.spatial)",
+  "'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE'",
+  "reconcileBranch(original, prefix)",
+  "startMessageId",
+  "onProgress",
 ]) {
   if (!rebuildSource.includes(required)) throw new Error(`rebuild missing invariant: ${required}`);
 }
@@ -82,6 +86,10 @@ const sampleChat = [
 const plan = planChronologicalRebuild(sampleChat);
 if (plan.windows.length !== 2 || plan.windows[0].messageId !== 1 || plan.windows[1].messageId !== 3) {
   throw new Error('Phase 5 chronological assistant-boundary planning failed');
+}
+const partialPlan = planChronologicalRebuild(sampleChat, { startMessageId: 2, maxBoundaries: 4096 });
+if (partialPlan.windows.length !== 1 || partialPlan.windows[0].messageId !== 3 || partialPlan.metrics.startMessageId !== 2) {
+  throw new Error('Phase 5 partial rebuild planning failed to preserve global message boundaries');
 }
 
 const empty = createState('phase5-validate');

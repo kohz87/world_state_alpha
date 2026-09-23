@@ -59,9 +59,9 @@ No fixture may require schema code specific to its setting.
 27. Current / Recent / Resolved / Search projections return the correct lifecycle sets and deterministic ordering.
 28. Detail view exposes bounded human-readable evidence and relations without mutable canonical references.
 29. Canonical/evidence/diagnostic HTML metacharacters are escaped and cannot become executable markup.
-30. Ordinary rendered UI contains no raw record IDs, evidence IDs, lineage keys, rollback internals, prompts, transcripts, credentials, or provider payloads.
+30. Ordinary Current/Recent/Resolved/Places/Search/Data views contain no raw record IDs, evidence IDs, lineage keys, rollback internals, prompts, transcripts, credentials, transport headers, reasoning content, or provider payloads; explicit Operations may show only bounded escaped model response/rejection content.
 31. A 1000-record backend still yields bounded Current / Recent / Resolved / Search UI lists.
-32. Desktop and <=700px / <=420px responsive rules keep the UI readable without requiring backend internals.
+32. Desktop, 768-1099px tablet, <768px single-pane tablet/mobile, and <600px bottom-navigation rules keep the UI readable with >=44px touch controls and no page-wide horizontal scrolling.
 33. Owner-qualified host identity keeps equal chat filenames under different characters/groups separate.
 34. Host sidecar upload uses the World State filename namespace, revision checks the existing pointer, and persists the actual server-returned path.
 35. Hydration failure with an existing pointer fails closed and never overwrites durable state with a fresh empty state.
@@ -278,6 +278,15 @@ Performance/injection:
 96. Spatial-enabled capture/rebuild prompt renders the exact Reality schema rather than an ellipsis placeholder.
 97. Live Gemini `category`/`description` aliases repair deterministically to `kind`/`summary`; conflicting aliases remain invalid.
 98. Reset -> rebuild using the captured Gemini payload restores three Current developments plus Brackenford, North Road, Northgate Stockyard and Applecross Culvert.
-99. Rebuild uses the host per-chat diagnostic store and exposes safe start/failure/completion progress without raw prompts/provider payloads.
+99. Rebuild uses the host per-chat diagnostic store and exposes safe start/per-boundary/failure/completion progress; Operations may expand bounded escaped model response/rejection content but never prompts, headers, reasoning, credentials, or story transcript.
 100. Grounded proper named locations survive unsupported optional relative metadata while the relation is dropped; generic scenery still fails admission.
 101. Compositional proper-place grounding requires every normalized name token in one accepted evidence claim and does not permit arbitrary fuzzy matching.
+102. Full-chat rebuild succeeds without Clear and replaces canonical state only after complete persistence.
+103. Partial rebuild from a later message preserves exact prefix rollback/checkpoint history and converges with the full current semantics.
+104. Partial rebuild after Reset or missing exact prefix fails before provider work with WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE.
+105. User may raise the explicit manual rebuild assistant-boundary cap up to 4096; exceeding the chosen cap fails during planning before provider calls.
+106. Rebuild progress callback reports global message IDs, processed/total boundaries, provider calls, accepted/rejected counts, current records and places without acquiring mutation authority.
+107. Rebuild cancellation by operation-id prefix aborts the active provider call immediately and is not queued behind the rebuild writer operation.
+108. Operations lists newest telemetry first and expands capture/rebuild/evolution response/rejection content with bounded escaped JSON/text.
+109. Operations drops prompts, transport headers, reasoning content, session IDs, credentials and unexpected private fields.
+110. Desktop/tablet/mobile renderer exposes master/detail, adaptive single-pane detail, bottom navigation, full-height rebuild sheet, and isolated danger-zone Clear control.

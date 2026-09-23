@@ -11,7 +11,7 @@ export const WORLD_STATE_UI_LIMITS = Object.freeze({
   resolvedRecords: 80,
   searchRecords: 100,
   spatialLocations: 200,
-  diagnostics: 40,
+  diagnostics: 80,
   evidence: 32,
   relations: 24,
 });
@@ -30,7 +30,7 @@ export const WORLD_STATE_UI_MAINTENANCE_ACTIONS = Object.freeze([
   Object.freeze({ id: 'export', label: 'Export data', tone: 'normal' }),
   Object.freeze({ id: 'import', label: 'Import data', tone: 'normal' }),
   Object.freeze({ id: 'rebuild', label: 'Rebuild from chat', tone: 'caution' }),
-  Object.freeze({ id: 'reset', label: 'Reset World State', tone: 'danger' }),
+  Object.freeze({ id: 'reset', label: 'Clear World State', tone: 'danger' }),
 ]);
 
 function clean(value, max = 700) {
@@ -223,6 +223,7 @@ function projectDiagnostics(rows) {
     .map(raw => {
       const item = sanitizeCaptureDiagnostic(raw);
       return {
+        operationId: clean(item.operationId, 120),
         at: item.at,
         label: clean(item.label, 48),
         sourceMessageId: item.sourceMessageId,
@@ -230,6 +231,7 @@ function projectDiagnostics(rows) {
         code: clean(item.code, 80),
         detail: clean(item.detail, 320),
         route: clean(item.route, 24),
+        profileId: clean(item.profileId, 120),
         providerCalls: item.providerCalls,
         proposed: item.proposed,
         accepted: item.accepted,
@@ -243,6 +245,8 @@ function projectDiagnostics(rows) {
         promptChars: item.promptChars,
         responseChars: item.responseChars,
         durationMs: item.durationMs,
+        responseJson: clean(item.responseJson, 16000),
+        rejectionsJson: clean(item.rejectionsJson, 12000),
       };
     });
 }
@@ -343,6 +347,7 @@ export function buildWorldStateUiModel(state, {
   baseMap = null,
   selectedSpatialKey = '',
   spatialSearch = '',
+  runtimeInfo = {},
 } = {}) {
   const normalized = normalizeState(clone(state));
   const reasons = latestReasonByMessage(normalized);
@@ -447,6 +452,33 @@ export function buildWorldStateUiModel(state, {
         : 'Branch continuity is healthy.',
       lastCaptureMessage: integer(normalized.lastCaptureMessage),
       actions: WORLD_STATE_UI_MAINTENANCE_ACTIONS.map(item => ({ ...item })),
+      rebuild: {
+        chatMessages: integer(runtimeInfo?.chatMessages) ?? 0,
+        assistantBoundaries: integer(runtimeInfo?.assistantBoundaries) ?? 0,
+        defaultMaxBoundaries: integer(runtimeInfo?.defaultRebuildBoundaries) ?? 1024,
+        maxAllowedBoundaries: integer(runtimeInfo?.maxRebuildBoundaries) ?? 4096,
+        spatialEnabled: Boolean(runtimeInfo?.spatialEnabled),
+        status: runtimeInfo?.rebuildStatus && typeof runtimeInfo.rebuildStatus === 'object'
+          ? {
+            phase: clean(runtimeInfo.rebuildStatus.phase, 24),
+            operationId: clean(runtimeInfo.rebuildStatus.operationId, 120),
+            mode: clean(runtimeInfo.rebuildStatus.mode, 20),
+            startMessageId: integer(runtimeInfo.rebuildStatus.startMessageId) ?? 0,
+            maxBoundaries: integer(runtimeInfo.rebuildStatus.maxBoundaries) ?? 0,
+            processedBoundaries: integer(runtimeInfo.rebuildStatus.processedBoundaries) ?? 0,
+            totalBoundaries: integer(runtimeInfo.rebuildStatus.totalBoundaries) ?? 0,
+            currentMessageId: integer(runtimeInfo.rebuildStatus.currentMessageId),
+            providerCalls: integer(runtimeInfo.rebuildStatus.providerCalls) ?? 0,
+            applied: integer(runtimeInfo.rebuildStatus.applied) ?? 0,
+            rejected: integer(runtimeInfo.rebuildStatus.rejected) ?? 0,
+            currentRecords: integer(runtimeInfo.rebuildStatus.currentRecords) ?? 0,
+            places: integer(runtimeInfo.rebuildStatus.places) ?? 0,
+            startedAt: integer(runtimeInfo.rebuildStatus.startedAt),
+            completedAt: integer(runtimeInfo.rebuildStatus.completedAt),
+            detail: clean(runtimeInfo.rebuildStatus.detail, 320),
+          }
+          : null,
+      },
     },
   };
 }
@@ -663,7 +695,11 @@ function spatialDetailHtml(detail) {
     '</article>';
 }
 
-function spatialViewHtml(model) {
+function mobileBackButton(label = 'Back') {
+  return '<button type="button" class="wsa-mobile-back" data-wsa-back-list>‹ ' + escapeHtml(label) + '</button>';
+}
+
+function spatialViewHtml(model, { detailOpen = false } = {}) {
   const sp = model.spatial;
   const listRows = sp.locations.length
     ? sp.locations.map(loc => spatialCard(loc, loc.key === sp.selectedKey, loc.key)).join('')
@@ -678,22 +714,23 @@ function spatialViewHtml(model) {
       '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-spatial-action="detach_base_map">Detach</button></div>'
     : '<div class="wsa-spatial-banner"><span>No base map attached.</span><button type="button" class="wsa-btn wsa-btn-sm wsa-btn-accent" data-wsa-spatial-action="import_base_map">Import Base Map</button></div>';
 
-  return '<section class="wsa-view" aria-label="Spatial continuity">' +
+  return '<section class="wsa-view" aria-label="Places">' +
     baseMapStatus +
     '<div class="wsa-spatial-toolbar">' +
-    '<label class="wsa-search"><span>Search locations</span><input type="search" data-wsa-spatial-search value="' +
+    '<label class="wsa-search"><span>Search places</span><input type="search" data-wsa-spatial-search value="' +
     escapeHtml(sp.search) + '" autocomplete="off" spellcheck="false" placeholder="e.g. Brackenford, Halmere"></label>' +
-    '<button type="button" class="wsa-btn wsa-btn-primary" data-wsa-spatial-action="add_location_modal">+ Add Location</button>' +
+    '<button type="button" class="wsa-btn wsa-btn-primary" data-wsa-spatial-action="add_location_modal">+ Add Place</button>' +
     '</div>' +
-    '<div class="wsa-two-pane">' +
-    '<aside class="wsa-list-pane"><h2>Locations (' + sp.filteredCount + ')</h2>' +
+    '<div class="wsa-two-pane wsa-adaptive-pane' + (detailOpen ? ' is-detail-open' : '') + '">' +
+    '<aside class="wsa-list-pane"><div class="wsa-pane-title"><h2>Places (' + sp.filteredCount + ')</h2></div>' +
     '<div class="wsa-record-list" role="list">' + listRows + truncated + '</div>' +
     '</aside>' +
-    '<div class="wsa-detail-pane">' + spatialDetailHtml(sp.detail) + '</div>' +
+    '<div class="wsa-detail-pane"><div class="wsa-mobile-detail-head">' + mobileBackButton('Places') + '</div>' +
+    spatialDetailHtml(sp.detail) + '</div>' +
     '</div></section>';
 }
 
-function recordsViewHtml(model, tab) {
+function recordsViewHtml(model, tab, { detailOpen = false } = {}) {
   let records = model.views.current;
   let title = 'Current world state';
   let emptyTitle = 'No current world state';
@@ -729,20 +766,38 @@ function recordsViewHtml(model, tab) {
 
   return '<section class="wsa-view" aria-label="' + escapeHtml(title) + '">' +
     search +
-    '<div class="wsa-two-pane">' +
-    '<aside class="wsa-list-pane"><h2>' + escapeHtml(title) + '</h2>' +
+    '<div class="wsa-two-pane wsa-adaptive-pane' + (detailOpen ? ' is-detail-open' : '') + '">' +
+    '<aside class="wsa-list-pane"><div class="wsa-pane-title"><h2>' + escapeHtml(title) + '</h2>' +
+    (tab === 'current' ? '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-accent" data-wsa-open-rebuild>Rebuild</button>' : '') +
+    '</div>' +
     recordsPane(records, model, emptyTitle, emptyBody, truncated) +
     '</aside>' +
-    '<div class="wsa-detail-pane">' + detailHtml(model.detail) + '</div>' +
+    '<div class="wsa-detail-pane"><div class="wsa-mobile-detail-head">' + mobileBackButton(title) + '</div>' +
+    detailHtml(model.detail) + '</div>' +
     '</div></section>';
+}
+
+function operationTime(value) {
+  if (!Number.isFinite(Number(value)) || Number(value) <= 0) return '';
+  try {
+    return new Date(Number(value)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return '';
+  }
+}
+
+function jsonInspector(title, textValue, index, kind) {
+  if (!textValue) return '';
+  return '<section class="wsa-operation-json"><div class="wsa-operation-json-head"><h4>' + escapeHtml(title) + '</h4>' +
+    '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-copy-json="' + escapeHtml(kind) +
+    '" data-wsa-diagnostic-index="' + index + '">Copy</button></div>' +
+    '<pre tabindex="0">' + escapeHtml(textValue) + '</pre></section>';
 }
 
 function diagnosticsHtml(model) {
   const rows = model.diagnostics.length
-    ? model.diagnostics.map(item => {
-      const code = item.code ? '<span>' + escapeHtml(item.code) + '</span>' : '';
-      const label = item.label ? '<span>' + escapeHtml(item.label) + '</span>' : '';
-      const detail = item.detail ? '<p class="wsa-diagnostic-detail">' + escapeHtml(item.detail) + '</p>' : '';
+    ? model.diagnostics.map((item, index) => ({ item, index })).reverse().map(({ item, index }) => {
+      const code = item.code ? '<span class="wsa-op-code">' + escapeHtml(item.code) + '</span>' : '';
       const message = item.sourceMessageId === null ? 'n/a' : item.sourceMessageId;
       const progress = item.totalBoundaries > 0
         ? '<div><dt>Progress</dt><dd>' + item.processedBoundaries + '/' + item.totalBoundaries + '</dd></div>'
@@ -753,45 +808,64 @@ function diagnosticsHtml(model) {
       const checklist = item.completenessHints > 0
         ? '<div><dt>State checklist</dt><dd>' + item.completenessHints + '</dd></div>'
         : '';
-      return '<article class="wsa-diagnostic">' +
-        '<div><strong>' + escapeHtml(item.outcome) + '</strong>' + label + code + '</div>' +
-        detail +
+      const provider = item.profileId
+        ? '<div><dt>Profile</dt><dd>' + escapeHtml(item.profileId) + '</dd></div>'
+        : '';
+      const time = operationTime(item.at);
+      const summary = (time ? '<span class="wsa-op-time">' + escapeHtml(time) + '</span>' : '') +
+        '<span class="wsa-op-name">' + escapeHtml(titleWords(item.label || 'operation')) + ' · Msg ' + message + '</span>' +
+        '<strong class="wsa-op-outcome">' + escapeHtml(item.outcome) + '</strong>' +
+        '<span class="wsa-op-quick">+' + item.applied + ' / −' + item.rejected + ' · ' + item.durationMs + ' ms</span>';
+      return '<details class="wsa-operation' + (/failed|invalid|timeout|cancel/i.test(item.outcome) ? ' has-error' : '') + '">' +
+        '<summary>' + summary + '</summary>' +
+        '<div class="wsa-operation-body">' +
+        (item.detail ? '<p class="wsa-diagnostic-detail">' + escapeHtml(item.detail) + '</p>' : '') +
+        (code ? '<div class="wsa-op-code-row">' + code + '</div>' : '') +
         '<dl>' +
         '<div><dt>Message</dt><dd>' + message + '</dd></div>' +
         '<div><dt>Route</dt><dd>' + escapeHtml(item.route || 'local/default') + '</dd></div>' +
-        '<div><dt>Calls</dt><dd>' + item.providerCalls + '</dd></div>' +
+        provider +
+        '<div><dt>Provider calls</dt><dd>' + item.providerCalls + '</dd></div>' +
+        '<div><dt>Proposed</dt><dd>' + item.proposed + '</dd></div>' +
+        '<div><dt>Accepted</dt><dd>' + item.accepted + '</dd></div>' +
         '<div><dt>Applied</dt><dd>' + item.applied + '</dd></div>' +
         '<div><dt>Rejected</dt><dd>' + item.rejected + '</dd></div>' +
-        repairs +
-        checklist +
-        progress +
+        repairs + checklist + progress +
+        '<div><dt>Prompt chars</dt><dd>' + item.promptChars + '</dd></div>' +
+        '<div><dt>Response chars</dt><dd>' + item.responseChars + '</dd></div>' +
         '<div><dt>Duration</dt><dd>' + item.durationMs + ' ms</dd></div>' +
-        '</dl></article>';
+        '</dl>' +
+        jsonInspector('Model response JSON', item.responseJson, index, 'response') +
+        jsonInspector('Rejected mutations / reasons', item.rejectionsJson, index, 'rejections') +
+        '</div></details>';
     }).join('')
-    : emptyState('No diagnostics yet', 'Bounded operation telemetry will appear here when supplied by the runtime.');
+    : emptyState('No operations yet', 'Capture, rebuild, evolution, and maintenance telemetry will appear here.');
 
-  return '<section class="wsa-view wsa-single-pane" aria-label="Diagnostics">' +
-    '<div class="wsa-section-head"><div><h2>Diagnostics</h2>' +
-    '<p>Bounded operational telemetry only. Rebuild failures include a safe structural reason and boundary progress; story text, prompts, credentials, and provider payloads are not shown.</p></div></div>' +
-    '<div class="wsa-diagnostics">' + rows + '</div></section>';
+  return '<section class="wsa-view wsa-single-pane" aria-label="Operations">' +
+    '<div class="wsa-section-head"><div><h2>Operations</h2>' +
+    '<p>Expandable operation telemetry. Model response JSON is bounded and ephemeral; prompts, headers, reasoning content, credentials, and API secrets are never shown.</p></div></div>' +
+    '<div class="wsa-diagnostics wsa-operations">' + rows + '</div></section>';
 }
 
 function maintenanceDescription(id) {
   if (id === 'export') return 'Create a portable World State bundle.';
   if (id === 'import') return 'Review an import before applying it.';
-  if (id === 'rebuild') return 'Explicitly reconstruct state from chronological chat evidence.';
-  return 'Review and confirm a full reset.';
+  if (id === 'rebuild') return 'Reconstruct from chat into an isolated candidate, then replace only after complete success.';
+  return 'Permanently clear this chat’s current World State after confirmation.';
 }
 
-function maintenanceHtml(model) {
-  const actions = model.maintenance.actions.map(action =>
-    '<button type="button" class="wsa-maintenance-action wsa-tone-' + escapeHtml(action.tone) +
+function maintenanceActionButton(action) {
+  return '<button type="button" class="wsa-maintenance-action wsa-tone-' + escapeHtml(action.tone) +
     '" data-wsa-action="' + escapeHtml(action.id) + '">' +
     '<strong>' + escapeHtml(action.label) + '</strong>' +
     '<span>' + escapeHtml(maintenanceDescription(action.id)) + '</span>' +
-    '</button>'
-  ).join('');
+    '</button>';
+}
 
+function maintenanceHtml(model) {
+  const exportAction = model.maintenance.actions.find(action => action.id === 'export');
+  const importAction = model.maintenance.actions.find(action => action.id === 'import');
+  const resetAction = model.maintenance.actions.find(action => action.id === 'reset');
   const healthClass = model.maintenance.recoveryAttention ? ' needs-attention' : '';
   const healthTitle = model.maintenance.recoveryAttention ? 'Recovery attention needed' : 'Continuity healthy';
   const lastCapture = model.maintenance.lastCaptureMessage === null
@@ -800,7 +874,7 @@ function maintenanceHtml(model) {
 
   return '<section class="wsa-view wsa-single-pane" aria-label="Data and maintenance">' +
     '<div class="wsa-section-head"><div><h2>Data &amp; maintenance</h2>' +
-    '<p>Maintenance actions are explicit. This panel emits action requests; it does not silently mutate canonical state.</p></div></div>' +
+    '<p>Rebuild does not require Clear. It builds an isolated candidate and replaces canonical state only after full success.</p></div></div>' +
     '<div class="wsa-health' + healthClass + '"><strong>' + healthTitle + '</strong>' +
     '<p>' + escapeHtml(model.maintenance.recoveryMessage) + '</p>' +
     '<small>Last automatic capture: ' + lastCapture + '</small></div>' +
@@ -810,7 +884,17 @@ function maintenanceHtml(model) {
     '<div><b>' + model.counts.spatialLocations + '</b><span>Places</span></div>' +
     '<div><b>' + model.counts.evidence + '</b><span>Evidence items</span></div>' +
     '</div>' +
-    '<div class="wsa-maintenance-grid">' + actions + '</div>' +
+    '<section class="wsa-maintenance-section"><h3>State files</h3><div class="wsa-maintenance-grid">' +
+    (exportAction ? maintenanceActionButton(exportAction) : '') +
+    (importAction ? maintenanceActionButton(importAction) : '') +
+    '</div></section>' +
+    '<section class="wsa-maintenance-section"><h3>Recovery</h3>' +
+    '<button type="button" class="wsa-maintenance-action wsa-tone-caution" data-wsa-open-rebuild>' +
+    '<strong>Rebuild from Chat</strong><span>' + escapeHtml(maintenanceDescription('rebuild')) + '</span></button>' +
+    '</section>' +
+    '<section class="wsa-maintenance-section wsa-danger-zone"><h3>Danger zone</h3>' +
+    (resetAction ? maintenanceActionButton(resetAction) : '') +
+    '</section>' +
     '</section>';
 }
 
@@ -818,13 +902,103 @@ function tabLabel(tab) {
   if (tab === 'current') return 'Current';
   if (tab === 'recent') return 'Recent';
   if (tab === 'resolved') return 'Resolved';
-  if (tab === 'spatial') return 'Spatial';
+  if (tab === 'spatial') return 'Places';
   if (tab === 'search') return 'Search';
-  if (tab === 'diagnostics') return 'Diagnostics';
+  if (tab === 'diagnostics') return 'Operations';
   return 'Data';
 }
 
-export function renderWorldStatePanel(model, { activeTab = 'current' } = {}) {
+function rebuildStatusHtml(status) {
+  if (!status) return '';
+  const total = Math.max(0, Number(status.totalBoundaries) || 0);
+  const processed = Math.max(0, Number(status.processedBoundaries) || 0);
+  const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((processed / total) * 100))) : 0;
+  const running = status.phase === 'running' || status.phase === 'cancelling';
+  const tone = status.phase === 'failed' || status.phase === 'cancelled' ? ' error'
+    : status.phase === 'completed' ? ' success' : ' running';
+  return '<div class="wsa-rebuild-banner' + tone + '">' +
+    '<div class="wsa-rebuild-banner-main"><strong>' +
+    escapeHtml(running ? (status.phase === 'cancelling' ? 'Cancelling rebuild…' : 'Rebuilding chat…') : 'Rebuild ' + (status.phase || 'status')) +
+    '</strong><span>' + escapeHtml(status.detail || '') + '</span></div>' +
+    '<div class="wsa-rebuild-progress"><div style="width:' + percent + '%"></div></div>' +
+    '<div class="wsa-rebuild-stats">' +
+    '<span>' + processed + '/' + total + ' boundaries</span>' +
+    '<span>' + status.providerCalls + ' calls</span>' +
+    '<span>' + status.currentRecords + ' current</span>' +
+    '<span>' + status.places + ' places</span>' +
+    '</div>' +
+    (running ? '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-cancel-rebuild>Cancel</button>' : '') +
+    '</div>';
+}
+
+function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
+  if (!open) return '';
+  const rebuild = model.maintenance.rebuild;
+  const status = rebuild.status;
+  const active = status && (status.phase === 'running' || status.phase === 'cancelling');
+  const mode = ['full', 'last', 'from'].includes(form.mode) ? form.mode : 'full';
+  const startMessageId = Number.isInteger(form.startMessageId) ? form.startMessageId : 0;
+  const lastMessages = Number.isInteger(form.lastMessages) ? form.lastMessages : Math.min(20, Math.max(1, rebuild.chatMessages));
+  const maxBoundaries = Number.isInteger(form.maxBoundaries) ? form.maxBoundaries : rebuild.defaultMaxBoundaries;
+
+  const body = active
+    ? '<div class="wsa-rebuild-running">' + rebuildStatusHtml(status) +
+      '<p class="wsa-muted">The existing canonical state remains authoritative until the entire candidate rebuild succeeds and is persisted.</p></div>'
+    : '<form class="wsa-rebuild-form" onsubmit="return false;">' +
+      '<fieldset><legend>Rebuild source</legend>' +
+      '<label class="wsa-radio"><input type="radio" name="wsa-rebuild-mode" value="full" data-wsa-rebuild-mode' + (mode === 'full' ? ' checked' : '') + '><span><strong>Full chat</strong><small>Messages 0 → ' + Math.max(0, rebuild.chatMessages - 1) + '</small></span></label>' +
+      '<label class="wsa-radio"><input type="radio" name="wsa-rebuild-mode" value="last" data-wsa-rebuild-mode' + (mode === 'last' ? ' checked' : '') + '><span><strong>Last messages</strong><small>Requires exact canonical history before the calculated start.</small></span></label>' +
+      '<label class="wsa-inline-field"><span>Last N messages</span><input type="number" min="1" max="' + Math.max(1, rebuild.chatMessages) + '" value="' + lastMessages + '" data-wsa-rebuild-last></label>' +
+      '<label class="wsa-radio"><input type="radio" name="wsa-rebuild-mode" value="from" data-wsa-rebuild-mode' + (mode === 'from' ? ' checked' : '') + '><span><strong>From message</strong><small>Fails closed if the exact prior canonical boundary is unavailable.</small></span></label>' +
+      '<label class="wsa-inline-field"><span>Start message</span><input type="number" min="0" max="' + Math.max(0, rebuild.chatMessages - 1) + '" value="' + startMessageId + '" data-wsa-rebuild-start></label>' +
+      '</fieldset>' +
+      '<fieldset><legend>Safety &amp; limits</legend>' +
+      '<label class="wsa-inline-field"><span>Maximum assistant boundaries</span><input type="number" min="1" max="' + rebuild.maxAllowedBoundaries + '" value="' + maxBoundaries + '" data-wsa-rebuild-max></label>' +
+      '<div class="wsa-rebuild-scope"><span>Reality / Current State</span><strong>Enabled</strong></div>' +
+      '<div class="wsa-rebuild-scope"><span>Places</span><strong>' + (rebuild.spatialEnabled ? 'Enabled' : 'Disabled in settings') + '</strong></div>' +
+      '</fieldset>' +
+      '<div class="wsa-rebuild-safety"><strong>Atomic replacement</strong><p>Current state is not cleared first. A failed or cancelled rebuild leaves the existing canonical state unchanged.</p></div>' +
+      '<div class="wsa-sheet-actions"><button type="button" class="wsa-btn" data-wsa-close-rebuild>Cancel</button>' +
+      '<button type="button" class="wsa-btn wsa-btn-primary" data-wsa-start-rebuild>Start Rebuild</button></div>' +
+      '</form>';
+
+  return '<div class="wsa-sheet-layer" data-wsa-rebuild-sheet><button type="button" class="wsa-sheet-backdrop" data-wsa-close-rebuild aria-label="Close rebuild settings"></button>' +
+    '<section class="wsa-rebuild-sheet" role="dialog" aria-modal="true" aria-label="Rebuild from Chat">' +
+    '<div class="wsa-sheet-handle" aria-hidden="true"></div><header><div><p class="wsa-eyebrow">Recovery</p><h2>Rebuild from Chat</h2>' +
+    '<span>' + rebuild.chatMessages + ' messages · ' + rebuild.assistantBoundaries + ' assistant boundaries</span></div>' +
+    '<button type="button" class="wsa-close" data-wsa-close-rebuild aria-label="Close rebuild settings">×</button></header>' +
+    body + '</section></div>';
+}
+
+function mobileNavigation(activeTab, moreOpen) {
+  const primary = [
+    ['current', 'Current'],
+    ['spatial', 'Places'],
+    ['diagnostics', 'Ops'],
+  ];
+  const buttons = primary.map(([id, label]) =>
+    '<button type="button" class="wsa-mobile-nav-btn' + (activeTab === id ? ' is-active' : '') +
+    '" data-wsa-tab="' + id + '"><span>' + label + '</span></button>'
+  ).join('');
+  const more = '<button type="button" class="wsa-mobile-nav-btn' + (moreOpen ? ' is-active' : '') +
+    '" data-wsa-mobile-more><span>More</span></button>';
+  const menu = moreOpen
+    ? '<div class="wsa-mobile-more-menu">' +
+      ['recent', 'resolved', 'search', 'maintenance'].map(id =>
+        '<button type="button" data-wsa-tab="' + id + '">' + tabLabel(id) + '</button>'
+      ).join('') + '</div>'
+    : '';
+  return '<nav class="wsa-mobile-nav" aria-label="World State mobile navigation">' + buttons + more + menu + '</nav>';
+}
+
+export function renderWorldStatePanel(model, {
+  activeTab = 'current',
+  detailOpen = false,
+  spatialDetailOpen = false,
+  mobileMoreOpen = false,
+  rebuildOpen = false,
+  rebuildForm = {},
+} = {}) {
   const tab = WORLD_STATE_UI_TABS.includes(activeTab) ? activeTab : 'current';
   const tabs = WORLD_STATE_UI_TABS.map(item =>
     '<button type="button" class="wsa-tab' + (item === tab ? ' is-active' : '') +
@@ -833,10 +1007,10 @@ export function renderWorldStatePanel(model, { activeTab = 'current' } = {}) {
   ).join('');
 
   let body;
-  if (tab === 'spatial') body = spatialViewHtml(model);
+  if (tab === 'spatial') body = spatialViewHtml(model, { detailOpen: spatialDetailOpen });
   else if (tab === 'diagnostics') body = diagnosticsHtml(model);
   else if (tab === 'maintenance') body = maintenanceHtml(model);
-  else body = recordsViewHtml(model, tab);
+  else body = recordsViewHtml(model, tab, { detailOpen });
 
   return '<div class="wsa-shell" data-world-state-alpha-ui>' +
     '<div class="wsa-backdrop" data-wsa-close aria-hidden="true"></div>' +
@@ -844,10 +1018,15 @@ export function renderWorldStatePanel(model, { activeTab = 'current' } = {}) {
     '<header class="wsa-header"><div>' +
     '<p class="wsa-eyebrow">World State Alpha</p><h1>World continuity</h1>' +
     '<span>' + model.counts.current + ' current · ' + (model.counts.resolved + model.counts.superseded) + ' historical · ' + model.counts.spatialLocations + ' places</span>' +
-    '</div><button type="button" class="wsa-close" data-wsa-close aria-label="Close World State">×</button></header>' +
+    '</div><div class="wsa-header-actions"><button type="button" class="wsa-btn wsa-btn-accent wsa-header-rebuild" data-wsa-open-rebuild>Rebuild</button>' +
+    '<button type="button" class="wsa-close" data-wsa-close aria-label="Close World State">×</button></div></header>' +
+    rebuildStatusHtml(model.maintenance.rebuild.status) +
     '<nav class="wsa-tabs" role="tablist" aria-label="World State views">' + tabs + '</nav>' +
     '<main class="wsa-body">' + body + '</main>' +
-    '</section></div>';
+    mobileNavigation(tab, mobileMoreOpen) +
+    '</section>' +
+    rebuildSheetHtml(model, { open: rebuildOpen, form: rebuildForm }) +
+    '</div>';
 }
 
 export function createWorldStateUiController({
@@ -855,6 +1034,7 @@ export function createWorldStateUiController({
   getState,
   getBaseMap = () => null,
   getDiagnostics = () => [],
+  getRuntimeInfo = () => ({}),
   onMaintenanceAction = null,
   onSpatialAction = null,
   onClose = null,
@@ -869,6 +1049,16 @@ export function createWorldStateUiController({
     selectedRecordId: '',
     selectedSpatialKey: '',
     spatialSearch: '',
+    detailOpen: false,
+    spatialDetailOpen: false,
+    mobileMoreOpen: false,
+    rebuildOpen: false,
+    rebuildForm: {
+      mode: 'full',
+      startMessageId: 0,
+      lastMessages: 20,
+      maxBoundaries: null,
+    },
     destroyed: false,
   };
 
@@ -881,6 +1071,7 @@ export function createWorldStateUiController({
       baseMap: typeof getBaseMap === 'function' ? getBaseMap() : null,
       selectedSpatialKey: ui.selectedSpatialKey,
       spatialSearch: ui.spatialSearch,
+      runtimeInfo: typeof getRuntimeInfo === 'function' ? getRuntimeInfo() : {},
     });
   }
 
@@ -889,7 +1080,24 @@ export function createWorldStateUiController({
     const next = model();
     ui.selectedRecordId = next.selectedRecordId;
     ui.selectedSpatialKey = next.spatial.selectedKey;
-    root.innerHTML = renderWorldStatePanel(next, { activeTab: ui.activeTab });
+    if (!Number.isInteger(ui.rebuildForm.maxBoundaries)) {
+      ui.rebuildForm.maxBoundaries = next.maintenance.rebuild.defaultMaxBoundaries;
+    }
+    ui.rebuildForm.lastMessages = Math.max(
+      1,
+      Math.min(
+        Number(ui.rebuildForm.lastMessages) || 20,
+        Math.max(1, next.maintenance.rebuild.chatMessages),
+      ),
+    );
+    root.innerHTML = renderWorldStatePanel(next, {
+      activeTab: ui.activeTab,
+      detailOpen: ui.detailOpen,
+      spatialDetailOpen: ui.spatialDetailOpen,
+      mobileMoreOpen: ui.mobileMoreOpen,
+      rebuildOpen: ui.rebuildOpen,
+      rebuildForm: ui.rebuildForm,
+    });
 
     if (restoreSearchFocus && ui.activeTab === 'search') {
       const input = root.querySelector?.('[data-wsa-search]');
@@ -914,9 +1122,113 @@ export function createWorldStateUiController({
     return target && typeof target.closest === 'function' ? target.closest(selector) : null;
   }
 
+  function selectedRecordRows(currentModel) {
+    return ui.activeTab === 'recent'
+      ? currentModel.views.recent
+      : ui.activeTab === 'resolved'
+        ? currentModel.views.resolved
+        : ui.activeTab === 'search'
+          ? currentModel.views.search
+          : currentModel.views.current;
+  }
+
+  async function copyOperationJson(button) {
+    const index = Number(button?.dataset?.wsaDiagnosticIndex);
+    const kind = clean(button?.dataset?.wsaCopyJson, 20);
+    const currentModel = model();
+    const row = Number.isInteger(index) && index >= 0 ? currentModel.diagnostics[index] : null;
+    const value = kind === 'rejections' ? row?.rejectionsJson : row?.responseJson;
+    if (!value) return;
+    if (globalThis.navigator?.clipboard?.writeText) {
+      await globalThis.navigator.clipboard.writeText(value);
+      button.textContent = 'Copied';
+      return;
+    }
+    const textarea = globalThis.document?.createElement?.('textarea');
+    if (!textarea) return;
+    textarea.value = value;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    globalThis.document.body.appendChild(textarea);
+    textarea.select();
+    globalThis.document.execCommand?.('copy');
+    textarea.remove();
+    button.textContent = 'Copied';
+  }
+
   async function click(event) {
     if (closest(event.target, '[data-wsa-close]')) {
       if (typeof onClose === 'function') onClose();
+      return;
+    }
+
+    if (closest(event.target, '[data-wsa-close-rebuild]')) {
+      ui.rebuildOpen = false;
+      refresh();
+      return;
+    }
+
+    if (closest(event.target, '[data-wsa-open-rebuild]')) {
+      ui.rebuildOpen = true;
+      ui.mobileMoreOpen = false;
+      refresh();
+      return;
+    }
+
+    if (closest(event.target, '[data-wsa-mobile-more]')) {
+      ui.mobileMoreOpen = !ui.mobileMoreOpen;
+      refresh();
+      return;
+    }
+
+    if (closest(event.target, '[data-wsa-back-list]')) {
+      if (ui.activeTab === 'spatial') ui.spatialDetailOpen = false;
+      else ui.detailOpen = false;
+      refresh();
+      return;
+    }
+
+    const copy = closest(event.target, '[data-wsa-copy-json]');
+    if (copy) {
+      await copyOperationJson(copy);
+      return;
+    }
+
+    if (closest(event.target, '[data-wsa-cancel-rebuild]')) {
+      if (typeof onMaintenanceAction === 'function') await onMaintenanceAction('cancel_rebuild', {});
+      refresh();
+      return;
+    }
+
+    if (closest(event.target, '[data-wsa-start-rebuild]')) {
+      const form = root.querySelector?.('.wsa-rebuild-form');
+      const checkedMode = form?.querySelector?.('[data-wsa-rebuild-mode]:checked')?.value;
+      const startInput = form?.querySelector?.('[data-wsa-rebuild-start]');
+      const lastInput = form?.querySelector?.('[data-wsa-rebuild-last]');
+      const maxInput = form?.querySelector?.('[data-wsa-rebuild-max]');
+      const currentModel = model();
+      const maxAllowed = currentModel.maintenance.rebuild.maxAllowedBoundaries;
+      const chatMessages = currentModel.maintenance.rebuild.chatMessages;
+      const mode = ['full', 'last', 'from'].includes(checkedMode) ? checkedMode : ui.rebuildForm.mode;
+      const startMessageId = Math.max(0, Math.min(
+        Math.max(0, chatMessages - 1),
+        Number.isFinite(Number(startInput?.value)) ? Math.trunc(Number(startInput.value)) : 0,
+      ));
+      const lastMessages = Math.max(1, Math.min(
+        Math.max(1, chatMessages),
+        Number.isFinite(Number(lastInput?.value)) ? Math.trunc(Number(lastInput.value)) : 20,
+      ));
+      const maxBoundaries = Math.max(1, Math.min(
+        maxAllowed,
+        Number.isFinite(Number(maxInput?.value))
+          ? Math.trunc(Number(maxInput.value))
+          : currentModel.maintenance.rebuild.defaultMaxBoundaries,
+      ));
+      ui.rebuildForm = { mode, startMessageId, lastMessages, maxBoundaries };
+      if (typeof onMaintenanceAction === 'function') {
+        await onMaintenanceAction('rebuild', { rebuild: { ...ui.rebuildForm } });
+      }
+      refresh();
       return;
     }
 
@@ -925,6 +1237,9 @@ export function createWorldStateUiController({
       const nextTab = clean(tab.dataset?.wsaTab, 20);
       if (WORLD_STATE_UI_TABS.includes(nextTab)) {
         ui.activeTab = nextTab;
+        ui.mobileMoreOpen = false;
+        ui.detailOpen = false;
+        ui.spatialDetailOpen = false;
         refresh();
       }
       return;
@@ -934,15 +1249,10 @@ export function createWorldStateUiController({
     if (record) {
       const index = Number(record.dataset?.wsaRecordIndex);
       const currentModel = model();
-      const rows = ui.activeTab === 'recent'
-        ? currentModel.views.recent
-        : ui.activeTab === 'resolved'
-          ? currentModel.views.resolved
-          : ui.activeTab === 'search'
-            ? currentModel.views.search
-            : currentModel.views.current;
+      const rows = selectedRecordRows(currentModel);
       if (Number.isInteger(index) && index >= 0 && rows[index]?.key) {
         ui.selectedRecordId = rows[index].key;
+        ui.detailOpen = true;
         refresh();
       }
       return;
@@ -953,6 +1263,7 @@ export function createWorldStateUiController({
       const key = spatialBtn.dataset?.wsaSpatialKey;
       if (key) {
         ui.selectedSpatialKey = key;
+        ui.spatialDetailOpen = true;
         refresh();
       }
       return;
@@ -963,10 +1274,8 @@ export function createWorldStateUiController({
       const action = clean(spatialAction.dataset?.wsaSpatialAction, 40);
       const currentModel = model();
       const currentLoc = currentModel.spatial.detail;
-
-      // Extract form fields if available
       const form = root.querySelector?.('.wsa-spatial-form');
-      const getVal = field => form?.querySelector?.(`[data-wsa-field="${field}"]`)?.value;
+      const getVal = field => form?.querySelector?.('[data-wsa-field="' + field + '"]')?.value;
       const lockedInput = form?.querySelector?.('[data-wsa-field="locked"]');
       const formData = {
         name: getVal('name') || currentLoc?.name || '',
@@ -1020,6 +1329,28 @@ export function createWorldStateUiController({
     if (spatialSearch) {
       ui.spatialSearch = clean(spatialSearch.value, 120);
       refresh({ restoreSpatialFocus: true });
+      return;
+    }
+
+    const mode = closest(event.target, '[data-wsa-rebuild-mode]');
+    if (mode) {
+      ui.rebuildForm.mode = ['full', 'last', 'from'].includes(mode.value) ? mode.value : 'full';
+      return;
+    }
+
+    const startInput = closest(event.target, '[data-wsa-rebuild-start]');
+    if (startInput) {
+      ui.rebuildForm.startMessageId = Math.max(0, Math.trunc(Number(startInput.value) || 0));
+      return;
+    }
+    const lastInput = closest(event.target, '[data-wsa-rebuild-last]');
+    if (lastInput) {
+      ui.rebuildForm.lastMessages = Math.max(1, Math.trunc(Number(lastInput.value) || 1));
+      return;
+    }
+    const maxInput = closest(event.target, '[data-wsa-rebuild-max]');
+    if (maxInput) {
+      ui.rebuildForm.maxBoundaries = Math.max(1, Math.trunc(Number(maxInput.value) || 1));
     }
   }
 
@@ -1036,6 +1367,11 @@ export function createWorldStateUiController({
         spatialSearch: ui.spatialSearch,
         hasSelection: Boolean(ui.selectedRecordId),
         hasSpatialSelection: Boolean(ui.selectedSpatialKey),
+        detailOpen: ui.detailOpen,
+        spatialDetailOpen: ui.spatialDetailOpen,
+        mobileMoreOpen: ui.mobileMoreOpen,
+        rebuildOpen: ui.rebuildOpen,
+        rebuildForm: { ...ui.rebuildForm },
         destroyed: ui.destroyed,
       };
     },

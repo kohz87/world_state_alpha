@@ -19,6 +19,7 @@ Included in the current gate:
 - 0.9.0-alpha.8 live rebuild hardening: exact Reality schema in Spatial prompts, conservative provider-alias repair, shared rebuild diagnostics/status, named-place salvage from unsupported optional relation metadata, and conservative compositional place-name grounding
 - 0.9.0-alpha.9 fenced-response hardening: accept exactly one provider JSON object either bare or enclosed in one Markdown JSON/code fence; reject surrounding prose and retain atomic rebuild semantics
 - 0.9.0-alpha.10 completeness-checklist hardening: extract a bounded advisory checklist only from narrator-authored World_State Off-Screen/Unresolved sections so less-salient persistent conditions remain visible to the same one-call source-firewalled capture/rebuild path
+- 0.9.0-alpha.11 responsive operator UX: adaptive desktop/tablet/mobile projection, Operations inspection, atomic rebuild progress/cancel, safe exact-prefix partial rebuild ranges, and configurable manual rebuild boundary cap
 - explicit coexistence hardening against NPC State Delta and Ukiyo/Megumin ownership
 - cumulative Phase 1-9 deterministic tests and validation
 

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  cancelWorldStateRequests,
   dispatchWorldStateRequest,
   selectedWorldStateProfileId,
   worldStateInflightCount,
@@ -163,6 +164,35 @@ test('stale scope rejects provider output and cleans inflight accounting', async
     error => error?.code === 'WORLD_STATE_ROUTE_CANCELLED',
   );
   assert.equal(calls.host.length, 1);
+  assert.equal(worldStateInflightCount(), 0);
+});
+
+
+test('operation-id prefix cancellation safely aborts the active rebuild boundary', async () => {
+  const { ctx } = fixture();
+  let invoked = false;
+  ctx.generateRaw = () => {
+    invoked = true;
+    return new Promise(() => {});
+  };
+
+  const pending = dispatchWorldStateRequest(ctx, payload, {
+    chatKey: 'chat-prefix-cancel',
+    operationId: 'rebuild:12:3:0:8',
+    isCurrent: () => true,
+    timeoutMs: 60_000,
+  });
+  await Promise.resolve();
+  assert.equal(invoked, true);
+  assert.equal(worldStateInflightCount(), 1);
+  assert.equal(cancelWorldStateRequests({
+    chatKey: 'chat-prefix-cancel',
+    operationIdPrefix: 'rebuild:12:3:0',
+  }), 1);
+  await assert.rejects(
+    pending,
+    error => error?.code === 'WORLD_STATE_ROUTE_CANCELLED',
+  );
   assert.equal(worldStateInflightCount(), 0);
 });
 
