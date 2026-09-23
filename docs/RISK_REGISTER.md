@@ -38,6 +38,7 @@
 | Explicit header omission | model omits a clear current place/coordinate and geography is lost | bounded deterministic World_State header supplement through ordinary Spatial reducer | Applecross omission/dedupe/rollback/format fixtures |
 | Repeated background drain | one elapsed-time phrase triggers new remote batches across following turns while still present in bounded context | ephemeral elapsed-boundary guard permits at most one background sweep per detected elapsed evidence boundary | repeated-same-skip background fixture |
 | Manual provenance drift | operator edit attaches to stale/other branch | current-head + exact-lineage guard + manual evidence + ordinary rollback journal | manual branch/head fixtures |
+| Manual history wrong-target drift | an expanded row is clicked after concurrent state change and its opaque row index now points at different canonical data | revalidate row key, active status, kind, visible summary, created boundary and last-changed boundary after entering the serialized writer queue before resolving the internal record ID | host manual-history stale-row static contract + UI hidden-ID fixture |
 | Approximate rollback corruption | older snapshot used as parent | exact-boundary only, fail closed | missing-parent fixture |
 | Operations telemetry leak | prompts/story/headers/reasoning/credentials escape through expandable diagnostics | allowlisted ephemeral telemetry; bounded extracted model response/rejection content is the only inspectable payload; HTML escaping and no transport envelope retention | serialization + hostile UI inspection |
 | UI authority drift | presentation code mutates state or bypasses Phase 5 confirmation | projection-only UI + maintenance intent callbacks + static boundary validator | Phase 6 mutation-boundary tests |
@@ -66,7 +67,7 @@
 | Rebuild cancel starvation | Cancel is queued behind the provider-backed rebuild and cannot stop it | cancellation is control-plane only and bypasses the per-chat writer queue; canonical mutation/persistence remains serialized | provider prefix-cancel + host ordering fixtures |
 | Record detail invisibility | flatter list removes access to anchors/evidence/history | native disclosure row opens bounded anchors, timeline, evidence and relations inline; selected projection remains escaped/bounded | Phase 6 disclosure/XSS fixtures |
 | Status-banner navigation displacement | rebuild status consumes a grid row and pushes tabs/content out of reach | absolute dismissible rebuild toast anchored over content, not layout flow; mobile toast sits above bottom navigation | responsive renderer/CSS fixtures |
-| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.16) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.17) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
 
 
 | Risk | Failure mode | Mitigation | Verification |

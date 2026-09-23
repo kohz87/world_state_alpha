@@ -267,7 +267,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13', '0.9.0-alpha.14', '0.9.0-alpha.15', '0.9.0-alpha.16'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13', '0.9.0-alpha.14', '0.9.0-alpha.15', '0.9.0-alpha.16', '0.9.0-alpha.17'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -435,12 +435,32 @@ test('rebuild cancellation bypasses the per-chat writer queue while rebuild muta
   assert.match(source, /onProgress: progress => \{/);
 });
 
+test('host manual history actions stay queued, auditable, and hidden-ID safe', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+
+  assert.match(source, /applyManualMutation,/);
+  assert.match(source, /async function applyRecordAction\(actionId, payload = \{\}, expectedChatKey = currentChatKey\(\)\)/);
+  assert.match(source, /return queueChatWork\(chatKey, \(\) => applyRecordActionNow\(actionId, payload, chatKey\)\)/);
+  assert.match(source, /\^row-\(\\d\+\)\$/);
+  assert.match(source, /record\.status !== 'active'/);
+  assert.match(source, /publicRecord\?\.summary !== projectedSummary/);
+  assert.match(source, /expectedCreated !== actualCreated/);
+  assert.match(source, /expectedChanged !== actualChanged/);
+  assert.match(source, /window\.prompt\([\s\S]*stored as manual evidence/);
+  assert.match(source, /History summary:[\s\S]*record\.summary/);
+  assert.match(source, /summary: historySummary/);
+  assert.match(source, /window\.confirm\('Move this record to history as '/);
+  assert.match(source, /applyManualMutation\(\{[\s\S]*action: actionId,[\s\S]*recordId: record\.id,[\s\S]*note: String\(note\)\.trim\(\)/);
+  assert.match(source, /await persistState\(chatKey, result\.state\);[\s\S]*setCachedState\(chatKey, result\.state\);[\s\S]*updatePrivateInjection\(\);/);
+});
+
 test('host panel actions are bound to the chat that opened the panel', () => {
   const source = fs.readFileSync('index.js', 'utf8');
 
   assert.match(source, /let panelChatKey = 'no-chat'/);
   assert.match(source, /panelChatKey = chatKey;[\s\S]*getState: \(\) => getCachedState\(chatKey\)/);
   assert.match(source, /onMaintenanceAction: \(actionId, payload\) => applyMaintenanceAction\(actionId, payload, chatKey\)/);
+  assert.match(source, /onRecordAction: \(actionId, payload\) => applyRecordAction\(actionId, payload, chatKey\)/);
   assert.match(source, /onSpatialAction: \(actionId, payload\) => applySpatialAction\(actionId, payload, chatKey\)/);
   assert.match(source, /if \(panelChatKey !== 'no-chat' && panelChatKey !== chatKey\) closeWorldStatePanel\(\)/);
   assert.match(source, /currentChatKey\(\) !== chatKey\) return;/);

@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.16 adds grounded lifecycle reconciliation: live capture explicitly retires completed/replaced active developments, and chronological rebuild reserves bounded lifecycle candidates so later historical endings can close earlier reconstructed threads. It retains all Alpha.15 integrity hardening. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.17 adds manual Reality lifecycle controls: expanded active records can be explicitly marked resolved or superseded with required operator evidence while retaining the Alpha.16 rebuild lifecycle recovery. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

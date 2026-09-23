@@ -22,6 +22,7 @@ import {
   continuityInjectionBlocked,
 } from './injection.js';
 import {
+  applyManualMutation,
   applyWorldStateImport,
   applyWorldStateReset,
   prepareWorldStateExport,
@@ -39,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.16';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.17';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -2259,6 +2260,93 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
   }
 }
 
+async function applyRecordAction(actionId, payload = {}, expectedChatKey = currentChatKey()) {
+  const chatKey = String(expectedChatKey || '');
+  if (!chatKey || chatKey === 'no-chat' || currentChatKey() !== chatKey) return;
+  if (!['resolve', 'supersede'].includes(actionId)) return;
+  return queueChatWork(chatKey, () => applyRecordActionNow(actionId, payload, chatKey));
+}
+
+async function applyRecordActionNow(actionId, payload, chatKey) {
+  await ensureChatStateLoaded(chatKey);
+  if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
+
+  const state = stateCache.get(chatKey);
+  const publicRecord = payload?.record && typeof payload.record === 'object' ? payload.record : null;
+  const keyMatch = /^row-(\d+)$/.exec(String(publicRecord?.key || ''));
+  const rowIndex = keyMatch ? Number(keyMatch[1]) : -1;
+  const record = Number.isInteger(rowIndex) && rowIndex >= 0 ? state?.records?.[rowIndex] : null;
+  const projectedSummary = String(record?.summary || '').trim().slice(0, 700);
+  const expectedCreated = Number.isInteger(publicRecord?.createdAtMessage) ? publicRecord.createdAtMessage : null;
+  const actualCreated = Number.isInteger(record?.createdAtMessage) ? record.createdAtMessage : null;
+  const expectedChanged = Number.isInteger(publicRecord?.lastChangedMessage) ? publicRecord.lastChangedMessage : null;
+  const actualChanged = Number.isInteger(record?.lastChangedMessage) ? record.lastChangedMessage : null;
+
+  if (!record
+    || record.status !== 'active'
+    || publicRecord?.status !== 'active'
+    || publicRecord?.kind !== record.kind
+    || publicRecord?.summary !== projectedSummary
+    || expectedCreated !== actualCreated
+    || expectedChanged !== actualChanged) {
+    notify('warning', 'That World State record changed before the manual action could run. Reopen it and try again.');
+    refreshPanel();
+    return;
+  }
+
+  const chat = getContext().chat || [];
+  if (!chat.length) {
+    notify('warning', 'A manual lifecycle correction needs an existing chat message to own the change.');
+    return;
+  }
+  const messageId = chat.length - 1;
+  const outcomeLabel = actionId === 'resolve' ? 'resolved' : 'superseded';
+  const note = window.prompt(
+    'Why should this record be marked ' + outcomeLabel + '?\nThis note will be stored as manual evidence.',
+    '',
+  );
+  if (note === null) return;
+  if (!String(note).trim()) {
+    notify('warning', 'A short reason is required for a manual lifecycle correction.');
+    return;
+  }
+
+  const historySummaryInput = window.prompt(
+    'History summary:\nEdit this if the current wording will be misleading after it is marked ' + outcomeLabel + '.',
+    record.summary,
+  );
+  if (historySummaryInput === null) return;
+  const historySummary = String(historySummaryInput).trim() || record.summary;
+
+  const preview = historySummary.length > 180 ? historySummary.slice(0, 177) + '...' : historySummary;
+  if (!window.confirm('Move this record to history as ' + outcomeLabel + '?\n\n' + preview)) return;
+
+  const result = applyManualMutation({
+    state,
+    chat,
+    chatKey,
+    messageId,
+    mutation: {
+      action: actionId,
+      recordId: record.id,
+      summary: historySummary,
+    },
+    note: String(note).trim(),
+  });
+
+  if (result.outcome !== 'applied') {
+    notify('error', 'Manual lifecycle correction was rejected: ' + (result.rejected?.[0]?.reason || 'invalid change'));
+    return;
+  }
+
+  await persistState(chatKey, result.state);
+  setCachedState(chatKey, result.state);
+  passiveCaptureRebaseCandidates.delete(chatKey);
+  updatePrivateInjection();
+  refreshPanel();
+  notify('success', 'Moved World State record to history as ' + outcomeLabel + '.');
+}
+
 async function applySpatialAction(actionId, payload = {}, expectedChatKey = currentChatKey()) {
   const chatKey = String(expectedChatKey || '');
   if (!chatKey || chatKey === 'no-chat' || currentChatKey() !== chatKey) return;
@@ -2665,6 +2753,7 @@ export async function openWorldStatePanel() {
       };
     },
     onMaintenanceAction: (actionId, payload) => applyMaintenanceAction(actionId, payload, chatKey),
+    onRecordAction: (actionId, payload) => applyRecordAction(actionId, payload, chatKey),
     onSpatialAction: (actionId, payload) => applySpatialAction(actionId, payload, chatKey),
     onClose: closeWorldStatePanel,
   });

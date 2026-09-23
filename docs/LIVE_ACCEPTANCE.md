@@ -153,6 +153,9 @@ Exercise export, import, reset, and rebuild separately.
 Observe:
 
 - destructive operations require explicit confirmation
+- expand one active Reality record and verify **Mark resolved** and **Mark superseded** are available; historical records expose neither button
+- either manual history action requires a non-empty operator reason and a final confirmation, then immediately moves the record out of Current while retaining it under Resolved/Superseded with Manual correction evidence
+- navigate or allow another write to change the selected row before committing and verify a stale row action is rejected rather than targeting a different canonical record
 - import/reset publish only after durable persistence
 - rebuild is never automatic
 - rebuild from chat recovers materially persistent narrated off-screen developments even when later scenes never revisit them

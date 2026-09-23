@@ -1792,6 +1792,22 @@
   grid-column: 1 / -1;
 }
 
+.wsa-manual-lifecycle p {
+  margin: 0 0 10px;
+  color: var(--wsa-muted);
+  line-height: 1.45;
+}
+
+.wsa-record-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wsa-record-action-row .wsa-btn {
+  min-height: 40px;
+}
+
 .wsa-record-expanded .wsa-evidence {
   padding: 9px 0;
   border: 0;

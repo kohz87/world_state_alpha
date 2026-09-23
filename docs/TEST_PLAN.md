@@ -88,7 +88,10 @@ No fixture may require schema code specific to its setting.
 56. Direct capture may resolve a visible active development only from grounded current-exchange evidence explicitly establishing its ending; the source firewall remains authoritative.
 57. Full chronological rebuild creates an active development at an earlier boundary, then later narration such as `the last two collapse` can resolve it even when that later exchange no longer repeats the original anchor phrase, because a bounded recent lifecycle candidate remains visible.
 58. Rebuild lifecycle reservation remains bounded to two active developments and never treats silence, off-screen status, temporary absence, escape, interruption, or uncertainty as deterministic resolution.
-59. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
+59. An expanded active Reality record exposes Mark resolved and Mark superseded controls; historical records expose neither control.
+60. A manual history action requires an operator note, passes through the ordinary current-head manual reducer and journal, persists durably, and removes the record from Current without deleting its history.
+61. A stale opaque UI row snapshot cannot target a different canonical record: the host revalidates row key, kind, status, visible summary, created boundary, and last-changed boundary before resolving the internal record ID; the operator may edit the history summary before final confirmation.
+62. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
 
 ## Additional safety tests
 

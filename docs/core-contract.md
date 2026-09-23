@@ -310,6 +310,8 @@ Manual inspect/query is deterministic and read-only. A targeted manual correctio
 - goes through duplicate admission, the canonical reducer, and the same branch journal
 - must not advance automatic capture cadence merely because an operator corrected state
 
+The Phase 7 panel may expose manual lifecycle intent controls for active records. `Mark resolved` and `Mark superseded` must remain thin UI intents: no canonical record ID is rendered or placed in the public UI model, the host validates the opaque row key plus visible snapshot metadata against current canonical state, requires an operator note, offers an editable history summary prefilled from the current record, requires confirmation, serializes the write on the per-chat queue, and then calls the same Phase 5 `applyManualMutation` path. Historical records do not expose these lifecycle controls.
+
 Reset and import are preview-then-confirm operations. Foreign import preserves current semantic meaning but clears local raw-message provenance, branch lineage, rollback history, and local evidence ownership rather than pretending another chat's chronology occurred here.
 
 Rebuild is explicit/manual expensive recovery, never ordinary runtime and never an automatic response to incompleteness.
@@ -466,7 +468,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 through 0.9.0-alpha.16 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 through 0.9.0-alpha.17 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 

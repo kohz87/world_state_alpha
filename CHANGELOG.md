@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0-alpha.17 - Manual history controls
+
+### Added
+
+- Expanded active Reality records now expose **Mark resolved** and **Mark superseded** controls for operator intervention when automatic lifecycle detection or rebuild recovery is insufficient.
+- Manual lifecycle changes require a concise operator reason, prefill an editable history summary from the current record, store the reason as `manual` evidence, journal the mutation at the exact current chat head, persist through the ordinary sidecar path, and immediately refresh private continuity injection.
+- The UI continues to hide canonical record IDs: record actions use the existing opaque row key plus visible snapshot metadata, and the host rejects stale row actions before resolving the canonical record internally.
+
+### Preserved
+
+- Manual history controls do not delete records, bypass the reducer, alter automatic capture cadence, add provider calls, or change durable schemas.
+- Historical records do not expose lifecycle buttons; a manual move is one-way through the ordinary lifecycle reducer and remains inspectable/rollback-owned as history.
+
 ## 0.9.0-alpha.16 - Lifecycle reconciliation recovery
 
 ### Fixed

@@ -198,6 +198,34 @@ test('active view owns selection and does not show detail from another tab', () 
   assert.equal(searched.views.search[0].key, searched.selectedRecordId);
 });
 
+test('expanded active records expose manual history actions without exposing them on historical records', () => {
+  const state = fixtureState();
+  const active = buildWorldStateUiModel(state, {
+    selectedRecordId: 'wsr_hidden_strike',
+    activeView: 'current',
+  });
+  const activeHtml = renderWorldStatePanel(active, {
+    activeTab: 'current',
+    detailOpen: true,
+  });
+  assert.match(activeHtml, /Manual lifecycle/);
+  assert.match(activeHtml, /data-wsa-record-action="resolve"/);
+  assert.match(activeHtml, /data-wsa-record-action="supersede"/);
+  assert.match(activeHtml, /Mark resolved/);
+  assert.match(activeHtml, /Mark superseded/);
+
+  const historical = buildWorldStateUiModel(state, {
+    selectedRecordId: 'wsr_hidden_resolved',
+    activeView: 'resolved',
+  });
+  const historicalHtml = renderWorldStatePanel(historical, {
+    activeTab: 'resolved',
+    detailOpen: true,
+  });
+  assert.doesNotMatch(historicalHtml, /data-wsa-record-action=/);
+  assert.doesNotMatch(historicalHtml, /Manual lifecycle/);
+});
+
 test('detail evidence and relations are bounded', () => {
   const state = createState('bounded-detail');
   const evidenceIds = [];
@@ -374,6 +402,9 @@ test('maintenance surface contains explicit intent descriptors only', () => {
     "from 'node:",
   ]) assert.equal(source.includes(forbidden), false, 'ui.js must not contain ' + forbidden);
   assert.match(source, /onMaintenanceAction/);
+  assert.match(source, /onRecordAction/);
+  assert.match(source, /data-wsa-record-action="resolve"/);
+  assert.match(source, /data-wsa-record-action="supersede"/);
 });
 
 test('1000-record UI fixture remains bounded', () => {

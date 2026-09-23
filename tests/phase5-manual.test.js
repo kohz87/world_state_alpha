@@ -100,6 +100,66 @@ test('targeted manual update is anchored, journaled, and tagged manual without c
   assert.equal(rolled.state.records[0].summary, 'The bridge is destroyed.');
 });
 
+test('manual lifecycle actions move active records to history with operator evidence', () => {
+  const chat = [
+    { role: 'assistant', content: 'The orchard sounder remains active.' },
+    { role: 'user', content: 'I review the tracker and correct it.' },
+  ];
+  const state = seedState('manual-history', chat.slice(0, 1), {
+    action: 'create',
+    kind: 'development',
+    summary: 'The orchard sounder remains active.',
+    anchors: ['orchard', 'sounder'],
+  });
+  const id = state.records[0].id;
+
+  const resolved = applyManualMutation({
+    state,
+    chat,
+    chatKey: 'manual-history',
+    messageId: 1,
+    note: 'Operator correction: the sounder was eliminated in the prior scene.',
+    mutation: {
+      action: 'resolve',
+      recordId: id,
+      summary: 'The orchard sounder remains active.',
+    },
+  });
+
+  assert.equal(resolved.outcome, 'applied');
+  assert.equal(resolved.state.records[0].status, 'resolved');
+  assert.equal(resolved.state.records[0].summary, 'The orchard sounder remains active.');
+  assert.equal(resolved.state.records[0].lastChangedMessage, 1);
+  assert.equal(
+    Object.values(resolved.state.evidence).some(item =>
+      item.sourceClass === 'manual'
+      && /sounder was eliminated/i.test(item.claim)),
+    true,
+  );
+
+  const supersedeState = seedState('manual-history-supersede', chat.slice(0, 1), {
+    action: 'create',
+    kind: 'fact',
+    summary: 'The old freight office handles permits.',
+    anchors: ['freight office'],
+  });
+  const superseded = applyManualMutation({
+    state: supersedeState,
+    chat,
+    chatKey: 'manual-history-supersede',
+    messageId: 1,
+    note: 'Operator correction: a newer office arrangement replaced this one.',
+    mutation: {
+      action: 'supersede',
+      recordId: supersedeState.records[0].id,
+      summary: 'The old freight office handles permits.',
+    },
+  });
+
+  assert.equal(superseded.outcome, 'applied');
+  assert.equal(superseded.state.records[0].status, 'superseded');
+});
+
 test('manual create uses duplicate admission rather than proliferating an active thread', () => {
   const chat = [
     { role: 'assistant', content: 'A dock strike begins.' },

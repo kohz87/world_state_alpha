@@ -553,6 +553,15 @@ function messageValue(value) {
 function recordExpandedHtml(detail) {
   if (!detail) return '';
 
+  const lifecycleActions = detail.status === 'active'
+    ? '<section class="wsa-record-expanded-wide wsa-manual-lifecycle"><h3>Manual lifecycle</h3>' +
+      '<p>Use this only when you need to override automatic lifecycle detection. The record stays in history with manual evidence.</p>' +
+      '<div class="wsa-record-action-row">' +
+      '<button type="button" class="wsa-btn" data-wsa-record-action="resolve">Mark resolved</button>' +
+      '<button type="button" class="wsa-btn" data-wsa-record-action="supersede">Mark superseded</button>' +
+      '</div></section>'
+    : '';
+
   const anchors = detail.anchors.length
     ? '<div class="wsa-chip-row">' + detail.anchors.map(anchor => '<span class="wsa-chip">' + escapeHtml(anchor) + '</span>').join('') + '</div>'
     : '<p class="wsa-muted">No anchors recorded.</p>';
@@ -586,6 +595,7 @@ function recordExpandedHtml(detail) {
     '</dl></section>' +
     '<section class="wsa-record-expanded-wide"><h3>Evidence</h3>' + evidence + '</section>' +
     '<section class="wsa-record-expanded-wide"><h3>Connections</h3>' + relations + '</section>' +
+    lifecycleActions +
     (detail.changeReason ? '<p class="wsa-change-reason wsa-record-expanded-wide">' + escapeHtml(detail.changeReason) + '</p>' : '') +
     '</div>';
 }
@@ -1060,6 +1070,7 @@ export function createWorldStateUiController({
   getDiagnostics = () => [],
   getRuntimeInfo = () => ({}),
   onMaintenanceAction = null,
+  onRecordAction = null,
   onSpatialAction = null,
   onClose = null,
   initialTab = 'current',
@@ -1296,6 +1307,27 @@ export function createWorldStateUiController({
         ui.detailOpen = same ? !ui.detailOpen : true;
         refresh();
       }
+      return;
+    }
+
+    const recordAction = closest(event.target, '[data-wsa-record-action]');
+    if (recordAction && typeof onRecordAction === 'function') {
+      const action = clean(recordAction.dataset?.wsaRecordAction, 24);
+      if (!['resolve', 'supersede'].includes(action)) return;
+      const currentModel = model();
+      const currentRecord = currentModel.detail;
+      if (!currentRecord || currentRecord.status !== 'active') return;
+      await onRecordAction(action, {
+        record: {
+          key: currentRecord.key,
+          kind: currentRecord.kind,
+          status: currentRecord.status,
+          summary: currentRecord.summary,
+          createdAtMessage: currentRecord.createdAtMessage,
+          lastChangedMessage: currentRecord.lastChangedMessage,
+        },
+      });
+      refresh();
       return;
     }
 

@@ -25,6 +25,7 @@ Included in the current gate:
 - 0.9.0-alpha.14 virtual hidden-message rebuild: optional/default-on immutable rebuild view that reclassifies eligible hidden user/assistant roleplay for recovery only, excludes genuine system/tool/UI rows, and never toggles live chat visibility or lineage
 - 0.9.0-alpha.15 integrity hardening: evidence/assertion affinity and epistemic preservation, atomic structural capture failure, strict persisted enum validation, semantic passive-rebase guard, hidden system/tool precedence, stale rebuild compensation, and retryable late host event registration
 - 0.9.0-alpha.16 lifecycle reconciliation recovery: grounded resolve/supersede guidance plus bounded rebuild lifecycle-candidate reservation so later narrated endings can retire earlier reconstructed active threads without another provider call
+- 0.9.0-alpha.17 manual history controls: active Reality disclosures expose Mark resolved / Mark superseded operator actions, require a manual evidence note, validate an opaque UI row snapshot before resolving the canonical target, and persist through the ordinary journaled manual path
 - explicit coexistence hardening against NPC State Delta and Ukiyo/Megumin ownership
 - cumulative Phase 1-9 deterministic tests and validation
 
