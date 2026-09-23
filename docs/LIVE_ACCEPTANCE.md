@@ -165,10 +165,10 @@ Open the World State panel at representative desktop (>=1100 px), tablet landsca
 
 Observe:
 
-- desktop uses the wider master/detail workspace without nested-card clutter
+- desktop Reality views use flat disclosure rows without nested-card clutter; expanding any record reveals anchors, timeline, evidence and connections inline
 - tablet landscape keeps an adaptive split; tablet portrait uses list -> detail navigation rather than squeezed columns
 - mobile exposes Current / Places / Ops / More bottom navigation and a full-height rebuild sheet
-- detail/evidence and Operations JSON viewers scroll internally without page-wide horizontal overflow
+- record disclosures, Places detail, and Operations JSON viewers scroll internally without page-wide horizontal overflow
 - ordinary views hide raw backend IDs/lineage/prompts/headers/reasoning/credentials; only explicit Operations expansion shows bounded escaped model response/rejection content
 - touch controls remain >=44 px and safe-area padding works on phone layouts
 
@@ -367,6 +367,21 @@ Pass criteria:
 - Data separates Export/Import, Recovery/Rebuild, and a visible Danger zone for Clear World State
 - desktop/tablet/mobile layouts satisfy L13
 
+### L28. Alpha.12 flat disclosure workspace
+
+Open Current, Recent, Resolved, Operations, and Data on desktop/tablet/mobile.
+
+Pass criteria:
+
+- header shows the continuity icon + `World continuity` title and no `World State Alpha` eyebrow
+- each Reality record expands inline to anchors, timeline, evidence, connections, and change reason without opening a separate nested detail card
+- collapsed records do not render hidden evidence/detail content until expanded
+- Operations rows remain expandable and expose bounded model response/rejection JSON with copy controls
+- rebuild status appears as a floating toast that does not shift the tab row or body layout and can be dismissed independently of cancelling a running rebuild
+- mobile rebuild toast sits above bottom navigation rather than covering it
+- scrollbar arrow buttons are absent while list/body/code scrolling remains functional
+- Data/maintenance sections use flatter separators and no nested dashboard-card stack
+
 ## 3. Contractual bounds to verify live
 
 These are behavioral ceilings, not latency predictions:
@@ -423,6 +438,7 @@ L24 Alpha.8 live rebuild interoperability: PASS / FAIL / NOT RUN
 L25 Alpha.9 fenced final rebuild response: PASS / FAIL / NOT RUN
 L26 Alpha.10 structured completeness checklist: PASS / FAIL / NOT RUN
 L27 Alpha.11 responsive Operations/rebuild controls: PASS / FAIL / NOT RUN
+L28 Alpha.12 flat disclosure workspace: PASS / FAIL / NOT RUN
 
 Measured:
 RP TTFT baseline:

@@ -72,6 +72,10 @@ for (const required of [
   'Rejected mutations / reasons',
   'Danger zone',
   'Atomic replacement',
+  'wsa-brand-icon',
+  'wsa-record-disclosure',
+  'data-wsa-dismiss-rebuild',
+  'wsa-rebuild-toast',
 ]) {
   if (!ui.includes(required)) throw new Error('Phase 6 responsive/Operations invariant missing: ' + required);
 }

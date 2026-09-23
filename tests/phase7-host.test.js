@@ -267,7 +267,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -617,7 +617,7 @@ test('host settings mount reuses Phase 6 panel without a second UI framework or 
   assert.match(css, /world-state-alpha-settings-drawer/);
   assert.doesNotMatch(css, /\.world-state-alpha-settings-drawer\s*\{[^}]*display\s*:/s, 'SillyTavern must own inline-drawer-content visibility');
   assert.doesNotMatch(css, /world-state-alpha-settings-chevron/);
-  assert.doesNotMatch(css, /webkit-details-marker/);
+  assert.doesNotMatch(css, /world-state-alpha-settings[^}]*webkit-details-marker/s, 'settings drawer must not override native inline-drawer disclosure markers');
   assert.match(css, /background:\s*var\(--black50a/);
   assert.match(css, /appearance:\s*textfield/);
   assert.match(css, /#world_state_alpha_open\.world-state-alpha-open/);

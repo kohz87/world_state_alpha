@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.0-alpha.12 - Flat disclosure workspace
+
+### Changed
+
+- Replaced the old `World State Alpha` eyebrow with a compact continuity-node icon, `World continuity` title, and concise current/history/place counts.
+- Reality records now use inline disclosure rows. Expanding a row reveals bounded anchors, timeline, evidence, connections, and change reason directly under that record instead of opening a large nested detail card.
+- Operations remains disclosure-based and continues to expose bounded model response/rejection JSON with copy controls.
+- Rebuild progress/completion moved out of normal layout flow into a dismissible floating toast, so tabs/navigation no longer shift downward while rebuild status is visible.
+- Data & Maintenance, statistics, health, and operation rows use flatter separators and reduced card depth.
+- Scoped WebKit scrollbar arrow buttons are suppressed while scrolling remains available.
+
+### Responsive behavior
+
+- Tablet/mobile keep the Alpha.11 navigation model while Reality disclosures expand in place at every width.
+- On mobile, the floating rebuild toast sits above the bottom navigation and can be dismissed without cancelling the rebuild.
+- Places retains its dedicated adaptive list/detail editing surface.
+
+### Preserved
+
+- Operations privacy boundary, rebuild atomicity/range semantics, provider cancellation, canonical schema version 2, and sidecar/bundle/journal envelope version 1 are unchanged.
+- No new provider calls, persisted fields, Story Director behavior, or cross-extension dependencies were added.
+
 ## 0.9.0-alpha.11 - Responsive Operations and rebuild workspace
 
 ### Added

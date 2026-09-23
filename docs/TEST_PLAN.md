@@ -289,4 +289,7 @@ Performance/injection:
 107. Rebuild cancellation by operation-id prefix aborts the active provider call immediately and is not queued behind the rebuild writer operation.
 108. Operations lists newest telemetry first and expands capture/rebuild/evolution response/rejection content with bounded escaped JSON/text.
 109. Operations drops prompts, transport headers, reasoning content, session IDs, credentials and unexpected private fields.
-110. Desktop/tablet/mobile renderer exposes master/detail, adaptive single-pane detail, bottom navigation, full-height rebuild sheet, and isolated danger-zone Clear control.
+110. Desktop/tablet/mobile renderer exposes inline Reality record disclosures, expandable Operations diagnostics/JSON, adaptive Places detail, bottom navigation, full-height rebuild sheet, and isolated danger-zone Clear control.
+111. Main header contains the trusted continuity icon + `World continuity` title and does not render the old `World State Alpha` eyebrow.
+112. Rebuild status is absolutely positioned outside layout flow, can be dismissed independently of cancellation, and does not shift the tab/navigation row.
+113. Scoped WebKit scrollbar buttons are suppressed while normal scrolling remains available.

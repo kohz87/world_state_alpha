@@ -57,7 +57,9 @@
 | Structured current-state under-capture | provider ignores a persistent narrator-authored Off-Screen/Unresolved condition because a longer or more scene-salient condition dominates the same exchange | bounded advisory checklist extracted only from World_State Off-Screen/Unresolved sections; same source firewall and exclusions still apply | Brackenford extortion checklist + live rebuild fixtures |
 | Partial rebuild history loss | operator starts from message N without a provable earlier canonical boundary and silently erases older truth | exact lineage-prefix proof + reconcileBranch restoration; otherwise zero provider calls and explicit Full-chat instruction | exact-prefix convergence + reset failure fixtures |
 | Rebuild cancel starvation | Cancel is queued behind the provider-backed rebuild and cannot stop it | cancellation is control-plane only and bypasses the per-chat writer queue; canonical mutation/persistence remains serialized | provider prefix-cancel + host ordering fixtures |
-| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.11) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Record detail invisibility | flatter list removes access to anchors/evidence/history | native disclosure row opens bounded anchors, timeline, evidence and relations inline; selected projection remains escaped/bounded | Phase 6 disclosure/XSS fixtures |
+| Status-banner navigation displacement | rebuild status consumes a grid row and pushes tabs/content out of reach | absolute dismissible rebuild toast anchored over content, not layout flow; mobile toast sits above bottom navigation | responsive renderer/CSS fixtures |
+| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.12) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
 
 
 | Risk | Failure mode | Mitigation | Verification |
