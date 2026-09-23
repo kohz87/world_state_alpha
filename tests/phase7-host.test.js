@@ -414,11 +414,15 @@ test('rebuild cancellation bypasses the per-chat writer queue while rebuild muta
   const end = source.indexOf('async function applyMaintenanceActionNow', start);
   const wrapper = source.slice(start, end);
   assert.match(wrapper, /if \(actionId === 'cancel_rebuild'\)/);
+  assert.match(wrapper, /rebuildAbortControllers\.get\(chatKey\)/);
+  assert.match(wrapper, /rebuildController\?\.abort\(\)/);
   assert.match(wrapper, /cancelWorldStateRequests\(\{[\s\S]*operationIdPrefix: status\.operationId/);
   assert.ok(wrapper.indexOf("if (actionId === 'cancel_rebuild')") < wrapper.indexOf('return queueChatWork'));
   assert.match(wrapper, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, payload, chatKey\)\)/);
 
   assert.match(source, /planChronologicalRebuild\(chat, \{ maxBoundaries, startMessageId \}\)/);
+  assert.match(source, /signal: rebuildController\.signal/);
+  assert.match(source, /phase: 'committing'/);
   assert.match(source, /getRuntimeInfo: \(\) => \{/);
   assert.match(source, /rebuildStatus: rebuildStatuses\.get\(chatKey\)/);
   assert.match(source, /onProgress: progress => \{/);
@@ -528,12 +532,13 @@ test('host rebuild never persists or reports success before completed outcome ga
   const end = source.indexOf('async function applySpatialAction(', actionAt);
   const body = source.slice(actionAt, end);
   const gateAt = body.indexOf("if (result.outcome !== 'completed' || !isCurrent())");
+  const committingAt = body.indexOf("phase: 'committing'", gateAt);
   const persistAt = body.indexOf('await persistState(chatKey, result.state)');
-  const failureAt = body.indexOf("outcome: 'rebuild-failed'", gateAt);
   const persistFailureAt = body.indexOf("outcome: 'rebuild-persist-failed'", persistAt);
   const successAt = body.indexOf("outcome: 'rebuild-completed'", persistFailureAt);
-  assert.ok(gateAt >= 0 && failureAt > gateAt && persistAt > failureAt && persistFailureAt > persistAt && successAt > persistFailureAt);
-  assert.match(body.slice(gateAt, persistAt), /return;/);
+  assert.ok(gateAt >= 0 && committingAt > gateAt && persistAt > committingAt && persistFailureAt > persistAt && successAt > persistFailureAt);
+  assert.match(body.slice(gateAt, committingAt), /return;/);
+  assert.match(body.slice(gateAt, committingAt), /rebuild-cancelled/);
   assert.match(body, /notify\('info', 'World State Alpha rebuild started/);
   assert.match(body, /notify\([\s\S]*'success'[\s\S]*World State Alpha rebuild completed:/);
   assert.match(body, /diagnostics:\s*diagnosticStore/);

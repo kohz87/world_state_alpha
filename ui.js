@@ -911,14 +911,16 @@ function rebuildStatusHtml(status, { dismissible = true } = {}) {
   const total = Math.max(0, Number(status.totalBoundaries) || 0);
   const processed = Math.max(0, Number(status.processedBoundaries) || 0);
   const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((processed / total) * 100))) : 0;
-  const running = status.phase === 'running' || status.phase === 'cancelling';
+  const cancellable = status.phase === 'running' || status.phase === 'cancelling';
   const tone = status.phase === 'failed' || status.phase === 'cancelled' ? ' error'
     : status.phase === 'completed' ? ' success' : ' running';
-  const stateLabel = running
-    ? (status.phase === 'cancelling' ? 'Cancelling rebuild…' : 'Rebuilding chat…')
-    : status.phase === 'completed' ? 'Rebuild completed'
-      : status.phase === 'failed' ? 'Rebuild failed'
-        : 'Rebuild ' + (status.phase || 'status');
+  const stateLabel = status.phase === 'committing'
+    ? 'Saving rebuilt state…'
+    : cancellable
+      ? (status.phase === 'cancelling' ? 'Cancelling rebuild…' : 'Rebuilding chat…')
+      : status.phase === 'completed' ? 'Rebuild completed'
+        : status.phase === 'failed' ? 'Rebuild failed'
+          : 'Rebuild ' + (status.phase || 'status');
   return '<aside class="wsa-rebuild-toast' + tone + '" aria-live="polite">' +
     '<div class="wsa-rebuild-toast-icon" aria-hidden="true">' + (tone === 'success' ? '✓' : tone === 'error' ? '!' : '↻') + '</div>' +
     '<div class="wsa-rebuild-toast-content"><div class="wsa-rebuild-toast-head"><strong>' + escapeHtml(stateLabel) + '</strong>' +
@@ -932,7 +934,7 @@ function rebuildStatusHtml(status, { dismissible = true } = {}) {
     '<span>' + status.currentRecords + ' current</span>' +
     '<span>' + status.places + ' places</span>' +
     '</div></div>' +
-    (running ? '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-cancel-rebuild>Cancel</button>' : '') +
+    (cancellable ? '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-cancel-rebuild>Cancel</button>' : '') +
     '</aside>';
 }
 
@@ -940,7 +942,7 @@ function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
   if (!open) return '';
   const rebuild = model.maintenance.rebuild;
   const status = rebuild.status;
-  const active = status && (status.phase === 'running' || status.phase === 'cancelling');
+  const active = status && ['running', 'cancelling', 'committing'].includes(status.phase);
   const mode = ['full', 'last', 'from'].includes(form.mode) ? form.mode : 'full';
   const startMessageId = Number.isInteger(form.startMessageId) ? form.startMessageId : 0;
   const lastMessages = Number.isInteger(form.lastMessages) ? form.lastMessages : Math.min(20, Math.max(1, rebuild.chatMessages));
