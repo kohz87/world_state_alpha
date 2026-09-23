@@ -99,6 +99,60 @@ test('capture prompt explicitly rejects story-driving CoT as evidence', () => {
   assert.match(prompt.prompt, /never evidence of current occurrence/);
 });
 
+test('capture explicitly reconciles lifecycle endings and direct resolve remains source-firewalled', () => {
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Reconcile lifecycle for shown active records/i);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /ended, completed, failed, eliminated, or permanently ceased/i);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /off-screen status.*temporary absence.*uncertainty.*never proves resolution/i);
+
+  const initial = withLineage([{
+    role: 'assistant',
+    content: 'Two ditch boars remain alive in the orchard.',
+  }]);
+  const state = existingState('capture-lifecycle-resolve', initial, {
+    action: 'create',
+    kind: 'development',
+    summary: 'Two ditch boars remain active in the orchard.',
+    anchors: ['ditch boars', 'orchard'],
+  });
+  const record = state.records[0];
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'The last two ditch boars collapse in the mud. No animals remain in the sounder.',
+  }]);
+  const prompt = buildCapturePrompt({
+    exchange,
+    visibleRecords: [record],
+    operation: 'rebuild',
+  });
+  assert.match(prompt.prompt, /LIFECYCLE CHECK/);
+  assert.match(prompt.prompt, /REBUILD:/);
+  assert.match(prompt.prompt, /Later historical boundaries may close earlier active threads/i);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'resolve',
+        recordId: record.id,
+        summary: 'The ditch-boar sounder is resolved after the last two animals collapse.',
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'The last two ditch boars collapse in the mud. No animals remain in the sounder.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [record],
+    chatKey: 'capture-lifecycle-resolve',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.acceptedCount, 1);
+  assert.equal(result.state.records[0].status, 'resolved');
+  assert.equal(result.state.records[0].lastChangedMessage, 0);
+});
+
 test('spatial capture prompt keeps the exact Reality mutation schema and provider aliases repair deterministically', () => {
   const prompt = buildCapturePrompt({
     exchange: withLineage([

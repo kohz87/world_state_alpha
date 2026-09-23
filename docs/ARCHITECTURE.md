@@ -477,7 +477,8 @@ start isolated root-checkpoint Reality candidate
    |
 for each window in chronology:
    existing capture prompt + persistent-condition completeness sweep + source firewall
-   + relevant active records
+   + up to two reserved active lifecycle candidates (exchange-overlap or changed within prior 12 raw messages)
+   + remaining relevant active records
    + relevant resolved/superseded tombstones
    -> one bounded capture-style request
    -> structurally malformed Reality/Spatial row? fail whole rebuild
@@ -628,7 +629,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; Background Development Catch-up landed in `0.9.0-alpha.6`; recovery/evidence/Spatial hardening landed in `0.9.0-alpha.7`; live rebuild interoperability/observability landed in `0.9.0-alpha.8`; fenced-response interoperability landed in `0.9.0-alpha.9`; structured completeness-checklist hardening landed in `0.9.0-alpha.10`; responsive Operations/rebuild UX landed in `0.9.0-alpha.11`; the flat disclosure workspace landed in `0.9.0-alpha.12`; passive-lineage rewrite hardening landed in `0.9.0-alpha.13`; virtual hidden-message rebuild landed in `0.9.0-alpha.14`; and the current integrity-hardening candidate is `0.9.0-alpha.15`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
+Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; Background Development Catch-up landed in `0.9.0-alpha.6`; recovery/evidence/Spatial hardening landed in `0.9.0-alpha.7`; live rebuild interoperability/observability landed in `0.9.0-alpha.8`; fenced-response interoperability landed in `0.9.0-alpha.9`; structured completeness-checklist hardening landed in `0.9.0-alpha.10`; responsive Operations/rebuild UX landed in `0.9.0-alpha.11`; the flat disclosure workspace landed in `0.9.0-alpha.12`; passive-lineage rewrite hardening landed in `0.9.0-alpha.13`; virtual hidden-message rebuild landed in `0.9.0-alpha.14`; integrity hardening landed in `0.9.0-alpha.15`; and the current lifecycle-reconciliation recovery candidate is `0.9.0-alpha.16`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

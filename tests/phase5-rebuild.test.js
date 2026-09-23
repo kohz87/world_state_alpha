@@ -127,6 +127,71 @@ test('chronological rebuild planning is assistant-boundary based and bounded bef
   );
 });
 
+test('rebuild reserves recent active developments so later implicit endings can close old threads', async () => {
+  const chat = [
+    { role: 'user', content: 'I watch the orchard.' },
+    { role: 'assistant', content: 'Two ditch boars remain alive in the orchard and keep circling the roots.' },
+    { role: 'user', content: 'I wait for the struggle to finish.' },
+    { role: 'assistant', content: 'The last two collapse in the mud. Nothing stirs afterward.' },
+  ];
+  let calls = 0;
+
+  const result = await runManualRebuild({
+    ctx: {},
+    state: createState('rebuild-lifecycle-close'),
+    chat,
+    chatKey: 'rebuild-lifecycle-close',
+    isCurrent: () => true,
+    dispatcher: async (_ctx, options) => {
+      calls += 1;
+      const visibleMatch = options.prompt.match(/VISIBLE CURRENT WORLD STATE \(current authority; use only these IDs\):\n(\[[^\n]*\])/);
+      const visible = visibleMatch ? JSON.parse(visibleMatch[1]) : [];
+
+      if (options.prompt.includes('Two ditch boars remain alive in the orchard and keep circling the roots.')) {
+        return {
+          text: JSON.stringify({
+            mutations: [{
+              action: 'create',
+              kind: 'development',
+              summary: 'Two ditch boars remain active in the orchard.',
+              anchors: ['ditch boars', 'orchard'],
+              evidence: [{
+                sourceMessageId: 1,
+                claim: 'Two ditch boars remain alive in the orchard and keep circling the roots.',
+              }],
+            }],
+          }),
+          receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+        };
+      }
+
+      const active = visible.find(record => record.status === 'active' && /ditch boars/i.test(record.summary || ''));
+      assert.ok(active, 'recent active development must remain visible for implicit lifecycle closure');
+      assert.match(options.prompt, /REBUILD: Later historical boundaries may close earlier active threads/);
+      return {
+        text: JSON.stringify({
+          mutations: [{
+            action: 'resolve',
+            recordId: active.id,
+            summary: 'The ditch-boar sounder ends after the last two animals collapse.',
+            evidence: [{
+              sourceMessageId: 3,
+              claim: 'The last two collapse in the mud. Nothing stirs afterward.',
+            }],
+          }],
+        }),
+        receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+      };
+    },
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.equal(calls, 2);
+  assert.equal(result.state.records.length, 1);
+  assert.equal(result.state.records[0].status, 'resolved');
+  assert.match(result.state.records[0].summary, /sounder ends/i);
+});
+
 test('rebuild can virtually include eligible hidden roleplay messages without mutating chat', () => {
   const chat = [
     { role: 'user', content: 'I arrive at the gate.' },

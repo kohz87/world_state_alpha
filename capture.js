@@ -91,7 +91,7 @@ export function extractWorldStateCompletenessHints(exchange = []) {
 export const CAPTURE_SYSTEM_PROMPT = [
   'Return exactly one valid JSON object for World State Alpha capture. No markdown or commentary.',
   'You are a conservative continuity extractor, not a narrator or Story Director.',
-  'Propose only current world facts/developments already established by the CURRENT EXCHANGE.',
+  'Propose only current world facts/developments and lifecycle changes already established by the CURRENT EXCHANGE.',
   'Capture is bounded for completeness, not ranked only by immediate PC salience: scan the whole CURRENT EXCHANGE for every distinct material persistent condition, up to the mutation limit.',
   'PC proximity, current objective, or whether the PC intervened are not admission criteria. An established ongoing condition that will continue independently after the PC leaves or ignores it belongs as a development, including when it is now off-screen.',
   'If the exchange establishes several independent persistent conditions, represent each once instead of stopping after the most scene-salient one.',
@@ -103,8 +103,9 @@ export const CAPTURE_SYSTEM_PROMPT = [
   'For every non-noop mutation, cite 1-4 short verbatim excerpts from CURRENT EXCHANGE using sourceMessageId.',
   'Use shown record IDs only for update/resolve/supersede/related links. Never create an ID.',
   'Reality mutation field names are exact: use kind and summary. Never substitute category for kind or description for summary.',
-  'Use resolve/supersede for lifecycle changes; do not smuggle them through update.',
-  'Prefer updating an existing matching record. If nothing material changed, return {"mutations":[]}.',
+  'Reconcile lifecycle for shown active records addressed by CURRENT EXCHANGE: resolve only when explicitly ended, completed, failed, eliminated, or permanently ceased; supersede only when explicitly replaced; update if it still exists but changed.',
+  'An ending may be transient as an event but still retires the prior ongoing record. Silence, off-screen status, temporary absence, escape, interruption, uncertainty, scene departure, or PC irrelevance never proves resolution.',
+  'Use resolve/supersede for lifecycle changes; do not smuggle them through update. If no persistent change or proven lifecycle transition exists, return {"mutations":[]}.',
 ].join(' ');
 
 function messageText(message) {
@@ -229,6 +230,11 @@ export function buildCapturePrompt({
       : '',
     'VISIBLE CURRENT WORLD STATE (current authority; use only these IDs):',
     JSON.stringify(records),
+    '',
+    'LIFECYCLE CHECK: If CURRENT EXCHANGE explicitly ends/completes/fails/eliminates a shown active development, resolve it; if explicitly replaces it, supersede it; if it continues but changed, update it. Silence, off-screen status, absence, escape, or uncertainty never proves resolution.',
+    operation === 'rebuild'
+      ? 'REBUILD: Later historical boundaries may close earlier active threads; reconcile those endings so completed episodes do not remain active.'
+      : '',
     '',
     'RELEVANT LORE BASELINE (context/possibility only; never evidence of current occurrence):',
     lore || '(none)',
