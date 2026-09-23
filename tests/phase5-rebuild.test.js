@@ -135,6 +135,12 @@ test('rebuild planner supports a global start message without renumbering histor
   assert.equal(partial.windows[0].exchange[0].messageId, 2);
   assert.equal(partial.windows[0].exchange.at(-1).messageId, 3);
   assert.equal(partial.metrics.startMessageId, 2);
+
+  const assistantAligned = planChronologicalRebuild(chat, { startMessageId: 3, maxBoundaries: 10 });
+  assert.deepEqual(assistantAligned.windows.map(item => item.messageId), [3, 5]);
+  assert.deepEqual(assistantAligned.windows[0].exchange.map(item => item.messageId), [2, 3]);
+  assert.equal(assistantAligned.windows[0].exchange[0].content, 'I wait several days.');
+  assert.equal(assistantAligned.metrics.startMessageId, 3);
 });
 
 test('partial rebuild uses an exact proven prior boundary and converges with full current semantics', async () => {
@@ -160,6 +166,32 @@ test('partial rebuild uses an exact proven prior boundary and converges with ful
   assert.deepEqual(progress.map(item => item.processedBoundaries), [1, 2]);
   assert.equal(compareWorldStateSemantics(current, result.state).equivalent, true);
   assert.equal(result.state.checkpoints.some(item => item.messageId === -1), true);
+});
+
+test('partial rebuild starting on an assistant boundary retains the preceding user turn as exchange context', async () => {
+  const chat = fixtureChat();
+  const current = await buildIncrementally('partial-assistant-range', chat, scriptedDispatcher());
+  const delegate = scriptedDispatcher();
+  let calls = 0;
+  const dispatcher = async (...args) => {
+    calls += 1;
+    if (calls === 1) assert.match(args[1].prompt, /I wait several days\./);
+    return delegate(...args);
+  };
+  const result = await runManualRebuild({
+    ctx: {},
+    dispatcher,
+    state: current,
+    chat,
+    chatKey: 'partial-assistant-range',
+    startMessageId: 3,
+    maxBoundaries: 10,
+    isCurrent: () => true,
+  });
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.providerCalls, 2);
+  assert.equal(calls, 2);
+  assert.equal(compareWorldStateSemantics(current, result.state).equivalent, true);
 });
 
 test('partial rebuild after reset fails closed before any provider call when prior canonical history is unavailable', async () => {
@@ -536,7 +568,7 @@ test('rebuild fails closed on timeout, cancellation, and a later-window timeout'
       chatKey: 'rebuild-provider-outcome',
       isCurrent: () => true,
     });
-    assert.equal(result.outcome, 'failure');
+    assert.equal(result.outcome, outcome === 'cancelled' ? 'cancelled' : 'failure');
     assert.equal(result.failedBoundary, 1);
     assert.deepEqual(result.state, original);
   }
@@ -563,6 +595,63 @@ test('rebuild fails closed on timeout, cancellation, and a later-window timeout'
   assert.equal(late.outcome, 'failure');
   assert.equal(late.failedBoundary, 3);
   assert.deepEqual(late.state, original);
+});
+
+test('rebuild cancellation persists across boundary gaps and the final progress callback', async () => {
+  const chat = fixtureChat();
+  const original = reduceMutations(createState('rebuild-persistent-cancel'), {
+    chatKey: 'rebuild-persistent-cancel',
+    messageId: 0,
+    lineageKey: chatLineage(chat)[0].lineageKey,
+    mutations: [{ action: 'create', kind: 'fact', summary: 'Original canonical state must survive operator cancellation.' }],
+  }).state;
+
+  {
+    const controller = new AbortController();
+    let calls = 0;
+    const result = await runManualRebuild({
+      ctx: {},
+      state: original,
+      chat,
+      chatKey: 'rebuild-persistent-cancel',
+      signal: controller.signal,
+      isCurrent: () => true,
+      dispatcher: async () => {
+        calls += 1;
+        return { text: '{"mutations":[]}', receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' } };
+      },
+      onProgress: progress => {
+        if (progress.processedBoundaries === 1) controller.abort();
+      },
+    });
+    assert.equal(result.outcome, 'cancelled');
+    assert.equal(result.errorCode, 'WORLD_STATE_ROUTE_CANCELLED');
+    assert.equal(calls, 1);
+    assert.deepEqual(result.state, original);
+  }
+
+  {
+    const finalChat = [{ role: 'assistant', content: 'The watchtower gate is now sealed for repairs.' }];
+    const controller = new AbortController();
+    let calls = 0;
+    const result = await runManualRebuild({
+      ctx: {},
+      state: original,
+      chat: finalChat,
+      chatKey: 'rebuild-persistent-cancel',
+      signal: controller.signal,
+      isCurrent: () => true,
+      dispatcher: async () => {
+        calls += 1;
+        return { text: '{"mutations":[]}', receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' } };
+      },
+      onProgress: () => controller.abort(),
+    });
+    assert.equal(result.outcome, 'cancelled');
+    assert.equal(result.failedBoundary, null);
+    assert.equal(calls, 1);
+    assert.deepEqual(result.state, original);
+  }
 });
 
 test('rebuild repairs live Gemini category/description drift, restores Current and Places, and keeps diagnostics', async () => {

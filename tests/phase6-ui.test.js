@@ -460,6 +460,32 @@ test('responsive renderer exposes Operations, Places, mobile navigation, atomic 
   assert.match(runningHtml, /Cancel/);
   assert.doesNotMatch(runningHtml, /Start Rebuild/);
 
+  const committingModel = buildWorldStateUiModel(fixtureState(), {
+    runtimeInfo: {
+      chatMessages: 42,
+      assistantBoundaries: 18,
+      defaultRebuildBoundaries: 1024,
+      maxRebuildBoundaries: 4096,
+      spatialEnabled: true,
+      rebuildStatus: {
+        phase: 'committing',
+        operationId: 'rebuild:41:2:0',
+        processedBoundaries: 18,
+        totalBoundaries: 18,
+        providerCalls: 18,
+        applied: 20,
+        rejected: 0,
+        currentRecords: 6,
+        places: 4,
+        detail: 'Extraction completed; persisting the rebuilt candidate atomically.',
+      },
+    },
+  });
+  const committingHtml = renderWorldStatePanel(committingModel, { activeTab: 'current', rebuildOpen: true });
+  assert.match(committingHtml, /Saving rebuilt state/);
+  assert.doesNotMatch(committingHtml, /data-wsa-cancel-rebuild/);
+  assert.doesNotMatch(committingHtml, /Start Rebuild/);
+
   const dataHtml = renderWorldStatePanel(idleModel, { activeTab: 'maintenance' });
   assert.match(dataHtml, /Danger zone/);
   assert.match(dataHtml, /Rebuild does not require Clear/);

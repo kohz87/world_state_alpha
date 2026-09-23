@@ -77,6 +77,7 @@ const pendingCharacterRenames = new Map();
 const deleteRetryTimers = new Map();
 const diagnosticStore = createDiagnosticStore({ limit: 80 });
 const rebuildStatuses = new Map();
+const rebuildAbortControllers = new Map();
 
 const CHAT_CACHE_LIMIT = 6;
 const BASE_MAP_CACHE_LIMIT = 8;
@@ -238,6 +239,8 @@ function forgetCachedChat(chatKey) {
   if (!key || key === 'no-chat') return false;
   if (key === currentChatKey() || key === activeChatKey || key === panelChatKey) return false;
   if (loadingChats.has(key) || chatQueues.has(key)) return false;
+  rebuildAbortControllers.get(key)?.abort();
+  rebuildAbortControllers.delete(key);
   cancelWorldStateRequests({ chatKey: key });
   stateCache.delete(key);
   relevanceIndices.delete(key);
@@ -537,6 +540,8 @@ async function loadChatState(chatKey) {
 
 function clearChatRuntimeState(chatKey) {
   if (!chatKey || chatKey === 'no-chat') return;
+  rebuildAbortControllers.get(chatKey)?.abort();
+  rebuildAbortControllers.delete(chatKey);
   cancelWorldStateRequests({ chatKey });
   stateCache.delete(chatKey);
   relevanceIndices.delete(chatKey);
@@ -1731,6 +1736,8 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
   if (actionId === 'cancel_rebuild') {
     const status = rebuildStatuses.get(chatKey);
     if (!status?.operationId || !['running', 'cancelling'].includes(status.phase)) return;
+    const rebuildController = rebuildAbortControllers.get(chatKey);
+    rebuildController?.abort();
     const cancelled = cancelWorldStateRequests({
       chatKey,
       operationIdPrefix: status.operationId,
@@ -1740,7 +1747,9 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
       phase: 'cancelling',
       detail: cancelled
         ? 'Cancellation requested; waiting for the active provider call to stop safely.'
-        : 'Cancellation requested; no active provider call is currently in flight.',
+        : rebuildController
+          ? 'Cancellation requested; rebuild will stop before another boundary or canonical replacement.'
+          : 'Cancellation requested; no active rebuild controller or provider call remains.',
     });
     refreshPanel();
     notify('info', 'World State Alpha rebuild cancellation requested.');
@@ -1846,6 +1855,10 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       return;
     }
 
+    rebuildAbortControllers.get(chatKey)?.abort();
+    const rebuildController = new AbortController();
+    rebuildAbortControllers.set(chatKey, rebuildController);
+
     const rangeLabel = startMessageId > 0 ? 'message ' + startMessageId + ' to current' : 'full chat';
     rebuildStatuses.set(chatKey, {
       phase: 'running',
@@ -1885,6 +1898,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         chatKey,
         route: routeSettings(),
         operationId,
+        signal: rebuildController.signal,
         isCurrent,
         diagnostics: diagnosticStore,
         maxBoundaries,
@@ -1906,6 +1920,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         },
       });
     } catch (error) {
+      if (rebuildAbortControllers.get(chatKey) === rebuildController) rebuildAbortControllers.delete(chatKey);
       const detail = String(error?.message || error || 'unexpected rebuild failure').slice(0, 320);
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
@@ -1927,6 +1942,8 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       return;
     }
 
+    if (rebuildAbortControllers.get(chatKey) === rebuildController) rebuildAbortControllers.delete(chatKey);
+
     const receipts = Array.isArray(result.receipts) ? result.receipts : [];
     const applied = receipts.reduce((sum, item) => sum + (Number(item?.applied) || 0), 0);
     const rejected = receipts.reduce((sum, item) => sum + (Number(item?.rejected) || 0), 0);
@@ -1941,10 +1958,13 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       || 'rebuild did not complete',
     ).slice(0, 320);
 
+    const cancelledOutcome = result.outcome === 'stale'
+      || result.outcome === 'cancelled'
+      || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED';
     if (result.outcome !== 'completed' || !isCurrent()) {
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
-        phase: result.outcome === 'stale' ? 'cancelled' : 'failed',
+        phase: cancelledOutcome ? 'cancelled' : 'failed',
         detail: failureDetail,
         processedBoundaries: result.processedBoundaries || 0,
         totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
@@ -1957,7 +1977,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         operationId,
         label: 'rebuild',
         sourceMessageId: Number.isInteger(result.failedBoundary) ? result.failedBoundary : sourceMessageId,
-        outcome: 'rebuild-failed',
+        outcome: cancelledOutcome ? 'rebuild-cancelled' : 'rebuild-failed',
         code: result.errorCode || (isCurrent() ? 'WORLD_STATE_REBUILD_INCOMPLETE' : 'WORLD_STATE_REBUILD_STALE'),
         detail: failureDetail,
         providerCalls: result.providerCalls || 0,
@@ -1969,9 +1989,21 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       });
       refreshPanel();
       const atBoundary = Number.isInteger(result.failedBoundary) ? ' at message ' + result.failedBoundary : '';
-      notify('error', 'World State Alpha rebuild failed' + atBoundary + ': ' + failureDetail + '. Canonical state was left unchanged.');
+      notify(
+        cancelledOutcome ? 'info' : 'error',
+        cancelledOutcome
+          ? 'World State Alpha rebuild cancelled' + atBoundary + '. Canonical state was left unchanged.'
+          : 'World State Alpha rebuild failed' + atBoundary + ': ' + failureDetail + '. Canonical state was left unchanged.',
+      );
       return;
     }
+
+    rebuildStatuses.set(chatKey, {
+      ...(rebuildStatuses.get(chatKey) || {}),
+      phase: 'committing',
+      detail: 'Extraction completed; persisting the rebuilt candidate atomically.',
+    });
+    refreshPanel();
 
     try {
       await persistState(chatKey, result.state);

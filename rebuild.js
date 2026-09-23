@@ -47,7 +47,13 @@ export function planChronologicalRebuild(chat = [], {
   const limit = boundedInt(maxBoundaries, REBUILD_LIMITS.maxBoundaries, 1, 4096);
   const start = boundedInt(startMessageId, 0, 0, Math.max(0, rows.length));
   const windows = [];
-  let previousAssistant = start - 1;
+  let previousAssistant = -1;
+  for (let messageId = start - 1; messageId >= 0; messageId -= 1) {
+    if (roleOf(rows[messageId]) === 'assistant') {
+      previousAssistant = messageId;
+      break;
+    }
+  }
 
   for (let messageId = start; messageId < rows.length; messageId += 1) {
     if (roleOf(rows[messageId]) !== 'assistant') continue;
@@ -284,7 +290,21 @@ export async function runManualRebuild({
   let processedBoundaries = 0;
   const receipts = [];
 
+  const cancelledResult = failedBoundary => ({
+    outcome: 'cancelled',
+    state: clone(original),
+    providerCalls,
+    processedBoundaries,
+    plan: plan.metrics,
+    snapshotToken,
+    failedBoundary,
+    receipts,
+    errorCode: 'WORLD_STATE_ROUTE_CANCELLED',
+    errorMessage: 'Rebuild was cancelled before canonical state replacement.',
+  });
+
   for (const window of plan.windows) {
+    if (signal?.aborted) return cancelledResult(window.messageId);
     if (!current()) {
       return {
         outcome: 'stale',
@@ -383,6 +403,9 @@ export async function runManualRebuild({
 
     const successfulBoundary = result.outcome === 'applied' || result.outcome === 'no-change';
     if (!successfulBoundary) {
+      if (result.outcome === 'cancelled' || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED' || signal?.aborted) {
+        return cancelledResult(window.messageId);
+      }
       return {
         outcome: result.outcome === 'stale' ? 'stale' : 'failure',
         state: clone(original),
@@ -426,6 +449,8 @@ export async function runManualRebuild({
       }
     }
   }
+
+  if (signal?.aborted) return cancelledResult(null);
 
   candidate.lineage = plan.lineage;
   candidate.recoveryRequired = null;
