@@ -40,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.17';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.18';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1260,36 +1260,40 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
   const state = await ensureChatStateLoaded(chatKey);
   if (!state || currentChatKey() !== chatKey) return null;
 
-  const passiveCapture = branchDirtyChats.has(chatKey)
-    ? null
-    : passiveCaptureRebaseCandidates.get(chatKey);
+  const passiveCapture = passiveCaptureRebaseCandidates.get(chatKey);
   const result = reconcileBranch(state, getContext().chat || [], {
     passiveCaptureMessageId: Number.isInteger(passiveCapture?.messageId) ? passiveCapture.messageId : null,
     passiveCaptureNarrationFingerprint: String(passiveCapture?.narrationFingerprint || ''),
   });
   const changed = stateChanged(state, result.state);
   const passiveRebase = result.action === 'passive-capture-rebase';
+  const semanticRebase = result.action === 'semantic-lineage-rebase';
+  const lineageRebase = passiveRebase || semanticRebase;
   const durableRestore = persistRestore
-    && ['rollback-journal', 'exact-checkpoint', 'fail-closed', 'passive-capture-rebase'].includes(result.action);
+    && (result.lineageMetadataUpgraded
+      || ['rollback-journal', 'exact-checkpoint', 'fail-closed', 'passive-capture-rebase', 'semantic-lineage-rebase'].includes(result.action));
 
   if (changed && durableRestore) {
     await persistState(chatKey, result.state);
-    setCachedState(chatKey, result.state, { indexMode: passiveRebase ? 'preserve' : 'rebuild' });
+    setCachedState(chatKey, result.state, { indexMode: lineageRebase ? 'preserve' : 'rebuild' });
   } else if (changed) {
     // Forward lineage extension and passive lineage rebases change chronology
     // metadata only; canonical relevance data is unchanged.
     setCachedState(chatKey, result.state, { indexMode: 'preserve' });
   }
 
-  if (passiveRebase) {
+  if (lineageRebase) {
     passiveCaptureRebaseCandidates.delete(chatKey);
+    const count = Array.isArray(result.rebasedMessageIds) ? result.rebasedMessageIds.length : 1;
     diagnosticStore.record(chatKey, {
       operationId: 'branch-rebase:' + result.divergence,
       label: 'branch',
       sourceMessageId: result.divergence,
       outcome: 'rebased',
-      code: 'WORLD_STATE_PASSIVE_CAPTURE_REBASE',
-      detail: 'Preserved canonical state while rebasing a passively rewritten latest captured assistant boundary.',
+      code: semanticRebase ? 'WORLD_STATE_SEMANTIC_LINEAGE_REBASE' : 'WORLD_STATE_PASSIVE_CAPTURE_REBASE',
+      detail: semanticRebase
+        ? 'Preserved canonical state while rebasing ' + count + ' narration-equivalent assistant lineage rewrite' + (count === 1 ? '.' : 's.')
+        : 'Preserved canonical state while rebasing a passively rewritten latest captured assistant boundary.',
       providerCalls: 0,
     });
   } else if (!['same', 'forward-extension'].includes(result.action)) {
@@ -1523,7 +1527,6 @@ async function handleBranchChange() {
     return;
   }
   branchDirtyChats.add(chatKey);
-  passiveCaptureRebaseCandidates.delete(chatKey);
   stateEpochs.set(chatKey, epoch(chatKey) + 1);
   cancelWorldStateRequests({ chatKey });
   await queueChatWork(chatKey, async () => {

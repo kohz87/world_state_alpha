@@ -161,14 +161,21 @@ test('passive rewrite of the latest captured assistant boundary can be rebased w
   assert.equal(extended.action, 'forward-extension');
   state = extended.state;
 
-  // Simulate SillyTavern/Regex/Reasoning normalizing the just-captured
-  // assistant message after capture, without a user branch edit event.
+  // Simulate a legacy alpha.17 sidecar that has raw lineage ownership
+  // but no durable narration-equivalence metadata yet.
+  delete state.lineage[1].role;
+  delete state.lineage[1].narrationFingerprint;
+
+  // SillyTavern/Regex/Reasoning normalizes the just-captured assistant
+  // message after capture, without changing the visible narration.
   chat[1] = { role: 'assistant', content: 'The bridge is closed.' };
   chat = [...chat, { role: 'assistant', content: 'Rain starts over the east road.' }];
 
-  const destructive = reconcileBranch(state, chat);
-  assert.equal(destructive.action, 'rollback-journal');
-  assert.equal(destructive.state.records.length, 0, 'baseline proves the current wipe failure');
+  const guarded = reconcileBranch(state, chat);
+  assert.equal(guarded.action, 'fail-closed');
+  assert.equal(guarded.failClosed, true);
+  assert.equal(guarded.state.records.length, 1, 'ambiguous legacy rewrite must preserve canonical records');
+  assert.equal(guarded.state.recoveryRequired.reason, 'legacy-lineage-semantic-proof-unavailable');
 
   const rebased = reconcileBranch(state, chat, {
     passiveCaptureMessageId: 1,
@@ -182,6 +189,109 @@ test('passive rewrite of the latest captured assistant boundary can be rebased w
   assert.equal(rebased.state.lineage.length, chat.length);
   assert.equal(rebased.state.rollbackHead.messageId, 1);
   assert.equal(rebased.state.rollbackHead.lineageKey, rebased.state.lineage[1].lineageKey);
+});
+
+test('durable semantic lineage can rebase multiple older narration-equivalent assistant rewrites', () => {
+  let chat = [
+    {
+      role: 'assistant',
+      content: 'The bridge is closed. <writer_state>private bridge planning</writer_state>',
+    },
+    { role: 'user', content: 'I remain nearby.' },
+    {
+      role: 'assistant',
+      content: 'Rain starts over the road. <writer_state>private weather planning</writer_state>',
+    },
+  ];
+  let state = seedRootCheckpoint(createState('durable-multi-rewrite'));
+  state = apply(state, chat.slice(0, 1), {
+    action: 'create',
+    kind: 'fact',
+    summary: 'The bridge is closed.',
+    anchors: ['bridge'],
+  });
+  state = reconcileBranch(state, chat.slice(0, 2)).state;
+  state = apply(state, chat, {
+    action: 'create',
+    kind: 'fact',
+    summary: 'Rain is falling over the road.',
+    anchors: ['road', 'rain'],
+  });
+  assert.equal(state.records.length, 2);
+  assert.equal(typeof state.lineage[0].narrationFingerprint, 'string');
+  assert.equal(typeof state.lineage[2].narrationFingerprint, 'string');
+
+  const rewritten = [
+    { role: 'assistant', content: 'The bridge is closed.' },
+    { role: 'user', content: 'I remain nearby.' },
+    { role: 'assistant', content: 'Rain starts over the road.' },
+    { role: 'user', content: 'I head east.' },
+  ];
+  const rebased = reconcileBranch(state, rewritten);
+  assert.equal(rebased.failClosed, false);
+  assert.equal(rebased.action, 'semantic-lineage-rebase');
+  assert.deepEqual(rebased.rebasedMessageIds, [0, 2]);
+  assert.equal(rebased.state.records.length, 2);
+  assert.equal(rebased.state.records[0].summary, 'The bridge is closed.');
+  assert.equal(rebased.state.records[1].summary, 'Rain is falling over the road.');
+  assert.equal(rebased.state.lineage.length, rewritten.length);
+});
+
+test('hidden/system visibility toggles with unchanged narration do not roll back canonical state', () => {
+  const original = [{
+    name: 'Gatekeeper',
+    is_user: false,
+    is_system: false,
+    mes: 'The gate remains closed.',
+  }];
+  let state = seedRootCheckpoint(createState('hidden-role-toggle'));
+  state = apply(state, original, {
+    action: 'create',
+    kind: 'fact',
+    summary: 'The gate remains closed.',
+    anchors: ['gate'],
+  });
+
+  const hidden = [{
+    name: 'Gatekeeper',
+    is_user: false,
+    is_system: true,
+    mes: 'The gate remains closed.',
+  }];
+  const rebased = reconcileBranch(state, hidden);
+  assert.equal(rebased.failClosed, false);
+  assert.equal(rebased.action, 'semantic-lineage-rebase');
+  assert.deepEqual(rebased.rebasedMessageIds, [0]);
+  assert.equal(rebased.state.records.length, 1);
+  assert.equal(rebased.state.records[0].summary, 'The gate remains closed.');
+  assert.equal(rebased.state.lineage[0].role, 'system');
+});
+
+test('unchanged legacy lineage is backfilled with durable narration metadata before future rewrites', () => {
+  const chat = [
+    { role: 'user', content: 'I wait.' },
+    { role: 'assistant', content: 'The bridge is closed.' },
+  ];
+  let state = seedRootCheckpoint(createState('legacy-lineage-upgrade'));
+  state = apply(state, chat, {
+    action: 'create',
+    kind: 'fact',
+    summary: 'The bridge is closed.',
+  });
+  for (const entry of state.lineage) {
+    delete entry.role;
+    delete entry.narrationFingerprint;
+  }
+
+  const reconciled = reconcileBranch(state, chat);
+  assert.equal(reconciled.action, 'same');
+  assert.equal(reconciled.failClosed, false);
+  assert.equal(reconciled.lineageMetadataUpgraded, true);
+  assert.equal(reconciled.state.lineage[0].role, 'user');
+  assert.equal(reconciled.state.lineage[0].narrationFingerprint, '');
+  assert.equal(reconciled.state.lineage[1].role, 'assistant');
+  assert.equal(typeof reconciled.state.lineage[1].narrationFingerprint, 'string');
+  assert.ok(reconciled.state.lineage[1].narrationFingerprint.length > 0);
 });
 
 test('passive capture rebase refuses to mask a second changed owned message', () => {

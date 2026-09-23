@@ -32,14 +32,33 @@ export function fingerprintAssistantNarration(message) {
   return hashText(sanitizeAssistantNarration(messageContent(message)));
 }
 
+function lineageRole(message) {
+  if (message?.role === 'user' || message?.is_user === true) return 'user';
+  if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
+  return 'system';
+}
+
+function lineageEntry(message, messageId, parentLineageKey) {
+  const fingerprint = fingerprintMessage(message);
+  const lineageKey = deterministicId('ln', [parentLineageKey, fingerprint]);
+  const role = lineageRole(message);
+  return {
+    messageId,
+    fingerprint,
+    lineageKey,
+    parentLineageKey,
+    role,
+    narrationFingerprint: role === 'user' ? '' : fingerprintAssistantNarration(message),
+  };
+}
+
 export function chatLineage(chat = []) {
   const out = [];
   let parentLineageKey = 'root';
   for (let messageId = 0; messageId < chat.length; messageId += 1) {
-    const fingerprint = fingerprintMessage(chat[messageId]);
-    const lineageKey = deterministicId('ln', [parentLineageKey, fingerprint]);
-    out.push({ messageId, fingerprint, lineageKey, parentLineageKey });
-    parentLineageKey = lineageKey;
+    const entry = lineageEntry(chat[messageId], messageId, parentLineageKey);
+    out.push(entry);
+    parentLineageKey = entry.lineageKey;
   }
   return out;
 }
@@ -101,10 +120,9 @@ export function extendChatLineage(previous = [], chat = []) {
 
   const appended = [];
   for (let messageId = prior.length; messageId < rows.length; messageId += 1) {
-    const fingerprint = fingerprintMessage(rows[messageId]);
-    const lineageKey = deterministicId('ln', [parentLineageKey, fingerprint]);
-    appended.push({ messageId, fingerprint, lineageKey, parentLineageKey });
-    parentLineageKey = lineageKey;
+    const entry = lineageEntry(rows[messageId], messageId, parentLineageKey);
+    appended.push(entry);
+    parentLineageKey = entry.lineageKey;
   }
   return appended;
 }
@@ -288,39 +306,94 @@ function restoreByJournal(state, previousLineage, divergence) {
   return { state: working, headSeq: seq, targetMessageId };
 }
 
-function canRebasePassiveCaptureRewrite(
+function enrichLineageMetadata(previousLineage, currentLineage) {
+  const next = clone(previousLineage);
+  let upgraded = false;
+  const limit = Math.min(next.length, currentLineage.length);
+
+  for (let index = 0; index < limit; index += 1) {
+    const previous = next[index];
+    const current = currentLineage[index];
+    if (!previous || !current || previous.fingerprint !== current.fingerprint) continue;
+
+    if (!previous.role && current.role) {
+      previous.role = current.role;
+      upgraded = true;
+    }
+    if (previous.narrationFingerprint === undefined && current.narrationFingerprint !== undefined) {
+      previous.narrationFingerprint = current.narrationFingerprint;
+      upgraded = true;
+    }
+  }
+
+  return { lineage: next, upgraded };
+}
+
+function semanticRewritePlan(
   state,
-  chat,
   previousLineage,
   currentLineage,
-  divergence,
-  candidateMessageId,
-  candidateNarrationFingerprint,
+  options = {},
 ) {
-  if (!Number.isInteger(candidateMessageId) || candidateMessageId < 0) return false;
-  if (divergence !== candidateMessageId || state.lastCaptureMessage !== candidateMessageId) return false;
-  if (currentLineage.length < previousLineage.length || candidateMessageId >= previousLineage.length) return false;
-  if (!String(candidateNarrationFingerprint || '')) return false;
-
-  const message = Array.isArray(chat) ? chat[candidateMessageId] : null;
-  const role = message?.role || (message?.is_user === true ? 'user' : (message?.is_system === true ? 'system' : 'assistant'));
-  if (role !== 'assistant') return false;
-  if (fingerprintAssistantNarration(message) !== candidateNarrationFingerprint) return false;
-
-  // Lineage keys after the rewritten message necessarily cascade, so compare
-  // their raw fingerprints instead. This admits exactly one passive rewrite:
-  // the most recently captured assistant boundary. Any independently changed
-  // later message still forces ordinary rollback/fail-closed handling.
-  for (let index = candidateMessageId + 1; index < previousLineage.length; index += 1) {
-    if (previousLineage[index]?.fingerprint !== currentLineage[index]?.fingerprint) return false;
+  if (currentLineage.length < previousLineage.length) {
+    return { kind: 'destructive', changedMessageIds: [] };
   }
-  return true;
+
+  const changedMessageIds = [];
+  let ambiguousLegacy = false;
+  let semanticChange = false;
+  let usedLegacyCandidate = false;
+
+  for (let index = 0; index < previousLineage.length; index += 1) {
+    const previous = previousLineage[index];
+    const current = currentLineage[index];
+    if (previous?.fingerprint === current?.fingerprint) continue;
+    changedMessageIds.push(index);
+
+    const legacyCandidate = index === options.passiveCaptureMessageId
+      && state.lastCaptureMessage === index
+      && String(options.passiveCaptureNarrationFingerprint || '')
+      ? String(options.passiveCaptureNarrationFingerprint)
+      : '';
+    const previousRole = String(previous?.role || (legacyCandidate ? 'assistant' : ''));
+    const previousNarration = String(previous?.narrationFingerprint || legacyCandidate || '');
+    const currentRole = String(current?.role || '');
+    const currentNarration = String(current?.narrationFingerprint || '');
+
+    if (previousRole !== 'user'
+      && currentRole !== 'user'
+      && previousNarration
+      && previousNarration === currentNarration) {
+      if (!previous?.narrationFingerprint && legacyCandidate) usedLegacyCandidate = true;
+      continue;
+    }
+
+    if (!previousRole || previous.narrationFingerprint === undefined) {
+      if (currentRole !== 'user') ambiguousLegacy = true;
+      else semanticChange = true;
+      continue;
+    }
+
+    semanticChange = true;
+  }
+
+  if (!changedMessageIds.length) return { kind: 'none', changedMessageIds };
+  if (semanticChange) return { kind: 'destructive', changedMessageIds };
+  if (ambiguousLegacy) return { kind: 'ambiguous-legacy', changedMessageIds };
+  return {
+    kind: 'semantic-rebase',
+    changedMessageIds,
+    usedLegacyCandidate,
+  };
 }
 
 export function reconcileBranch(inputState, chat, options = {}) {
   const state = normalizeState(clone(inputState));
   const currentLineage = chatLineage(chat);
-  const previousLineage = Array.isArray(state.lineage) ? state.lineage : [];
+  const storedLineage = Array.isArray(state.lineage) ? state.lineage : [];
+  const enriched = enrichLineageMetadata(storedLineage, currentLineage);
+  const previousLineage = enriched.lineage;
+  state.lineage = previousLineage;
   const divergence = firstLineageDivergence(previousLineage, currentLineage);
 
   if (divergence === -1 || (divergence === previousLineage.length && currentLineage.length >= previousLineage.length)) {
@@ -332,18 +405,12 @@ export function reconcileBranch(inputState, chat, options = {}) {
       action: divergence === -1 ? 'same' : 'forward-extension',
       exactRestored: true,
       failClosed: false,
+      lineageMetadataUpgraded: enriched.upgraded,
     };
   }
 
-  if (canRebasePassiveCaptureRewrite(
-    state,
-    chat,
-    previousLineage,
-    currentLineage,
-    divergence,
-    options.passiveCaptureMessageId,
-    options.passiveCaptureNarrationFingerprint,
-  )) {
+  const semanticPlan = semanticRewritePlan(state, previousLineage, currentLineage, options);
+  if (semanticPlan.kind === 'semantic-rebase') {
     const rebasedPrefix = rebaseLineageMetadata(
       state,
       previousLineage,
@@ -354,13 +421,35 @@ export function reconcileBranch(inputState, chat, options = {}) {
     return {
       state: normalizeState(rebasedPrefix),
       divergence,
-      action: 'passive-capture-rebase',
+      action: semanticPlan.changedMessageIds.length === 1
+        && semanticPlan.changedMessageIds[0] === options.passiveCaptureMessageId
+        && state.lastCaptureMessage === options.passiveCaptureMessageId
+        ? 'passive-capture-rebase'
+        : 'semantic-lineage-rebase',
+      rebasedMessageIds: semanticPlan.changedMessageIds,
       exactRestored: true,
       failClosed: false,
+      lineageMetadataUpgraded: enriched.upgraded,
     };
   }
 
   const targetMessageId = divergence - 1;
+  if (semanticPlan.kind === 'ambiguous-legacy') {
+    state.recoveryRequired = {
+      reason: 'legacy-lineage-semantic-proof-unavailable',
+      divergence,
+      targetMessageId,
+    };
+    return {
+      state,
+      divergence,
+      action: 'fail-closed',
+      exactRestored: false,
+      failClosed: true,
+      lineageMetadataUpgraded: enriched.upgraded,
+      ambiguousMessageIds: semanticPlan.changedMessageIds,
+    };
+  }
   const journalRestore = restoreByJournal(state, previousLineage, divergence);
   let restored = null;
   let action = '';

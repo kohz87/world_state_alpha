@@ -67,7 +67,8 @@
 | Rebuild cancel starvation | Cancel is queued behind the provider-backed rebuild and cannot stop it | cancellation is control-plane only and bypasses the per-chat writer queue; canonical mutation/persistence remains serialized | provider prefix-cancel + host ordering fixtures |
 | Record detail invisibility | flatter list removes access to anchors/evidence/history | native disclosure row opens bounded anchors, timeline, evidence and relations inline; selected projection remains escaped/bounded | Phase 6 disclosure/XSS fixtures |
 | Status-banner navigation displacement | rebuild status consumes a grid row and pushes tabs/content out of reach | absolute dismissible rebuild toast anchored over content, not layout flow; mobile toast sits above bottom navigation | responsive renderer/CSS fixtures |
-| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.17) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Storage schema version drift | Application bugfix release accidentally changes durable format versions | decouple app version (0.9.0-alpha.18) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Passive rewrite mass rollback | an older or multi-message host/Regex/reasoning cleanup is discovered late and exact reconciliation replays every later undo, emptying Current | durable role + sanitized narration fingerprints on lineage rows; narration-equivalent non-user rewrites rebase together; legacy unprovable non-user divergence fails closed with canonical records preserved | multi-message semantic rebase + legacy fail-closed branch fixtures |
 
 
 | Risk | Failure mode | Mitigation | Verification |

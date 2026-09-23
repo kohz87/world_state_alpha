@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.0-alpha.18 - Durable semantic lineage hardening
+
+### Fixed
+
+- Branch lineage now persists assistant narration fingerprints and role metadata alongside raw fingerprints so presentation-only rewrites can be proven equivalent after reload instead of relying on one ephemeral latest-capture token.
+- Reconciliation can safely rebase **multiple** older assistant messages in one pass when their sanitized narration is unchanged, covering host/Regex/reasoning cleanup that rewrites several historical messages together.
+- A legacy Alpha.17 sidecar with no semantic lineage metadata is backfilled and durably persisted on the first clean reconciliation.
+- If a legacy assistant lineage has already diverged before semantic proof can be backfilled, Alpha now fails closed with canonical records preserved instead of replaying the rollback journal and potentially wiping all records.
+- `MESSAGE_EDITED`/swipe/delete reconciliation no longer discards the latest passive-rewrite proof before branch reconciliation has a chance to validate it.
+
+### Diagnostics
+
+- Multi-message semantic rebases emit `WORLD_STATE_SEMANTIC_LINEAGE_REBASE` with the rebased message count.
+- Legacy unprovable rewrites surface `legacy-lineage-semantic-proof-unavailable` recovery rather than destructive rollback.
+
+### Preserved
+
+- Real semantic assistant edits, user edits, swipes, and deletions still use exact rollback semantics when a changed branch is actually proven.
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1. The added lineage fields are backward-compatible metadata within the existing state envelope.
+
 ## 0.9.0-alpha.17 - Manual history controls
 
 ### Added

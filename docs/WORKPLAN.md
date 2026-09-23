@@ -209,6 +209,7 @@ Deliverables:
 - v0.9.0-alpha.15 integrity hardening: source/evidence affinity and epistemic preservation, atomic malformed-envelope capture, strict durable enum validation, semantic passive-rebase protection, hidden system/tool precedence, stale rebuild compensation, and late event-source registration retries
 - v0.9.0-alpha.16 lifecycle reconciliation recovery: explicitly retire grounded completed/replaced developments and reserve up to two bounded lifecycle candidates during chronological rebuild so later narrated endings close earlier reconstructed threads without evolution replay or provider fanout
 - v0.9.0-alpha.17 manual history controls: expanded active Reality rows expose explicit resolve/supersede intents, require operator evidence, validate stale opaque row snapshots before canonical targeting, and persist through the existing current-head manual reducer/journal path
+- v0.9.0-alpha.18 durable semantic lineage hardening: persist assistant narration-equivalence metadata, rebase one or many presentation-only rewrites without undo replay, durably backfill clean Alpha.17 lineages, and fail closed with canonical records preserved when legacy semantic proof is unavailable
 
 Acceptance:
 

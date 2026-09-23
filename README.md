@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.17 adds manual Reality lifecycle controls: expanded active records can be explicitly marked resolved or superseded with required operator evidence while retaining the Alpha.16 rebuild lifecycle recovery. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.18 adds durable semantic lineage hardening: narration-equivalent assistant rewrites can be safely rebased across reloads and even when several historical assistant messages are normalized together; ambiguous legacy rewrites now fail closed with records preserved. Alpha.17 manual history controls remain available. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

@@ -168,6 +168,9 @@ On swipe/delete/edit/truncation/branch:
 
 - exact known boundary restore is allowed
 - abandoned suffix mutations are removed
+- narration-equivalent rewrites of one or more previously assistant-owned messages may rebase lineage metadata without undo replay only when durable sanitized narration fingerprints prove every changed owned row semantically equivalent; raw lineage keys are still rewritten to the live branch
+- legacy lineage rows that still match raw chat are backfilled with role + sanitized narration fingerprints and that metadata upgrade is persisted
+- if a legacy non-user lineage has already diverged before semantic equivalence can be proven, fail closed and preserve canonical state rather than replaying destructive rollback
 - no older approximate checkpoint may substitute for a missing parent
 - if exact recovery cannot be proven, fail closed and preserve canonical state while marking targeted rebuild/rescan need
 - while branch ownership is unresolved or `recoveryRequired` is set, retain state only for recovery/inspection and suppress both Reality and Spatial private continuity injection
@@ -407,8 +410,9 @@ Normal lifecycle ownership:
 - completed assistant message -> reconcile exact branch -> at most one eligible capture request -> canonical reducer result -> branch journal ownership -> sidecar persistence
 - user message before the next generation -> hydrate/prepare from the last durably committed branch-safe state -> compact private injection immediately -> serialize optional provider-backed meaningful elapsed-time/background catch-up on the existing chat writer queue for later injections
 - chat load/change -> cancel World State in-flight work, hydrate/reconcile current owned state, then refresh only the World State prompt/UI
-- edit/delete/swipe lifecycle -> cancel World State requests, clear any passive post-processing rebase candidate, and run exact `reconcileBranch`; never preserve abandoned-branch state
-- passive post-processing of the latest successfully captured assistant boundary -> the runtime may rebase lineage metadata without undoing canonical state only when that exact boundary is still `lastCaptureMessage`, all later already-owned message fingerprints are unchanged, and no branch lifecycle event marked the chat dirty; this capability is ephemeral and is not a general edit bypass
+- edit/delete/swipe lifecycle -> cancel World State requests and run exact `reconcileBranch`; retain the latest passive compatibility proof until reconciliation classifies the divergence, then clear it
+- presentation-only assistant rewrites -> durable lineage role + sanitized narration fingerprints may prove one or many changed historical assistant rows narration-equivalent and rebase owned lineage metadata without undoing canonical state; a legacy latest-capture ephemeral proof remains a compatibility fallback
+- semantic assistant edits, user edits, swipes, deletes, and truncations -> use ordinary exact rollback when the change is proven; legacy non-user divergence without semantic proof fails closed with canonical records preserved
 - character/chat rename -> migrate the owner-qualified World State key and pointer only after the new owned sidecar is durably written; host historical-name rewrites rebase proven lineage keys without rolling current world truth backward
 - chat/group-chat/character delete -> resolve exact owner ownership, neutralize the retired sidecar when possible, persist a lifecycle tombstone, then remove active pointer/cache ownership; ambiguity preserves data fail-closed
 - routing/enablement setting changes -> advance the state epoch and cancel matching provider work before new settings take effect
@@ -468,7 +472,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 through 0.9.0-alpha.17 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 through 0.9.0-alpha.18 hardening releases change no envelope/schema format version: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 

@@ -136,6 +136,20 @@ Observe:
 - exact branch reconciliation removes abandoned-branch world state
 - if the exact parent cannot be proven, the extension fails closed instead of guessing
 
+### L10.1 Passive/multi-message semantic rewrite hardening
+
+Use a chat with several assistant replies containing non-canonical planning blocks such as `<writer_state>`. Allow the host/Regex/reasoning pipeline to normalize or strip those blocks from one or more already-owned assistant messages, including an older message that is no longer the latest capture. Then cause a later exact reconciliation through ordinary continued play or an edit-event path.
+
+Observe:
+
+- visible/canonical narration is unchanged
+- one or several narration-equivalent assistant raw rewrites emit passive/semantic lineage rebase diagnostics rather than rollback-journal
+- the current Reality record count does not fall because of presentation-only cleanup
+- after reload, the same behavior remains safe because lineage narration fingerprints are durable
+- upgrading a clean Alpha.17 sidecar persists semantic lineage metadata without changing current world truth
+- if an already-diverged legacy non-user lineage cannot be semantically proven, Alpha enters recovery-required state and preserves records instead of rolling them back
+- a genuinely semantic assistant edit still performs exact branch rollback
+
 ### L11. Storage and reload
 
 Create several records, note the panel state, then reload the browser or switch away and back.

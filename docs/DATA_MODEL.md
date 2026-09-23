@@ -202,7 +202,22 @@ The reducer exposes a non-persisted `indexDelta` with changed record snapshots, 
 
 ### Lineage fast path
 
-The persisted lineage representation is unchanged. Phase 8 only changes how ordinary append-only messages are processed: the host verifies the cached lineage tail and computes lineage rows for the newly appended suffix. Exact full-history reconciliation remains the recovery authority for destructive branch changes.
+Phase 8 changed only how ordinary append-only messages are processed: the host verifies the cached lineage tail and computes lineage rows for the newly appended suffix. Exact full-history reconciliation remains the recovery authority for destructive branch changes.
+
+From Alpha.18, each persisted lineage row may additionally carry backward-compatible semantic-proof metadata:
+
+```js
+{
+  messageId,
+  fingerprint,              // raw ownership fingerprint
+  lineageKey,
+  parentLineageKey,
+  role: 'user' | 'assistant' | 'system',
+  narrationFingerprint      // hash of sanitized non-user narration, empty for user rows
+}
+```
+
+The raw fingerprint/lineage key remain branch identity. The narration fingerprint is not a replacement authority; it is used only to prove that one or more changed assistant-owned raw rows preserve the same sanitized narration after host/Regex/reasoning presentation cleanup. Legacy rows without these optional fields are backfilled only when their raw fingerprint still matches the live chat. If an already-diverged legacy non-user row cannot be proven equivalent, recovery fails closed with canonical state preserved.
 
 ### Phase 8 historical versioning note
 

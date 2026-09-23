@@ -91,7 +91,11 @@ No fixture may require schema code specific to its setting.
 59. An expanded active Reality record exposes Mark resolved and Mark superseded controls; historical records expose neither control.
 60. A manual history action requires an operator note, passes through the ordinary current-head manual reducer and journal, persists durably, and removes the record from Current without deleting its history.
 61. A stale opaque UI row snapshot cannot target a different canonical record: the host revalidates row key, kind, status, visible summary, created boundary, and last-changed boundary before resolving the internal record ID; the operator may edit the history summary before final confirmation.
-62. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
+62. A clean Alpha.17 lineage is backfilled with role and sanitized narration fingerprints during exact reconciliation and reports `lineageMetadataUpgraded=true` without changing canonical records.
+63. Two older assistant messages whose raw text changed only by removal of non-canonical planning blocks rebase together with `semantic-lineage-rebase`; all canonical records, evidence and rollback ownership remain intact.
+64. A semantic assistant rewrite (for example `bridge closed` -> `bridge open`) still follows exact rollback and does not use semantic rebase.
+65. A legacy non-user lineage that has already diverged before narration fingerprints can be backfilled fails closed with `legacy-lineage-semantic-proof-unavailable` and preserves the pre-reconciliation record count.
+66. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
 
 ## Additional safety tests
 
