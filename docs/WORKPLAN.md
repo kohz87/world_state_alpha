@@ -205,6 +205,7 @@ Deliverables:
 - v0.9.0-alpha.11 responsive operator UX: master/detail desktop, adaptive tablet, mobile bottom navigation/sheets, Operations expansion with bounded response/rejection content, atomic rebuild progress/cancel, and exact-prefix Full/Last/From range controls
 - v0.9.0-alpha.12 flat disclosure UX: replace nested Reality master/detail cards with inline disclosure rows, retain expandable Operations JSON, add icon-first World continuity header, floating dismissible rebuild status, flatter maintenance sections, and hidden scrollbar arrow controls
 - v0.9.0-alpha.13 passive-lineage hardening: preserve canonical state when the exact latest captured assistant boundary is passively rewritten after receipt, retain exact rollback for explicit branch events, clear stale candidates on state replacement, and expose branch reconciliation diagnostics
+- v0.9.0-alpha.14 virtual hidden-message rebuild: default-on operator toggle, immutable rebuild-only role projection for eligible hidden user/assistant RP, conservative exclusion of actual system/tool/UI rows, hidden-inclusion telemetry, and no live chat visibility/lineage mutation
 
 Acceptance:
 

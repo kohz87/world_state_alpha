@@ -24,6 +24,63 @@ function roleOf(message) {
   return 'system';
 }
 
+const SYSTEM_MESSAGE_TYPES = new Set([
+  'help',
+  'welcome',
+  'empty',
+  'generic',
+  'narrator',
+  'comment',
+  'slash_commands',
+  'formatting',
+  'hotkeys',
+  'macros',
+  'welcome_prompt',
+  'assistant_note',
+]);
+
+function hiddenConversationRole(message) {
+  if (message?.is_system !== true) return roleOf(message);
+  if (message?.is_user === true || message?.role === 'user') return 'user';
+  if (message?.role === 'assistant') return 'assistant';
+
+  const extra = message?.extra && typeof message.extra === 'object' ? message.extra : {};
+  const type = String(extra.type || '').trim().toLowerCase();
+  if (extra.isSmallSys === true || extra.uses_system_ui === true || Array.isArray(extra.tool_invocations)) return 'system';
+  if (SYSTEM_MESSAGE_TYPES.has(type)) return 'system';
+  if (type === 'assistant_message') return 'assistant';
+
+  if (typeof message?.original_avatar === 'string' && message.original_avatar.trim()) return 'assistant';
+  if (Array.isArray(message?.swipes) || Number.isInteger(message?.swipe_id)) return 'assistant';
+  if (message?.gen_started || message?.gen_finished) return 'assistant';
+  if (typeof extra.api === 'string' && extra.api.trim()) return 'assistant';
+  if (typeof extra.model === 'string' && extra.model.trim()) return 'assistant';
+  if (Number.isInteger(extra.gen_id)) return 'assistant';
+
+  return 'system';
+}
+
+function rebuildRoleOf(message, includeHiddenMessages) {
+  if (message?.is_system === true) {
+    return includeHiddenMessages ? hiddenConversationRole(message) : 'system';
+  }
+  return roleOf(message);
+}
+
+function virtualizeRebuildMessage(message, role) {
+  const copy = clone(message);
+  if (role === 'user') {
+    copy.role = 'user';
+    copy.is_user = true;
+    copy.is_system = false;
+  } else if (role === 'assistant') {
+    copy.role = 'assistant';
+    copy.is_user = false;
+    copy.is_system = false;
+  }
+  return copy;
+}
+
 function boundedInt(value, fallback, min, max) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -41,27 +98,36 @@ function exchangeText(exchange) {
 export function planChronologicalRebuild(chat = [], {
   maxBoundaries = REBUILD_LIMITS.maxBoundaries,
   startMessageId = 0,
+  includeHiddenMessages = true,
 } = {}) {
   const rows = Array.isArray(chat) ? chat : [];
   const lineage = chatLineage(rows);
   const limit = boundedInt(maxBoundaries, REBUILD_LIMITS.maxBoundaries, 1, 4096);
   const start = boundedInt(startMessageId, 0, 0, Math.max(0, rows.length));
   const windows = [];
+  let hiddenMessagesIncluded = 0;
+  let hiddenAssistantBoundaries = 0;
   let previousAssistant = -1;
   for (let messageId = start - 1; messageId >= 0; messageId -= 1) {
-    if (roleOf(rows[messageId]) === 'assistant') {
+    if (rebuildRoleOf(rows[messageId], includeHiddenMessages) === 'assistant') {
       previousAssistant = messageId;
       break;
     }
   }
 
   for (let messageId = start; messageId < rows.length; messageId += 1) {
-    if (roleOf(rows[messageId]) !== 'assistant') continue;
+    const boundaryRole = rebuildRoleOf(rows[messageId], includeHiddenMessages);
+    if (boundaryRole !== 'assistant') continue;
+    if (rows[messageId]?.is_system === true) hiddenAssistantBoundaries += 1;
+
     const raw = rows.slice(previousAssistant + 1, messageId + 1);
     const exchange = raw.map((message, offset) => {
       const sourceMessageId = previousAssistant + 1 + offset;
+      const role = rebuildRoleOf(message, includeHiddenMessages);
+      const virtual = role === 'system' ? clone(message) : virtualizeRebuildMessage(message, role);
+      if (message?.is_system === true && role !== 'system') hiddenMessagesIncluded += 1;
       return {
-        ...clone(message),
+        ...virtual,
         messageId: sourceMessageId,
         lineageKey: lineage[sourceMessageId]?.lineageKey || '',
       };
@@ -90,6 +156,9 @@ export function planChronologicalRebuild(chat = [], {
       assistantBoundaries: windows.length,
       maxBoundaries: limit,
       startMessageId: start,
+      includeHiddenMessages: Boolean(includeHiddenMessages),
+      hiddenMessagesIncluded,
+      hiddenAssistantBoundaries,
     },
   };
 }
@@ -207,6 +276,7 @@ export async function runManualRebuild({
   onProgress = undefined,
   maxBoundaries = REBUILD_LIMITS.maxBoundaries,
   startMessageId = 0,
+  includeHiddenMessages = true,
   spatialEnabled = false,
   baseMap = null,
   spatialProfile = null,
@@ -216,7 +286,11 @@ export async function runManualRebuild({
   if (!owner) throw new Error('chatKey is required');
   if (original.chatKey && original.chatKey !== owner) throw new Error('rebuild chatKey does not match state owner');
 
-  const plan = planChronologicalRebuild(chat, { maxBoundaries, startMessageId });
+  const plan = planChronologicalRebuild(chat, {
+    maxBoundaries,
+    startMessageId,
+    includeHiddenMessages,
+  });
   if (plan.windows.length && typeof isCurrent !== 'function') {
     const error = new Error('manual rebuild requires an isCurrent(snapshotToken) guard');
     error.code = 'WORLD_STATE_REBUILD_CURRENT_GUARD_REQUIRED';

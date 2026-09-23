@@ -267,7 +267,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13', '0.9.0-alpha.14'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -425,7 +425,9 @@ test('rebuild cancellation bypasses the per-chat writer queue while rebuild muta
   assert.ok(wrapper.indexOf("if (actionId === 'cancel_rebuild')") < wrapper.indexOf('return queueChatWork'));
   assert.match(wrapper, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, payload, chatKey\)\)/);
 
-  assert.match(source, /planChronologicalRebuild\(chat, \{ maxBoundaries, startMessageId \}\)/);
+  assert.match(source, /planChronologicalRebuild\(chat, \{[\s\S]*maxBoundaries,[\s\S]*startMessageId,[\s\S]*includeHiddenMessages,[\s\S]*\}\)/);
+  assert.match(source, /includeHiddenMessages = rebuildRequest\.includeHiddenMessages !== false/);
+  assert.match(source, /includeHiddenMessages,/);
   assert.match(source, /signal: rebuildController\.signal/);
   assert.match(source, /phase: 'committing'/);
   assert.match(source, /getRuntimeInfo: \(\) => \{/);

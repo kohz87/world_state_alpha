@@ -156,6 +156,9 @@ Observe:
 - import/reset publish only after durable persistence
 - rebuild is never automatic
 - rebuild from chat recovers materially persistent narrated off-screen developments even when later scenes never revisit them
+- with **Include hidden chat messages** enabled, deliberately hidden user/assistant RP can be reconstructed without visibly unhiding the messages, saving the chat, or changing their hidden state afterward
+- hidden tool/system/UI rows remain excluded even when hidden-message scanning is enabled
+- disabling the option excludes both hidden user and hidden assistant rows
 - rebuild does not replay hidden background evolution between narrated boundaries
 - failed/stale rebuild leaves the prior canonical state unchanged
 

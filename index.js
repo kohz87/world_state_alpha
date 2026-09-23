@@ -39,7 +39,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.13';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.14';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1887,6 +1887,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     );
     const lastMessages = numeric(rebuildRequest.lastMessages, 20, 1, Math.max(1, chat.length));
     const requestedStart = numeric(rebuildRequest.startMessageId, 0, 0, Math.max(0, chat.length - 1));
+    const includeHiddenMessages = rebuildRequest.includeHiddenMessages !== false;
     const startMessageId = mode === 'last'
       ? Math.max(0, chat.length - lastMessages)
       : mode === 'from'
@@ -1895,7 +1896,11 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
 
     let rebuildPlan;
     try {
-      rebuildPlan = planChronologicalRebuild(chat, { maxBoundaries, startMessageId });
+      rebuildPlan = planChronologicalRebuild(chat, {
+        maxBoundaries,
+        startMessageId,
+        includeHiddenMessages,
+      });
     } catch (error) {
       const detail = String(error?.message || error || 'rebuild planning failed').slice(0, 320);
       notify('error', 'World State Alpha rebuild could not start: ' + detail);
@@ -1929,6 +1934,9 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       mode,
       startMessageId,
       maxBoundaries,
+      includeHiddenMessages,
+      hiddenMessagesIncluded: rebuildPlan.metrics.hiddenMessagesIncluded || 0,
+      hiddenAssistantBoundaries: rebuildPlan.metrics.hiddenAssistantBoundaries || 0,
       processedBoundaries: 0,
       totalBoundaries,
       currentMessageId: null,
@@ -1938,7 +1946,11 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       currentRecords: (state.records || []).filter(record => record?.status === 'active').length,
       places: resolveEffectiveLocations(state.spatial, baseMap).length,
       startedAt: Date.now(),
-      detail: 'Rebuilding ' + rangeLabel + '. Canonical state will be replaced only after full success.',
+      detail: 'Rebuilding ' + rangeLabel
+        + (includeHiddenMessages
+          ? ' with eligible hidden roleplay virtually included (' + (rebuildPlan.metrics.hiddenMessagesIncluded || 0) + ' hidden messages, ' + (rebuildPlan.metrics.hiddenAssistantBoundaries || 0) + ' hidden assistant boundaries).'
+          : ' with hidden messages excluded.')
+        + ' Canonical state will be replaced only after full success.',
     });
 
     diagnosticStore.record(chatKey, {
@@ -1947,7 +1959,11 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       sourceMessageId,
       outcome: 'rebuild-started',
       totalBoundaries,
-      detail: 'Explicit chronological rebuild started from ' + rangeLabel + '; canonical state will change only after full success.',
+      hiddenMessagesIncluded: rebuildPlan.metrics.hiddenMessagesIncluded || 0,
+      hiddenAssistantBoundaries: rebuildPlan.metrics.hiddenAssistantBoundaries || 0,
+      detail: 'Explicit chronological rebuild started from ' + rangeLabel
+        + (includeHiddenMessages ? ' with eligible hidden roleplay virtually included' : ' with hidden messages excluded')
+        + '; canonical state will change only after full success.',
     });
     refreshPanel();
     notify('info', 'World State Alpha rebuild started (' + totalBoundaries + ' assistant boundaries, ' + rangeLabel + ').');
@@ -1966,6 +1982,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         diagnostics: diagnosticStore,
         maxBoundaries,
         startMessageId,
+        includeHiddenMessages,
         spatialEnabled: Boolean(settings.spatialEnabled),
         baseMap,
         spatialProfile: state.spatial?.profile,
@@ -2109,7 +2126,10 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     rebuildStatuses.set(chatKey, {
       ...(rebuildStatuses.get(chatKey) || {}),
       phase: 'completed',
-      detail: 'Rebuild completed and persisted.',
+      detail: 'Rebuild completed and persisted.'
+        + (includeHiddenMessages && (result.plan?.hiddenMessagesIncluded || 0) > 0
+          ? ' Included ' + result.plan.hiddenMessagesIncluded + ' hidden roleplay message' + (result.plan.hiddenMessagesIncluded === 1 ? '.' : 's.')
+          : ''),
       processedBoundaries: result.processedBoundaries || 0,
       totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
       providerCalls: result.providerCalls || 0,
@@ -2132,6 +2152,8 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       aliasRepairs,
       processedBoundaries: result.processedBoundaries || 0,
       totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+      hiddenMessagesIncluded: result.plan?.hiddenMessagesIncluded || 0,
+      hiddenAssistantBoundaries: result.plan?.hiddenAssistantBoundaries || 0,
     });
     updatePrivateInjection();
     refreshPanel();

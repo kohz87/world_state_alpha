@@ -82,7 +82,10 @@ No fixture may require schema code specific to its setting.
 50. Quoted dialogue used as the sole mutation evidence cannot promote its contents into objective world truth; an epistemically framed reported-information summary is admitted, while an otherwise identical factual summary is rejected by the source firewall.
 51. Live automatic capture and chronological rebuild use identical assistant-boundary exchange semantics: messages after the previous assistant response through the current assistant response. Live capture must not include the previous assistant turn merely because a rolling context window has room for it.
 52. Capture a fact on an assistant boundary, then passively rewrite that same assistant message without emitting an edit/delete/swipe event and append the next exchange. The next reconciliation rebases lineage metadata and preserves the captured fact instead of replaying its undo. The same rewrite without the runtime candidate still follows ordinary rollback, and a real branch event clears the candidate before reconciliation.
-53. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
+53. With hidden-message scanning enabled, a hidden user turn and a hidden assistant turn with ordinary assistant-generation markers are virtually included in chronological rebuild windows, while genuine system/tool/UI rows remain excluded.
+54. The virtual hidden-message rebuild view never mutates the original chat object or any stored `is_system` flag, and accepted hidden assistant narration can still pass the ordinary capture/source-firewall path as rebuild evidence.
+55. With hidden-message scanning disabled, hidden user and hidden assistant rows are both excluded from rebuild evidence/boundaries.
+56. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
 
 ## Additional safety tests
 
