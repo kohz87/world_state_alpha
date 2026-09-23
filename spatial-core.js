@@ -89,11 +89,20 @@ function axesArePerpendicular(northAxis, eastAxis) {
   return (north.x * east.x + north.y * east.y) === 0;
 }
 
-export function normalizeSpatialProfile(raw) {
+export function normalizeSpatialProfile(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') return null;
   const system = boundedText(raw.system, 30) || 'cartesian2d';
+  if (strict && raw.northAxis !== undefined && raw.northAxis !== null && !CARTESIAN_AXES.includes(boundedText(raw.northAxis, 10).toLowerCase())) {
+    throw new Error(`invalid spatial north axis: ${raw.northAxis}`);
+  }
+  if (strict && raw.eastAxis !== undefined && raw.eastAxis !== null && !CARTESIAN_AXES.includes(boundedText(raw.eastAxis, 10).toLowerCase())) {
+    throw new Error(`invalid spatial east axis: ${raw.eastAxis}`);
+  }
   const northAxis = normalizeCartesianAxis(raw.northAxis, '+y');
   let eastAxis = normalizeCartesianAxis(raw.eastAxis, defaultEastAxisForNorth(northAxis));
+  if (strict && raw.eastAxis !== undefined && raw.eastAxis !== null && !axesArePerpendicular(northAxis, eastAxis)) {
+    throw new Error('spatial profile axes must be perpendicular');
+  }
   if (!axesArePerpendicular(northAxis, eastAxis)) {
     eastAxis = defaultEastAxisForNorth(northAxis);
   }
@@ -147,7 +156,7 @@ export function normalizeBaseMapRef(raw) {
   };
 }
 
-export function normalizeCoordinate(raw) {
+export function normalizeCoordinate(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') {
     return { x: null, y: null, authority: 'unknown', locked: false };
   }
@@ -156,21 +165,27 @@ export function normalizeCoordinate(raw) {
   const hasCoordinate = rawX !== null && rawY !== null;
   const x = hasCoordinate ? rawX : null;
   const y = hasCoordinate ? rawY : null;
+  if (strict && raw.authority !== undefined && raw.authority !== null && !SPATIAL_AUTHORITIES.includes(raw.authority)) {
+    throw new Error(`invalid spatial coordinate authority: ${raw.authority}`);
+  }
   const authority = SPATIAL_AUTHORITIES.includes(raw.authority) ? raw.authority : 'unknown';
   const locked = hasCoordinate && Boolean(raw.locked);
   return { x, y, authority, locked };
 }
 
-export function normalizeSpatialLocation(raw) {
+export function normalizeSpatialLocation(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') throw new Error('spatial location must be an object');
   const id = boundedText(raw.id, 120);
   if (!id) throw new Error('spatial location id is required');
   const name = boundedText(raw.name, SPATIAL_LIMITS.nameChars);
   if (!name) throw new Error('spatial location name is required');
   const type = boundedText(raw.type, SPATIAL_LIMITS.typeChars) || 'landmark';
+  if (strict && raw.status !== undefined && raw.status !== null && !SPATIAL_LOCATION_STATUSES.includes(raw.status)) {
+    throw new Error(`invalid spatial location status: ${raw.status}`);
+  }
   const status = SPATIAL_LOCATION_STATUSES.includes(raw.status) ? raw.status : 'active';
   const baseRefId = boundedText(raw.baseRefId, 120) || null;
-  const coordinate = normalizeCoordinate(raw.coordinate);
+  const coordinate = normalizeCoordinate(raw.coordinate, { strict });
   const context = boundedText(raw.context, SPATIAL_LIMITS.contextChars);
   const routeRefs = uniqueStrings(raw.routeRefs, SPATIAL_LIMITS.routeRefsPerLocation, 120);
   const createdAtMessage = messageId(raw.createdAtMessage);
@@ -194,7 +209,7 @@ export function normalizeSpatialLocation(raw) {
   };
 }
 
-export function normalizeSpatialRelation(raw) {
+export function normalizeSpatialRelation(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') throw new Error('spatial relation must be an object');
   const id = boundedText(raw.id, 140);
   const fromId = boundedText(raw.fromId, 120);
@@ -203,6 +218,9 @@ export function normalizeSpatialRelation(raw) {
 
   const direction = boundedText(raw.direction, 30).toLowerCase() || null;
   const distanceKm = Number.isFinite(raw.distanceKm) && raw.distanceKm >= 0 ? raw.distanceKm : null;
+  if (strict && raw.distanceMode !== undefined && raw.distanceMode !== null && !SPATIAL_DISTANCE_MODES.includes(raw.distanceMode)) {
+    throw new Error(`invalid spatial distance mode: ${raw.distanceMode}`);
+  }
   const distanceMode = SPATIAL_DISTANCE_MODES.includes(raw.distanceMode) ? raw.distanceMode : 'unspecified';
   const notes = boundedText(raw.notes, SPATIAL_LIMITS.notesChars);
   const evidenceIds = boundedEvidenceRefs(raw.evidenceIds);
@@ -242,10 +260,13 @@ export function normalizeSpatialRoute(raw) {
   };
 }
 
-export function normalizeSpatialEvidence(raw) {
+export function normalizeSpatialEvidence(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') throw new Error('spatial evidence must be an object');
   const id = boundedText(raw.id, 140);
   if (!id) throw new Error('spatial evidence id is required');
+  if (strict && raw.sourceClass !== undefined && raw.sourceClass !== null && !EVIDENCE_SOURCE_CLASSES.includes(raw.sourceClass)) {
+    throw new Error(`invalid spatial evidence sourceClass: ${raw.sourceClass}`);
+  }
   const sourceClass = EVIDENCE_SOURCE_CLASSES.includes(raw.sourceClass) ? raw.sourceClass : 'assistant_narration';
 
   return {
@@ -264,14 +285,14 @@ export function normalizeSpatialState(raw, { strict = false } = {}) {
   }
 
   const spatial = createSpatialState();
-  spatial.profile = normalizeSpatialProfile(raw.profile);
+  spatial.profile = normalizeSpatialProfile(raw.profile, { strict });
   spatial.baseMapRef = normalizeBaseMapRef(raw.baseMapRef);
   spatial.lastCaptureMessage = messageId(raw.lastCaptureMessage);
 
   const locIds = new Set();
   for (const item of Array.isArray(raw.locations) ? raw.locations : []) {
     try {
-      const loc = normalizeSpatialLocation(item);
+      const loc = normalizeSpatialLocation(item, { strict });
       if (locIds.has(loc.id)) {
         if (strict) throw new Error(`duplicate spatial location id: ${loc.id}`);
         continue;
@@ -286,7 +307,7 @@ export function normalizeSpatialState(raw, { strict = false } = {}) {
   const relIds = new Set();
   for (const item of Array.isArray(raw.relations) ? raw.relations : []) {
     try {
-      const rel = normalizeSpatialRelation(item);
+      const rel = normalizeSpatialRelation(item, { strict });
       if (relIds.has(rel.id)) {
         if (strict) throw new Error(`duplicate spatial relation id: ${rel.id}`);
         continue;
@@ -317,7 +338,7 @@ export function normalizeSpatialState(raw, { strict = false } = {}) {
     const evidenceIds = new Set();
     for (const [key, item] of Object.entries(raw.evidence)) {
       try {
-        const ev = normalizeSpatialEvidence(item);
+        const ev = normalizeSpatialEvidence(item, { strict });
         if (strict && key !== ev.id) {
           throw new Error(`spatial evidence map key/id mismatch: ${key} != ${ev.id}`);
         }

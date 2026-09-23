@@ -267,7 +267,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13', '0.9.0-alpha.14'].includes(manifest.version), true);
+  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13', '0.9.0-alpha.14', '0.9.0-alpha.15'].includes(manifest.version), true);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -471,9 +471,10 @@ test('host guards the latest captured boundary against passive post-processing r
   const source = fs.readFileSync('index.js', 'utf8');
 
   assert.match(source, /const passiveCaptureRebaseCandidates = new Map\(\)/);
-  assert.match(source, /passiveCaptureRebaseCandidates\.set\(chatKey, messageId\)/);
+  assert.match(source, /passiveCaptureRebaseCandidates\.set\(chatKey, \{[\s\S]*messageId,[\s\S]*narrationFingerprint:\s*fingerprintAssistantNarration/);
   assert.match(source, /passiveCaptureRebaseCandidates\.get\(chatKey\)/);
   assert.match(source, /passiveCaptureMessageId:/);
+  assert.match(source, /passiveCaptureNarrationFingerprint:/);
   assert.match(source, /'passive-capture-rebase'/);
   assert.match(source, /WORLD_STATE_PASSIVE_CAPTURE_REBASE/);
   assert.match(source, /WORLD_STATE_BRANCH_RECONCILED/);
@@ -598,6 +599,37 @@ test('host rebuild never persists or reports success before completed outcome ga
   assert.match(body, /aliasRepairs/);
   assert.match(body, /current records/);
   assert.match(body, /places/);
+});
+
+test('host rebuild commit rechecks currentness around durable persistence and compensates stale writes', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const actionAt = source.indexOf("if (actionId === 'rebuild')");
+  const end = source.indexOf('async function applySpatialAction(', actionAt);
+  const body = source.slice(actionAt, end);
+  const persistAt = body.indexOf('await persistState(chatKey, result.state)');
+  assert.ok(persistAt > 0);
+  assert.ok(body.lastIndexOf('if (!isCurrent())', persistAt) > 0, 'currentness is checked immediately before persistence');
+  const staleAfterPersistAt = body.indexOf('if (!isCurrent())', persistAt);
+  assert.ok(staleAfterPersistAt > persistAt, 'currentness is rechecked after persistence');
+  const compensateAt = body.indexOf('await persistState(chatKey, state)', staleAfterPersistAt);
+  assert.ok(compensateAt > staleAfterPersistAt, 'stale durable candidate is compensated with the prior canonical state');
+  assert.match(body, /WORLD_STATE_REBUILD_STALE_RESTORE_FAILURE/);
+  assert.ok(body.indexOf('setCachedState(chatKey, result.state)', staleAfterPersistAt) > compensateAt);
+});
+
+test('host retries late lifecycle event registration without duplicate wiring', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const registerAt = source.indexOf('function registerEvents()');
+  const initAt = source.indexOf('async function init()', registerAt);
+  const registerBody = source.slice(registerAt, initAt);
+  assert.match(registerBody, /if \(eventsRegistered\) return true/);
+  assert.match(registerBody, /!source\?\.on \|\| !events\.MESSAGE_RECEIVED \|\| !events\.CHAT_CHANGED/);
+  assert.match(registerBody, /function ensureEventRegistration\(\)/);
+  assert.match(registerBody, /eventRegistrationRetryAttempts >= 20/);
+  assert.match(registerBody, /setTimeout\(\(\) => \{[\s\S]*ensureEventRegistration\(\);[\s\S]*\}, 250\)/);
+  const safeInitAt = source.indexOf('async function safeInit()', initAt);
+  const initBody = source.slice(initAt, safeInitAt);
+  assert.ok(initBody.indexOf('ensureEventRegistration()') < initBody.indexOf('if (initialized)'));
 });
 
 test('host publishes mutated canonical state only after durable sidecar success', () => {

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0-alpha.15 - World-state integrity hardening
+
+### Fixed
+
+- Capture evidence must now support the proposed/current assertion instead of merely existing somewhere in the cited source message. Unsupported proposed anchors are discarded before canonical mutation.
+- Reported, rumored, quoted, and indirectly attributed information keeps its epistemic status unless summary-relevant objective evidence independently corroborates the same assertion. Unrelated objective evidence can no longer wash a rumor into fact.
+- A provider envelope containing any structurally malformed Reality row, or any structurally malformed Spatial row when Spatial capture is enabled, now fails closed as one response. Live capture still consumes the dispatched boundary once, but no valid sibling row is partially committed.
+- Strict durable/import normalization rejects present invalid Reality lifecycle/provenance enums and Spatial lifecycle/authority/distance/provenance/profile-axis values instead of silently coercing them into valid-looking state. Legacy omitted fields retain their historical defaults.
+- Passive post-capture rebase now requires the rewritten assistant boundary to have the same sanitized narration fingerprint as the captured boundary. Reasoning/`writer_state` stripping remains tolerated, while silent semantic rewrites fall back to exact rollback.
+- Hidden-message rebuild checks hard system/tool/UI markers before user/assistant role flags, preventing tool rows with misleading role metadata from entering recovery evidence.
+- Rebuild commit rechecks currentness around durable persistence. If the operation becomes stale while the sidecar write is in flight, the previous canonical state is compensatingly persisted before the candidate can be published; failed compensation blocks the chat fail-closed.
+- Host lifecycle event registration is retryable and idempotent when SillyTavern exposes `eventSource` after initial DOM-ready initialization.
+
+### Preserved
+
+- No additional provider call, schema bump, sidecar/bundle/journal envelope bump, Story Director behavior, live chat visibility mutation, or NPC State dependency is introduced.
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+
 ## 0.9.0-alpha.14 - Virtual hidden-message rebuild
 
 ### Added

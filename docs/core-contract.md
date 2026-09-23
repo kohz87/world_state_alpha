@@ -464,7 +464,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, 0.9.0-alpha.9, 0.9.0-alpha.10, 0.9.0-alpha.11, 0.9.0-alpha.12, 0.9.0-alpha.13, and 0.9.0-alpha.14 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 through 0.9.0-alpha.15 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 

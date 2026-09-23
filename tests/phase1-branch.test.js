@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   chatLineage,
   commitMutationBoundary,
+  fingerprintAssistantNarration,
   rebaseLineageMetadata,
   reconcileBranch,
   seedRootCheckpoint,
@@ -153,6 +154,7 @@ test('passive rewrite of the latest captured assistant boundary can be rebased w
   });
   assert.equal(state.records.length, 1);
   assert.equal(state.lastCaptureMessage, 1);
+  const capturedNarrationFingerprint = fingerprintAssistantNarration(chat[1]);
 
   chat = [...chat, { role: 'user', content: 'I take the east road instead.' }];
   const extended = reconcileBranch(state, chat);
@@ -168,7 +170,10 @@ test('passive rewrite of the latest captured assistant boundary can be rebased w
   assert.equal(destructive.action, 'rollback-journal');
   assert.equal(destructive.state.records.length, 0, 'baseline proves the current wipe failure');
 
-  const rebased = reconcileBranch(state, chat, { passiveCaptureMessageId: 1 });
+  const rebased = reconcileBranch(state, chat, {
+    passiveCaptureMessageId: 1,
+    passiveCaptureNarrationFingerprint: capturedNarrationFingerprint,
+  });
   assert.equal(rebased.failClosed, false);
   assert.equal(rebased.action, 'passive-capture-rebase');
   assert.equal(rebased.divergence, 1);
@@ -198,7 +203,30 @@ test('passive capture rebase refuses to mask a second changed owned message', ()
     { role: 'user', content: 'I head west instead.' },
     { role: 'assistant', content: 'Rain begins.' },
   ];
-  const reconciled = reconcileBranch(state, changed, { passiveCaptureMessageId: 0 });
+  const reconciled = reconcileBranch(state, changed, {
+    passiveCaptureMessageId: 0,
+    passiveCaptureNarrationFingerprint: fingerprintAssistantNarration(chat[0]),
+  });
+  assert.notEqual(reconciled.action, 'passive-capture-rebase');
+  assert.equal(reconciled.state.records.length, 0);
+});
+
+test('passive capture rebase refuses a silent semantic rewrite of the captured assistant boundary', () => {
+  let chat = [{ role: 'assistant', content: 'The bridge is closed. <writer_state>private planning</writer_state>' }];
+  let state = seedRootCheckpoint(createState('passive-semantic-rewrite'));
+  state = apply(state, chat, {
+    action: 'create',
+    kind: 'fact',
+    summary: 'The bridge is closed.',
+    anchors: ['bridge'],
+  });
+  const capturedNarrationFingerprint = fingerprintAssistantNarration(chat[0]);
+
+  chat = [{ role: 'assistant', content: 'The bridge is open.' }];
+  const reconciled = reconcileBranch(state, chat, {
+    passiveCaptureMessageId: 0,
+    passiveCaptureNarrationFingerprint: capturedNarrationFingerprint,
+  });
   assert.notEqual(reconciled.action, 'passive-capture-rebase');
   assert.equal(reconciled.state.records.length, 0);
 });

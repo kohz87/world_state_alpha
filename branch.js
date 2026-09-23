@@ -8,6 +8,7 @@ import {
   normalizeState,
 } from './state-core.js';
 import { createSpatialState } from './spatial-core.js';
+import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 
 function messageContent(message) {
   if (!message || typeof message !== 'object') return '';
@@ -25,6 +26,10 @@ export function fingerprintMessage(message) {
     is_system: Boolean(message?.is_system),
     content: messageContent(message),
   }));
+}
+
+export function fingerprintAssistantNarration(message) {
+  return hashText(sanitizeAssistantNarration(messageContent(message)));
 }
 
 export function chatLineage(chat = []) {
@@ -283,14 +288,24 @@ function restoreByJournal(state, previousLineage, divergence) {
   return { state: working, headSeq: seq, targetMessageId };
 }
 
-function canRebasePassiveCaptureRewrite(state, chat, previousLineage, currentLineage, divergence, candidateMessageId) {
+function canRebasePassiveCaptureRewrite(
+  state,
+  chat,
+  previousLineage,
+  currentLineage,
+  divergence,
+  candidateMessageId,
+  candidateNarrationFingerprint,
+) {
   if (!Number.isInteger(candidateMessageId) || candidateMessageId < 0) return false;
   if (divergence !== candidateMessageId || state.lastCaptureMessage !== candidateMessageId) return false;
   if (currentLineage.length < previousLineage.length || candidateMessageId >= previousLineage.length) return false;
+  if (!String(candidateNarrationFingerprint || '')) return false;
 
   const message = Array.isArray(chat) ? chat[candidateMessageId] : null;
   const role = message?.role || (message?.is_user === true ? 'user' : (message?.is_system === true ? 'system' : 'assistant'));
   if (role !== 'assistant') return false;
+  if (fingerprintAssistantNarration(message) !== candidateNarrationFingerprint) return false;
 
   // Lineage keys after the rewritten message necessarily cascade, so compare
   // their raw fingerprints instead. This admits exactly one passive rewrite:
@@ -327,6 +342,7 @@ export function reconcileBranch(inputState, chat, options = {}) {
     currentLineage,
     divergence,
     options.passiveCaptureMessageId,
+    options.passiveCaptureNarrationFingerprint,
   )) {
     const rebasedPrefix = rebaseLineageMetadata(
       state,

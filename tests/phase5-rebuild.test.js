@@ -140,6 +140,20 @@ test('rebuild can virtually include eligible hidden roleplay messages without mu
       extra: { isSmallSys: true, tool_invocations: [{ id: 'tool-1' }] },
     },
     {
+      role: 'user',
+      is_user: true,
+      is_system: true,
+      mes: 'Hidden tool row wearing a user role.',
+      extra: { isSmallSys: true, tool_invocations: [{ id: 'tool-2' }] },
+    },
+    {
+      role: 'assistant',
+      is_user: false,
+      is_system: true,
+      mes: 'Hidden tool row wearing an assistant role.',
+      extra: { tool_invocations: [{ id: 'tool-3' }] },
+    },
+    {
       name: 'Gatekeeper',
       is_user: false,
       is_system: true,
@@ -154,20 +168,22 @@ test('rebuild can virtually include eligible hidden roleplay messages without mu
   const original = structuredClone(chat);
 
   const included = planChronologicalRebuild(chat, { includeHiddenMessages: true });
-  assert.deepEqual(included.windows.map(item => item.messageId), [1, 4, 6]);
+  assert.deepEqual(included.windows.map(item => item.messageId), [1, 6, 8]);
   assert.equal(included.metrics.hiddenMessagesIncluded, 2);
   assert.equal(included.metrics.hiddenAssistantBoundaries, 1);
   assert.equal(included.metrics.includeHiddenMessages, true);
-  assert.deepEqual(included.windows[1].exchange.map(item => item.messageId), [2, 3, 4]);
+  assert.deepEqual(included.windows[1].exchange.map(item => item.messageId), [2, 3, 4, 5, 6]);
   assert.equal(included.windows[1].exchange[0].role, 'user');
   assert.equal(included.windows[1].exchange[0].is_system, false);
   assert.equal(included.windows[1].exchange[1].is_system, true);
-  assert.equal(included.windows[1].exchange[2].role, 'assistant');
-  assert.equal(included.windows[1].exchange[2].is_system, false);
+  assert.equal(included.windows[1].exchange[2].is_system, true);
+  assert.equal(included.windows[1].exchange[3].is_system, true);
+  assert.equal(included.windows[1].exchange[4].role, 'assistant');
+  assert.equal(included.windows[1].exchange[4].is_system, false);
   assert.deepEqual(chat, original, 'virtual rebuild view must never mutate SillyTavern chat visibility');
 
   const excluded = planChronologicalRebuild(chat, { includeHiddenMessages: false });
-  assert.deepEqual(excluded.windows.map(item => item.messageId), [1, 6]);
+  assert.deepEqual(excluded.windows.map(item => item.messageId), [1, 8]);
   assert.equal(excluded.metrics.hiddenMessagesIncluded, 0);
   assert.equal(excluded.metrics.hiddenAssistantBoundaries, 0);
   assert.equal(excluded.metrics.includeHiddenMessages, false);

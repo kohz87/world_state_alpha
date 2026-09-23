@@ -329,11 +329,11 @@ export function processCaptureResponse({
 } = {}) {
   const raw = parseCaptureJson(text);
   const wire = validateCaptureEnvelope(raw);
-  if (operation === 'rebuild' && wire.rejected.length) {
+  if (wire.rejected.length) {
     const first = wire.rejected[0];
     throw new CaptureWireError(
-      `rebuild rejected structurally invalid Reality mutation row ${first.index}: ${first.reason}`,
-      'WORLD_STATE_REBUILD_REALITY_WIRE_INVALID',
+      `${operation === 'rebuild' ? 'rebuild' : 'capture'} rejected structurally invalid Reality mutation row ${first.index}: ${first.reason}`,
+      operation === 'rebuild' ? 'WORLD_STATE_REBUILD_REALITY_WIRE_INVALID' : 'WORLD_STATE_CAPTURE_REALITY_WIRE_INVALID',
     );
   }
   const boundedRecords = boundedVisibleRecords(visibleRecords);
@@ -411,14 +411,12 @@ export function processCaptureResponse({
       operation,
       evidenceSourceClass,
     });
-    if (operation === 'rebuild') {
-      const structuralSpatial = (spatialResult.rejected || []).find(item => item?.stage === 'spatial-wire');
-      if (structuralSpatial) {
-        throw new CaptureWireError(
-          `rebuild rejected structurally invalid Spatial mutation row ${structuralSpatial.index ?? '?'}: ${structuralSpatial.reason}`,
-          'WORLD_STATE_REBUILD_SPATIAL_WIRE_INVALID',
-        );
-      }
+    const structuralSpatial = (spatialResult.rejected || []).find(item => item?.stage === 'spatial-wire');
+    if (structuralSpatial) {
+      throw new CaptureWireError(
+        `${operation === 'rebuild' ? 'rebuild' : 'capture'} rejected structurally invalid Spatial mutation row ${structuralSpatial.index ?? '?'}: ${structuralSpatial.reason}`,
+        operation === 'rebuild' ? 'WORLD_STATE_REBUILD_SPATIAL_WIRE_INVALID' : 'WORLD_STATE_CAPTURE_SPATIAL_WIRE_INVALID',
+      );
     }
     nextState.spatial = spatialResult.spatial;
   }
@@ -640,6 +638,7 @@ export async function runCaptureOperation({
       rejected: [rejectedEntry('response', error.message, { code: error.code })],
       applied: [],
       snapshotToken,
+      errorCode: error.code,
       routeReceipt: dispatched.receipt,
     };
   }

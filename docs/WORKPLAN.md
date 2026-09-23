@@ -206,6 +206,7 @@ Deliverables:
 - v0.9.0-alpha.12 flat disclosure UX: replace nested Reality master/detail cards with inline disclosure rows, retain expandable Operations JSON, add icon-first World continuity header, floating dismissible rebuild status, flatter maintenance sections, and hidden scrollbar arrow controls
 - v0.9.0-alpha.13 passive-lineage hardening: preserve canonical state when the exact latest captured assistant boundary is passively rewritten after receipt, retain exact rollback for explicit branch events, clear stale candidates on state replacement, and expose branch reconciliation diagnostics
 - v0.9.0-alpha.14 virtual hidden-message rebuild: default-on operator toggle, immutable rebuild-only role projection for eligible hidden user/assistant RP, conservative exclusion of actual system/tool/UI rows, hidden-inclusion telemetry, and no live chat visibility/lineage mutation
+- v0.9.0-alpha.15 integrity hardening: source/evidence affinity and epistemic preservation, atomic malformed-envelope capture, strict durable enum validation, semantic passive-rebase protection, hidden system/tool precedence, stale rebuild compensation, and late event-source registration retries
 
 Acceptance:
 
