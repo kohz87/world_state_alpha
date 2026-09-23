@@ -81,7 +81,8 @@ No fixture may require schema code specific to its setting.
 49. A persistent condition explicitly shown continuing after the PC ignores or leaves it remains eligible for capture. Isolated notices/claims/plans/options remain non-canonical; materially persistent rumor/news circulation may be captured only as explicitly reported/rumored/believed information state, never as verification of the underlying claim.
 50. Quoted dialogue used as the sole mutation evidence cannot promote its contents into objective world truth; an epistemically framed reported-information summary is admitted, while an otherwise identical factual summary is rejected by the source firewall.
 51. Live automatic capture and chronological rebuild use identical assistant-boundary exchange semantics: messages after the previous assistant response through the current assistant response. Live capture must not include the previous assistant turn merely because a rolling context window has room for it.
-52. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
+52. Capture a fact on an assistant boundary, then passively rewrite that same assistant message without emitting an edit/delete/swipe event and append the next exchange. The next reconciliation rebases lineage metadata and preserves the captured fact instead of replaying its undo. The same rewrite without the runtime candidate still follows ordinary rollback, and a real branch event clears the candidate before reconciliation.
+53. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
 
 ## Additional safety tests
 

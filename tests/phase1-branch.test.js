@@ -136,6 +136,73 @@ test('deep destructive history change fails closed when exact boundary aged out'
 });
 
 
+test('passive rewrite of the latest captured assistant boundary can be rebased without wiping canonical state', () => {
+  let chat = [
+    { role: 'user', content: 'I wait by the road.' },
+    {
+      role: 'assistant',
+      content: 'The bridge is closed. <writer_state>private planning that the host later strips</writer_state>',
+    },
+  ];
+  let state = seedRootCheckpoint(createState('passive-tail-rewrite'));
+  state = apply(state, chat, {
+    action: 'create',
+    kind: 'fact',
+    summary: 'The bridge is closed.',
+    anchors: ['bridge'],
+  });
+  assert.equal(state.records.length, 1);
+  assert.equal(state.lastCaptureMessage, 1);
+
+  chat = [...chat, { role: 'user', content: 'I take the east road instead.' }];
+  const extended = reconcileBranch(state, chat);
+  assert.equal(extended.action, 'forward-extension');
+  state = extended.state;
+
+  // Simulate SillyTavern/Regex/Reasoning normalizing the just-captured
+  // assistant message after capture, without a user branch edit event.
+  chat[1] = { role: 'assistant', content: 'The bridge is closed.' };
+  chat = [...chat, { role: 'assistant', content: 'Rain starts over the east road.' }];
+
+  const destructive = reconcileBranch(state, chat);
+  assert.equal(destructive.action, 'rollback-journal');
+  assert.equal(destructive.state.records.length, 0, 'baseline proves the current wipe failure');
+
+  const rebased = reconcileBranch(state, chat, { passiveCaptureMessageId: 1 });
+  assert.equal(rebased.failClosed, false);
+  assert.equal(rebased.action, 'passive-capture-rebase');
+  assert.equal(rebased.divergence, 1);
+  assert.equal(rebased.state.records.length, 1);
+  assert.equal(rebased.state.records[0].summary, 'The bridge is closed.');
+  assert.equal(rebased.state.lineage.length, chat.length);
+  assert.equal(rebased.state.rollbackHead.messageId, 1);
+  assert.equal(rebased.state.rollbackHead.lineageKey, rebased.state.lineage[1].lineageKey);
+});
+
+test('passive capture rebase refuses to mask a second changed owned message', () => {
+  let chat = [
+    { role: 'assistant', content: 'The bridge is closed. <writer_state>private planning</writer_state>' },
+  ];
+  let state = seedRootCheckpoint(createState('passive-tail-safety'));
+  state = apply(state, chat, {
+    action: 'create',
+    kind: 'fact',
+    summary: 'The bridge is closed.',
+  });
+
+  chat = [...chat, { role: 'user', content: 'I head east.' }];
+  state = reconcileBranch(state, chat).state;
+
+  const changed = [
+    { role: 'assistant', content: 'The bridge is closed.' },
+    { role: 'user', content: 'I head west instead.' },
+    { role: 'assistant', content: 'Rain begins.' },
+  ];
+  const reconciled = reconcileBranch(state, changed, { passiveCaptureMessageId: 0 });
+  assert.notEqual(reconciled.action, 'passive-capture-rebase');
+  assert.equal(reconciled.state.records.length, 0);
+});
+
 test('cosmetic character-name rewrite can rebase branch ownership without rolling back world state', () => {
   const oldChat = [{
     name: 'Old Character Name',
