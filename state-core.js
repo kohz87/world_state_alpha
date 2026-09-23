@@ -139,18 +139,29 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
   for (const item of Array.isArray(raw.records) ? raw.records : []) {
     try {
       const record = normalizeRecord(item);
-      if (!recordIds.has(record.id)) {
-        recordIds.add(record.id);
-        state.records.push(record);
+      if (recordIds.has(record.id)) {
+        if (strictSchema) throw new Error(`duplicate record id: ${record.id}`);
+        continue;
       }
+      recordIds.add(record.id);
+      state.records.push(record);
     } catch (error) {
       if (strictSchema) throw error;
     }
   }
   if (raw.evidence && typeof raw.evidence === 'object' && !Array.isArray(raw.evidence)) {
-    for (const item of Object.values(raw.evidence)) {
+    const evidenceIds = new Set();
+    for (const [key, item] of Object.entries(raw.evidence)) {
       try {
         const evidence = normalizeEvidence(item);
+        if (strictSchema && key !== evidence.id) {
+          throw new Error(`evidence map key/id mismatch: ${key} != ${evidence.id}`);
+        }
+        if (evidenceIds.has(evidence.id)) {
+          if (strictSchema) throw new Error(`duplicate evidence id: ${evidence.id}`);
+          continue;
+        }
+        evidenceIds.add(evidence.id);
         state.evidence[evidence.id] = evidence;
       } catch (error) {
         if (strictSchema) throw error;
@@ -161,10 +172,12 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
   for (const item of Array.isArray(raw.links) ? raw.links : []) {
     try {
       const link = normalizeLink(item);
-      if (!linkIds.has(link.id)) {
-        linkIds.add(link.id);
-        state.links.push(link);
+      if (linkIds.has(link.id)) {
+        if (strictSchema) throw new Error(`duplicate link id: ${link.id}`);
+        continue;
       }
+      linkIds.add(link.id);
+      state.links.push(link);
     } catch (error) {
       if (strictSchema) throw error;
     }
@@ -183,6 +196,34 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
     ? clone(raw.recoveryRequired)
     : null;
   state.spatial = normalizeSpatialState(raw.spatial, { strict: strictSchema });
+
+  if (strictSchema) {
+    for (const record of state.records) {
+      for (const evidenceId of record.evidenceIds || []) {
+        if (!state.evidence[evidenceId]) {
+          throw new Error(`record ${record.id} references missing evidence: ${evidenceId}`);
+        }
+      }
+      for (const relatedId of [...(record.causedBy || []), ...(record.affects || [])]) {
+        if (!recordIds.has(relatedId)) {
+          throw new Error(`record ${record.id} references missing causal record: ${relatedId}`);
+        }
+      }
+    }
+    for (const evidence of Object.values(state.evidence)) {
+      for (const referencedRecordId of evidence.recordIds || []) {
+        if (!recordIds.has(referencedRecordId)) {
+          throw new Error(`evidence ${evidence.id} references missing record: ${referencedRecordId}`);
+        }
+      }
+    }
+    for (const link of state.links) {
+      if (!recordIds.has(link.from) || !recordIds.has(link.to)) {
+        throw new Error(`link ${link.id} references a missing record endpoint`);
+      }
+    }
+  }
+
   return state;
 }
 

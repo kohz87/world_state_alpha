@@ -176,6 +176,95 @@ test('generic related links do not invent causal causedBy semantics', () => {
   assert.equal(second.state.links[0].type, 'related');
 });
 
+test('strict normalization rejects duplicate identities and evidence key/id drift', () => {
+  const duplicateRecords = createState('strict-identity');
+  duplicateRecords.records = [
+    { id: 'wsr_dup', kind: 'fact', summary: 'First meaning.' },
+    { id: 'wsr_dup', kind: 'fact', summary: 'Conflicting meaning.' },
+  ];
+  assert.throws(
+    () => normalizeState(duplicateRecords, { strictSchema: true }),
+    /duplicate record id: wsr_dup/,
+  );
+
+  const duplicateLinks = createState('strict-links');
+  duplicateLinks.links = [
+    { id: 'wsl_dup', from: 'a', to: 'b', type: 'related' },
+    { id: 'wsl_dup', from: 'b', to: 'c', type: 'related' },
+  ];
+  assert.throws(
+    () => normalizeState(duplicateLinks, { strictSchema: true }),
+    /duplicate link id: wsl_dup/,
+  );
+
+  const evidenceKeyDrift = createState('strict-evidence');
+  evidenceKeyDrift.evidence = {
+    wrong_key: {
+      id: 'wse_actual',
+      sourceMessageId: 0,
+      lineageKey: 'ln0',
+      sourceClass: 'assistant_narration',
+      claim: 'A grounded claim.',
+      recordIds: [],
+    },
+  };
+  assert.throws(
+    () => normalizeState(evidenceKeyDrift, { strictSchema: true }),
+    /evidence map key\/id mismatch: wrong_key != wse_actual/,
+  );
+
+  const danglingEvidence = createState('strict-dangling-evidence');
+  danglingEvidence.records = [{
+    id: 'wsr_live',
+    kind: 'fact',
+    summary: 'A current fact.',
+    evidenceIds: ['wse_missing'],
+  }];
+  assert.throws(
+    () => normalizeState(danglingEvidence, { strictSchema: true }),
+    /record wsr_live references missing evidence: wse_missing/,
+  );
+
+  const danglingCausal = createState('strict-dangling-causal');
+  danglingCausal.records = [{
+    id: 'wsr_live',
+    kind: 'development',
+    summary: 'A current development.',
+    causedBy: ['wsr_missing'],
+  }];
+  assert.throws(
+    () => normalizeState(danglingCausal, { strictSchema: true }),
+    /record wsr_live references missing causal record: wsr_missing/,
+  );
+
+  const danglingEvidenceOwner = createState('strict-dangling-owner');
+  danglingEvidenceOwner.evidence = {
+    wse_orphan: {
+      id: 'wse_orphan',
+      sourceMessageId: 0,
+      lineageKey: 'ln0',
+      sourceClass: 'assistant_narration',
+      claim: 'Orphan evidence.',
+      recordIds: ['wsr_missing'],
+    },
+  };
+  assert.throws(
+    () => normalizeState(danglingEvidenceOwner, { strictSchema: true }),
+    /evidence wse_orphan references missing record: wsr_missing/,
+  );
+
+  const danglingLink = createState('strict-dangling-link');
+  danglingLink.records = [{ id: 'wsr_a', kind: 'fact', summary: 'Only endpoint.' }];
+  danglingLink.links = [{ id: 'wsl_bad', from: 'wsr_a', to: 'wsr_missing', type: 'related' }];
+  assert.throws(
+    () => normalizeState(danglingLink, { strictSchema: true }),
+    /link wsl_bad references a missing record endpoint/,
+  );
+
+  const repairable = normalizeState(duplicateRecords);
+  assert.equal(repairable.records.length, 1, 'non-strict normalization keeps bounded repair semantics');
+});
+
 test('normalization never imports a mandatory scope field', () => {
   const raw = createState('scope-test');
   raw.scope = 'north';
