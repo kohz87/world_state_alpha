@@ -33,6 +33,7 @@ export function sanitizeCaptureDiagnostic(raw = {}) {
     applied: int(raw.applied),
     rejected: int(raw.rejected),
     aliasRepairs: int(raw.aliasRepairs),
+    completenessHints: int(raw.completenessHints),
     processedBoundaries: int(raw.processedBoundaries),
     totalBoundaries: int(raw.totalBoundaries),
     candidateRecords: int(raw.candidateRecords),

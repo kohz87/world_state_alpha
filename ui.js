@@ -236,6 +236,7 @@ function projectDiagnostics(rows) {
         applied: item.applied,
         rejected: item.rejected,
         aliasRepairs: item.aliasRepairs,
+        completenessHints: item.completenessHints,
         processedBoundaries: item.processedBoundaries,
         totalBoundaries: item.totalBoundaries,
         candidateRecords: item.candidateRecords,
@@ -749,6 +750,9 @@ function diagnosticsHtml(model) {
       const repairs = item.aliasRepairs > 0
         ? '<div><dt>Alias repairs</dt><dd>' + item.aliasRepairs + '</dd></div>'
         : '';
+      const checklist = item.completenessHints > 0
+        ? '<div><dt>State checklist</dt><dd>' + item.completenessHints + '</dd></div>'
+        : '';
       return '<article class="wsa-diagnostic">' +
         '<div><strong>' + escapeHtml(item.outcome) + '</strong>' + label + code + '</div>' +
         detail +
@@ -759,6 +763,7 @@ function diagnosticsHtml(model) {
         '<div><dt>Applied</dt><dd>' + item.applied + '</dd></div>' +
         '<div><dt>Rejected</dt><dd>' + item.rejected + '</dd></div>' +
         repairs +
+        checklist +
         progress +
         '<div><dt>Duration</dt><dd>' + item.durationMs + ' ms</dd></div>' +
         '</dl></article>';

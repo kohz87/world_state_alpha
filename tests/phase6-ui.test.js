@@ -310,6 +310,7 @@ test('diagnostic projection is allowlisted and drops private unexpected fields',
       applied: 2,
       rejected: 1,
       aliasRepairs: 2,
+      completenessHints: 4,
       processedBoundaries: 3,
       totalBoundaries: 5,
       prompt: 'raw prompt',
@@ -324,6 +325,7 @@ test('diagnostic projection is allowlisted and drops private unexpected fields',
   assert.equal(row.label, 'rebuild');
   assert.match(row.detail, /structurally invalid Reality mutation row/);
   assert.equal(row.aliasRepairs, 2);
+  assert.equal(row.completenessHints, 4);
   assert.equal(row.processedBoundaries, 3);
   assert.equal(row.totalBoundaries, 5);
   const html = renderWorldStatePanel(model, { activeTab: 'diagnostics' });
@@ -331,6 +333,8 @@ test('diagnostic projection is allowlisted and drops private unexpected fields',
   assert.match(html, /Progress/);
   assert.match(html, /3\/5/);
   assert.match(html, /Alias repairs/);
+  assert.match(html, /State checklist/);
+  assert.match(html, />4</);
   assert.equal(Object.hasOwn(row, 'prompt'), false);
   assert.equal(Object.hasOwn(row, 'response'), false);
   assert.equal(Object.hasOwn(row, 'storyTranscript'), false);

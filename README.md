@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.9 builds on Alpha.8 live rebuild interoperability by accepting the provider's single JSON object either bare or wrapped in one Markdown JSON/code fence. Surrounding prose, multiple objects, malformed JSON, and structural wire violations still fail closed. This fixes a live Gemini 3.7 Flash High case where the first four rebuild boundaries succeeded but a fenced fifth response caused the atomic rebuild to discard the entire reconstructed Current/Places state. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.10 builds on Alpha.9 by surfacing a bounded completeness checklist from narrator-authored `<World_State>` `Off-Screen` and `Unresolved Threads` entries. The checklist is advisory to the same single capture/rebuild provider call and does not bypass the source firewall: materially persistent conditions such as an established market extortion racket are re-checked before output, while Planted Seeds, timers, arc/scene state, CYOA, inner chatter, writer planning, character inventory/skill state, rumors, and mere possibilities remain excluded. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 
