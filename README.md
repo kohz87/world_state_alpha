@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.14 retains the Alpha.13 branch hardening and adds virtual hidden-message rebuild: explicit rebuilds can include eligible hidden roleplay messages without toggling SillyTavern visibility, saving the chat, or changing lineage. Genuine system/tool/UI rows remain excluded. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.15 hardens source/evidence coupling, reported-information handling, atomic malformed-envelope capture, strict persisted-state validation, passive-rebase semantic equivalence, hidden rebuild classification, stale rebuild persistence, and late host event registration. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

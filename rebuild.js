@@ -41,13 +41,14 @@ const SYSTEM_MESSAGE_TYPES = new Set([
 
 function hiddenConversationRole(message) {
   if (message?.is_system !== true) return roleOf(message);
-  if (message?.is_user === true || message?.role === 'user') return 'user';
-  if (message?.role === 'assistant') return 'assistant';
 
   const extra = message?.extra && typeof message.extra === 'object' ? message.extra : {};
   const type = String(extra.type || '').trim().toLowerCase();
   if (extra.isSmallSys === true || extra.uses_system_ui === true || Array.isArray(extra.tool_invocations)) return 'system';
   if (SYSTEM_MESSAGE_TYPES.has(type)) return 'system';
+
+  if (message?.is_user === true || message?.role === 'user') return 'user';
+  if (message?.role === 'assistant') return 'assistant';
   if (type === 'assistant_message') return 'assistant';
 
   if (typeof message?.original_avatar === 'string' && message.original_avatar.trim()) return 'assistant';

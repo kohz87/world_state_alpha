@@ -1166,6 +1166,32 @@ test('strict Spatial normalization rejects duplicate identities and evidence key
   );
 });
 
+test('strict Spatial normalization rejects present invalid authority enums and coordinate axes', () => {
+  assert.throws(
+    () => normalizeSpatialState({ ...createSpatialState(), locations: [{ id: 'wsloc_bad', name: 'Bad', status: 'destroyed' }] }, { strict: true }),
+    /invalid spatial location status: destroyed/,
+  );
+  assert.throws(
+    () => normalizeSpatialState({ ...createSpatialState(), locations: [{ id: 'wsloc_bad', name: 'Bad', coordinate: { x: 1, y: 2, authority: 'omniscient' } }] }, { strict: true }),
+    /invalid spatial coordinate authority: omniscient/,
+  );
+  assert.throws(
+    () => normalizeSpatialState({ ...createSpatialState(), relations: [{ id: 'wsrel_bad', fromId: 'a', toId: 'b', distanceMode: 'teleport' }] }, { strict: true }),
+    /invalid spatial distance mode: teleport/,
+  );
+  assert.throws(
+    () => normalizeSpatialState({ ...createSpatialState(), evidence: { wse_bad: { id: 'wse_bad', sourceClass: 'invented', claim: 'Bad provenance.', locationIds: [] } } }, { strict: true }),
+    /invalid spatial evidence sourceClass: invented/,
+  );
+  assert.throws(
+    () => normalizeSpatialState({ ...createSpatialState(), profile: { northAxis: '+x', eastAxis: '-x' } }, { strict: true }),
+    /spatial profile axes must be perpendicular/,
+  );
+
+  const legacyEmpty = normalizeSpatialState(undefined, { strict: true });
+  assert.deepEqual(legacyEmpty, createSpatialState());
+});
+
 test('Schema 1 to Schema 2 migration and old checkpoint rollback safety', () => {
   const schema1 = {
     schemaVersion: 1,
@@ -2514,4 +2540,3 @@ test('Manual Spatial API always records operator provenance even without a custo
   assert.equal(evidence.sourceClass, 'manual');
   assert.equal(evidence.claim, 'Manual spatial edit');
 });
-

@@ -316,6 +316,97 @@ test('persistent rumor/news can be captured as information state without promoti
   assert.match(speechAct.state.records[0].summary, /declares the north gate closed/i);
 });
 
+test('source firewall rejects unrelated summaries and drops unsupported anchors despite grounded excerpts', () => {
+  const exchange = withLineage([{ role: 'assistant', content: 'The bridge collapses into the river.' }]);
+  const unrelated = processCaptureResponse({
+    text: JSON.stringify({ mutations: [{
+      action: 'create', kind: 'fact', summary: 'King Aldren has been assassinated and civil war is spreading.',
+      anchors: ['King Aldren', 'civil war'],
+      evidence: [{ sourceMessageId: 0, claim: 'The bridge collapses into the river.' }],
+    }] }),
+    state: createState('unrelated-summary'), exchange, chatKey: 'unrelated-summary', sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+  assert.equal(unrelated.acceptedCount, 0);
+  assert.equal(unrelated.state.records.length, 0);
+  assert.equal(unrelated.rejected[0].stage, 'source-firewall');
+  assert.match(unrelated.rejected[0].reason, /not supported by.*evidence/i);
+
+  const grounded = processCaptureResponse({
+    text: JSON.stringify({ mutations: [{
+      action: 'create', kind: 'fact', summary: 'The bridge is destroyed.', anchors: ['bridge', 'King Aldren'],
+      evidence: [{ sourceMessageId: 0, claim: 'The bridge collapses into the river.' }],
+    }] }),
+    state: createState('unsupported-anchor'), exchange, chatKey: 'unsupported-anchor', sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+  assert.equal(grounded.acceptedCount, 1);
+  assert.deepEqual(grounded.state.records[0].anchors, ['bridge']);
+});
+
+test('unrelated objective evidence cannot wash a quoted rumor into objective reality', () => {
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: '"Quill-fiends crossed the second boundary stones," a trader said. Rain fell over the market square.',
+  }]);
+  const result = processCaptureResponse({
+    text: JSON.stringify({ mutations: [{
+      action: 'create', kind: 'fact', summary: 'Quill-fiends crossed the second boundary stones.',
+      anchors: ['quill-fiends', 'boundary stones'],
+      evidence: [
+        { sourceMessageId: 0, claim: 'Quill-fiends crossed the second boundary stones' },
+        { sourceMessageId: 0, claim: 'Rain fell over the market square.' },
+      ],
+    }] }),
+    state: createState('mixed-hearsay-bypass'), exchange, chatKey: 'mixed-hearsay-bypass', sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+  assert.equal(result.acceptedCount, 0);
+  assert.match(result.rejected[0].reason, /quoted dialogue alone|attributed evidence/i);
+});
+
+test('indirect reports remain reported until objective narration corroborates the same assertion', () => {
+  const reportedExchange = withLineage([{
+    role: 'assistant', content: 'A trader reported that Kesselpass is closed by an avalanche.',
+  }]);
+  const objective = processCaptureResponse({
+    text: JSON.stringify({ mutations: [{
+      action: 'create', kind: 'fact', summary: 'Kesselpass is closed by an avalanche.', anchors: ['Kesselpass'],
+      evidence: [{ sourceMessageId: 0, claim: 'Kesselpass is closed by an avalanche' }],
+    }] }),
+    state: createState('indirect-report-objective'), exchange: reportedExchange, chatKey: 'indirect-report-objective', sourceMessageId: 0,
+    sourceLineageKey: reportedExchange[0].lineageKey,
+  });
+  assert.equal(objective.acceptedCount, 0);
+
+  const preserved = processCaptureResponse({
+    text: JSON.stringify({ mutations: [{
+      action: 'create', kind: 'fact', summary: 'A trader reports that Kesselpass is closed by an avalanche.', anchors: ['Kesselpass'],
+      evidence: [{ sourceMessageId: 0, claim: 'Kesselpass is closed by an avalanche' }],
+    }] }),
+    state: createState('indirect-report-preserved'), exchange: reportedExchange, chatKey: 'indirect-report-preserved', sourceMessageId: 0,
+    sourceLineageKey: reportedExchange[0].lineageKey,
+  });
+  assert.equal(preserved.acceptedCount, 1);
+
+  const confirmedExchange = withLineage([{
+    role: 'assistant',
+    content: 'A trader reported that quill-fiends crossed the second boundary stones. Scouts later confirmed quill-fiends crossed the second boundary stones.',
+  }]);
+  const confirmed = processCaptureResponse({
+    text: JSON.stringify({ mutations: [{
+      action: 'create', kind: 'fact', summary: 'Quill-fiends crossed the second boundary stones.', anchors: ['quill-fiends', 'boundary stones'],
+      evidence: [
+        { sourceMessageId: 0, claim: 'quill-fiends crossed the second boundary stones' },
+        { sourceMessageId: 0, claim: 'Scouts later confirmed quill-fiends crossed the second boundary stones.' },
+      ],
+    }] }),
+    state: createState('reported-objective-confirmation'), exchange: confirmedExchange, chatKey: 'reported-objective-confirmation', sourceMessageId: 0,
+    sourceLineageKey: confirmedExchange[0].lineageKey,
+  });
+  assert.equal(confirmed.acceptedCount, 1);
+});
+
 test('World_State Off-Screen and Unresolved Threads become a bounded completeness checklist', () => {
   const assistant = [
     '<writer_state>world_motion: market stalls unpacking; boars concealed near the ditch.</writer_state>',
@@ -806,6 +897,40 @@ test('malformed provider JSON causes no mutation and no correction retry', async
     exchange,
     chatKey: 'bad-json',
     ...sourceBoundary(exchange),
+  });
+  assert.equal(repeated.outcome, 'skipped');
+  assert.equal(calls.count, 1);
+});
+
+test('mixed valid and malformed live mutation rows fail closed without partial commit', async () => {
+  const exchange = withLineage([
+    { role: 'user', content: 'I watch the bridge.' },
+    { role: 'assistant', content: 'The bridge collapses into the river.' },
+  ]);
+  const calls = { count: 0 };
+  const state = existingState('mixed-wire-live');
+  const response = JSON.stringify({
+    mutations: [
+      {
+        action: 'create', kind: 'fact', summary: 'The bridge is destroyed.', anchors: ['bridge'],
+        evidence: [{ sourceMessageId: 1, claim: 'The bridge collapses into the river.' }],
+      },
+      { action: 'update', recordId: 'missing-evidence', summary: 'Malformed row has no evidence.' },
+    ],
+  });
+  const result = await runCaptureOperation({
+    ctx: ctxReturning(response, calls), isCurrent: () => true, state, exchange,
+    chatKey: 'mixed-wire-live', ...sourceBoundary(exchange),
+  });
+  assert.equal(result.outcome, 'invalid-response');
+  assert.equal(result.errorCode, 'WORLD_STATE_CAPTURE_REALITY_WIRE_INVALID');
+  assert.deepEqual(result.state.records, state.records);
+  assert.equal(result.state.lastCaptureMessage, 1);
+  assert.equal(calls.count, 1);
+
+  const repeated = await runCaptureOperation({
+    ctx: ctxReturning('{"mutations":[]}', calls), isCurrent: () => true, state: result.state, exchange,
+    chatKey: 'mixed-wire-live', ...sourceBoundary(exchange),
   });
   assert.equal(repeated.outcome, 'skipped');
   assert.equal(calls.count, 1);

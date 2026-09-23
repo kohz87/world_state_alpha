@@ -69,13 +69,22 @@ export function createState(chatKey = '') {
   };
 }
 
-export function normalizeRecord(raw) {
+export function normalizeRecord(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') throw new Error('record must be an object');
   const id = boundedText(raw.id, 120);
   if (!id) throw new Error('record id is required');
   if (!RECORD_KINDS.includes(raw.kind)) throw new Error('record kind must be fact or development');
   const summary = boundedText(raw.summary, LIMITS.summaryChars);
   if (!summary) throw new Error('record summary is required');
+  if (strict && raw.status !== undefined && raw.status !== null && !RECORD_STATUSES.includes(raw.status)) {
+    throw new Error(`invalid record status: ${raw.status}`);
+  }
+  if (strict && raw.kind === 'development' && raw.trend !== null && raw.trend !== undefined && !RECORD_TRENDS.includes(raw.trend)) {
+    throw new Error(`invalid development trend: ${raw.trend}`);
+  }
+  if (strict && raw.kind === 'fact' && raw.trend !== null && raw.trend !== undefined) {
+    throw new Error('fact record trend must be null');
+  }
   const status = RECORD_STATUSES.includes(raw.status) ? raw.status : 'active';
   const trend = raw.kind === 'development' && RECORD_TRENDS.includes(raw.trend) ? raw.trend : null;
   return {
@@ -95,10 +104,13 @@ export function normalizeRecord(raw) {
   };
 }
 
-export function normalizeEvidence(raw) {
+export function normalizeEvidence(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') throw new Error('evidence must be an object');
   const id = boundedText(raw.id, 140);
   if (!id) throw new Error('evidence id is required');
+  if (strict && raw.sourceClass !== undefined && raw.sourceClass !== null && !EVIDENCE_SOURCE_CLASSES.includes(raw.sourceClass)) {
+    throw new Error(`invalid evidence sourceClass: ${raw.sourceClass}`);
+  }
   const sourceClass = EVIDENCE_SOURCE_CLASSES.includes(raw.sourceClass) ? raw.sourceClass : 'assistant_narration';
   return {
     id,
@@ -138,7 +150,7 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
   const recordIds = new Set();
   for (const item of Array.isArray(raw.records) ? raw.records : []) {
     try {
-      const record = normalizeRecord(item);
+      const record = normalizeRecord(item, { strict: strictSchema });
       if (recordIds.has(record.id)) {
         if (strictSchema) throw new Error(`duplicate record id: ${record.id}`);
         continue;
@@ -153,7 +165,7 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
     const evidenceIds = new Set();
     for (const [key, item] of Object.entries(raw.evidence)) {
       try {
-        const evidence = normalizeEvidence(item);
+        const evidence = normalizeEvidence(item, { strict: strictSchema });
         if (strictSchema && key !== evidence.id) {
           throw new Error(`evidence map key/id mismatch: ${key} != ${evidence.id}`);
         }

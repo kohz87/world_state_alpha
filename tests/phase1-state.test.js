@@ -265,6 +265,30 @@ test('strict normalization rejects duplicate identities and evidence key/id drif
   assert.equal(repairable.records.length, 1, 'non-strict normalization keeps bounded repair semantics');
 });
 
+test('strict normalization rejects present invalid lifecycle and provenance enums without breaking legacy omissions', () => {
+  const badStatus = createState('strict-status');
+  badStatus.records = [{ id: 'wsr_bad', kind: 'fact', summary: 'A fact.', status: 'revived' }];
+  assert.throws(() => normalizeState(badStatus, { strictSchema: true }), /invalid record status: revived/);
+
+  const badTrend = createState('strict-trend');
+  badTrend.records = [{ id: 'wsr_bad', kind: 'development', summary: 'A development.', status: 'active', trend: 'exploding' }];
+  assert.throws(() => normalizeState(badTrend, { strictSchema: true }), /invalid development trend: exploding/);
+
+  const badEvidence = createState('strict-source-class');
+  badEvidence.evidence = {
+    wse_bad: { id: 'wse_bad', sourceMessageId: 0, lineageKey: 'ln0', sourceClass: 'invented', claim: 'A claim.', recordIds: [] },
+  };
+  assert.throws(() => normalizeState(badEvidence, { strictSchema: true }), /invalid evidence sourceClass: invented/);
+
+  const legacy = createState('legacy-omissions');
+  legacy.schemaVersion = 1;
+  legacy.records = [{ id: 'wsr_legacy', kind: 'fact', summary: 'Legacy fact.' }];
+  legacy.evidence = { wse_legacy: { id: 'wse_legacy', claim: 'Legacy claim.', recordIds: [] } };
+  const normalized = normalizeState(legacy, { strictSchema: true });
+  assert.equal(normalized.records[0].status, 'active');
+  assert.equal(normalized.evidence.wse_legacy.sourceClass, 'assistant_narration');
+});
+
 test('normalization never imports a mandatory scope field', () => {
   const raw = createState('scope-test');
   raw.scope = 'north';

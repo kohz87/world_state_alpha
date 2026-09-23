@@ -7,7 +7,7 @@ import {
   saveSettings,
 } from '../../../../script.js';
 
-import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintMessage, rebaseLineageMetadata, reconcileBranch, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintAssistantNarration, fingerprintMessage, rebaseLineageMetadata, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, CAPTURE_LIMITS, runCaptureOperation } from './capture.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange } from './elapsed.js';
@@ -39,7 +39,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.14';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.15';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -89,6 +89,8 @@ let cacheTouchSequence = 0;
 let activeChatKey = 'no-chat';
 let initialized = false;
 let eventsRegistered = false;
+let eventRegistrationRetryTimer = null;
+let eventRegistrationRetryAttempts = 0;
 let settingsMountTimer = null;
 let panelController = null;
 let panelRoot = null;
@@ -1229,7 +1231,8 @@ function extendCurrentBranchFast(chatKey) {
   // freshly captured boundary is eligible for passive rewrite protection,
   // also verify that exact older boundary in O(1) so a delayed host rewrite
   // cannot hide behind an unchanged newer tail.
-  const passiveCaptureMessageId = passiveCaptureRebaseCandidates.get(chatKey);
+  const passiveCapture = passiveCaptureRebaseCandidates.get(chatKey);
+  const passiveCaptureMessageId = passiveCapture?.messageId;
   if (Number.isInteger(passiveCaptureMessageId)) {
     const stored = state.lineage?.[passiveCaptureMessageId];
     const current = chat[passiveCaptureMessageId];
@@ -1256,11 +1259,12 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
   const state = await ensureChatStateLoaded(chatKey);
   if (!state || currentChatKey() !== chatKey) return null;
 
-  const passiveCaptureMessageId = branchDirtyChats.has(chatKey)
+  const passiveCapture = branchDirtyChats.has(chatKey)
     ? null
     : passiveCaptureRebaseCandidates.get(chatKey);
   const result = reconcileBranch(state, getContext().chat || [], {
-    passiveCaptureMessageId: Number.isInteger(passiveCaptureMessageId) ? passiveCaptureMessageId : null,
+    passiveCaptureMessageId: Number.isInteger(passiveCapture?.messageId) ? passiveCapture.messageId : null,
+    passiveCaptureNarrationFingerprint: String(passiveCapture?.narrationFingerprint || ''),
   });
   const changed = stateChanged(state, result.state);
   const passiveRebase = result.action === 'passive-capture-rebase';
@@ -1412,7 +1416,10 @@ async function handleAssistantMessage(messageId) {
     // this background capture finishes. Remember only this latest captured
     // boundary so an unannounced presentation-only rewrite can rebase lineage
     // metadata instead of being mistaken for a branch rollback.
-    passiveCaptureRebaseCandidates.set(chatKey, messageId);
+    passiveCaptureRebaseCandidates.set(chatKey, {
+      messageId,
+      narrationFingerprint: fingerprintAssistantNarration(liveChat[messageId]),
+    });
     updatePrivateInjection();
     refreshPanel();
   });
@@ -2085,6 +2092,32 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     });
     refreshPanel();
 
+    if (!isCurrent()) {
+      rebuildStatuses.set(chatKey, {
+        ...(rebuildStatuses.get(chatKey) || {}),
+        phase: 'cancelled',
+        detail: 'Rebuild became stale before persistence; canonical state was left unchanged.',
+        completedAt: Date.now(),
+      });
+      diagnosticStore.record(chatKey, {
+        operationId,
+        label: 'rebuild',
+        sourceMessageId,
+        outcome: 'rebuild-cancelled',
+        code: 'WORLD_STATE_REBUILD_STALE',
+        detail: 'Rebuild became stale before persistence; canonical state was left unchanged.',
+        providerCalls: result.providerCalls || 0,
+        applied,
+        rejected,
+        aliasRepairs,
+        processedBoundaries: result.processedBoundaries || 0,
+        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+      });
+      refreshPanel();
+      notify('info', 'World State Alpha rebuild became stale before persistence. Canonical state was left unchanged.');
+      return;
+    }
+
     try {
       await persistState(chatKey, result.state);
     } catch (error) {
@@ -2116,6 +2149,65 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       });
       refreshPanel();
       notify('error', 'World State Alpha rebuild finished extraction but could not persist it: ' + detail + '. Canonical state was left unchanged.');
+      return;
+    }
+
+    if (!isCurrent()) {
+      try {
+        await persistState(chatKey, state);
+      } catch (restoreError) {
+        const detail = String(restoreError?.message || restoreError || 'stale rebuild compensation failed').slice(0, 320);
+        const blocked = new Error('World State Alpha blocked this chat after a stale rebuild write could not be compensated: ' + detail);
+        blocked.code = 'WORLD_STATE_REBUILD_STALE_RESTORE_FAILURE';
+        hydrationErrors.set(chatKey, blocked);
+        rebuildStatuses.set(chatKey, {
+          ...(rebuildStatuses.get(chatKey) || {}),
+          phase: 'failed',
+          detail: blocked.message,
+          completedAt: Date.now(),
+        });
+        diagnosticStore.record(chatKey, {
+          operationId,
+          label: 'rebuild',
+          sourceMessageId,
+          outcome: 'rebuild-persist-failed',
+          code: blocked.code,
+          detail: blocked.message,
+          providerCalls: result.providerCalls || 0,
+          applied,
+          rejected,
+          aliasRepairs,
+          processedBoundaries: result.processedBoundaries || 0,
+          totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+        });
+        clearPrivatePrompt();
+        refreshPanel();
+        notify('error', blocked.message);
+        return;
+      }
+
+      rebuildStatuses.set(chatKey, {
+        ...(rebuildStatuses.get(chatKey) || {}),
+        phase: 'cancelled',
+        detail: 'Rebuild became stale during persistence; the previous canonical state was restored.',
+        completedAt: Date.now(),
+      });
+      diagnosticStore.record(chatKey, {
+        operationId,
+        label: 'rebuild',
+        sourceMessageId,
+        outcome: 'rebuild-cancelled',
+        code: 'WORLD_STATE_REBUILD_STALE',
+        detail: 'Rebuild became stale during persistence; the previous canonical state was restored before publication.',
+        providerCalls: result.providerCalls || 0,
+        applied,
+        rejected,
+        aliasRepairs,
+        processedBoundaries: result.processedBoundaries || 0,
+        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+      });
+      refreshPanel();
+      notify('info', 'World State Alpha rebuild became stale during persistence. Previous canonical state was restored.');
       return;
     }
 
@@ -2580,11 +2672,11 @@ export async function openWorldStatePanel() {
 }
 
 function registerEvents() {
-  if (eventsRegistered) return;
+  if (eventsRegistered) return true;
   const ctx = getContext();
   const events = ctx?.eventTypes || ctx?.event_types || {};
   const source = ctx?.eventSource;
-  if (!source?.on) return;
+  if (!source?.on || !events.MESSAGE_RECEIVED || !events.CHAT_CHANGED) return false;
   eventsRegistered = true;
 
   if (events.MESSAGE_RECEIVED) {
@@ -2612,9 +2704,29 @@ function registerEvents() {
   for (const name of ['MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
     if (events[name]) source.on(events[name], () => handleBranchChange());
   }
+  return true;
+}
+
+function ensureEventRegistration() {
+  if (registerEvents()) {
+    eventRegistrationRetryAttempts = 0;
+    if (eventRegistrationRetryTimer !== null) {
+      clearTimeout(eventRegistrationRetryTimer);
+      eventRegistrationRetryTimer = null;
+    }
+    return true;
+  }
+  if (eventRegistrationRetryTimer !== null || eventRegistrationRetryAttempts >= 20) return false;
+  eventRegistrationRetryAttempts += 1;
+  eventRegistrationRetryTimer = setTimeout(() => {
+    eventRegistrationRetryTimer = null;
+    ensureEventRegistration();
+  }, 250);
+  return false;
 }
 
 async function init() {
+  ensureEventRegistration();
   if (initialized) {
     scheduleSettingsMount();
     return;
@@ -2622,7 +2734,6 @@ async function init() {
   initialized = true;
   getWorldStateSettings();
   bindSettingsEvents();
-  registerEvents();
   scheduleSettingsMount();
   await activateCurrentChat();
   console.log('[World State Alpha] v' + WORLD_STATE_ALPHA_VERSION + ' loaded');
