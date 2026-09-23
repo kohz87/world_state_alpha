@@ -80,7 +80,8 @@ No fixture may require schema code specific to its setting.
 48. One exchange establishing both a PC-adjacent fact and a separate ongoing off-screen condition may capture both in the same provider call; PC proximity/current objective do not suppress the persistent development.
 49. A persistent condition explicitly shown continuing after the PC ignores or leaves it remains eligible for capture. Isolated notices/claims/plans/options remain non-canonical; materially persistent rumor/news circulation may be captured only as explicitly reported/rumored/believed information state, never as verification of the underlying claim.
 50. Quoted dialogue used as the sole mutation evidence cannot promote its contents into objective world truth; an epistemically framed reported-information summary is admitted, while an otherwise identical factual summary is rejected by the source firewall.
-51. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
+51. Live automatic capture and chronological rebuild use identical assistant-boundary exchange semantics: messages after the previous assistant response through the current assistant response. Live capture must not include the previous assistant turn merely because a rolling context window has room for it.
+52. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
 
 ## Additional safety tests
 

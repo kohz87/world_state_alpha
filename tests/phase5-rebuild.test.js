@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { chatLineage, commitMutationBoundary, seedRootCheckpoint } from '../branch.js';
-import { runCaptureOperation } from '../capture.js';
+import { assistantBoundaryExchange, runCaptureOperation } from '../capture.js';
 import { createDiagnosticStore } from '../diagnostics.js';
 import {
   compareWorldStateSemantics,
@@ -127,6 +127,23 @@ test('chronological rebuild planning is assistant-boundary based and bounded bef
   );
 });
 
+test('live capture boundary extraction matches rebuild window semantics', () => {
+  const chat = fixtureChat();
+  const plan = planChronologicalRebuild(chat);
+  const lineage = chatLineage(chat);
+
+  for (const window of plan.windows) {
+    const live = assistantBoundaryExchange(chat, window.messageId, lineage);
+    assert.deepEqual(
+      live.map(item => item.messageId),
+      window.exchange.map(item => item.messageId),
+    );
+    assert.deepEqual(
+      live.map(item => item.lineageKey),
+      window.exchange.map(item => item.lineageKey),
+    );
+  }
+});
 
 test('rebuild planner supports a global start message without renumbering historical boundaries', () => {
   const chat = fixtureChat();

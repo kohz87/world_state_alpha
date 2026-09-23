@@ -454,6 +454,16 @@ test('MESSAGE_RECEIVED capture is backgrounded instead of blocking SillyTavern r
   assert.match(body, /MESSAGE_SENT[^\n]*=>\s*handleUserMessage\(messageId\)/);
 });
 
+test('live assistant capture uses the exact assistant boundary rather than a rolling prior-turn window', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const start = source.indexOf('async function handleAssistantMessage(messageId)');
+  const end = source.indexOf('async function handleUserMessage(messageId)', start);
+  const body = source.slice(start, end);
+
+  assert.match(body, /assistantBoundaryExchange\(liveChat, messageId, currentState\?\.lineage\)/);
+  assert.doesNotMatch(body, /boundedExchange\(liveChat, messageId, CAPTURE_LIMITS\.exchangeMessages/);
+});
+
 test('recovery-required host state suppresses both Reality and Spatial private injection', () => {
   const source = fs.readFileSync('index.js', 'utf8');
   const start = source.indexOf('function updatePrivateInjection()');

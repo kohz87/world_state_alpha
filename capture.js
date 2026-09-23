@@ -1,4 +1,4 @@
-import { fingerprintMessage } from './branch.js';
+import { chatLineage, fingerprintMessage } from './branch.js';
 import { CaptureWireError, parseCaptureJson, validateCaptureEnvelope } from './capture-wire.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { consolidateCreateCandidate } from './duplicate.js';
@@ -118,6 +118,32 @@ function roleOf(message) {
   if (message?.role === 'user' || message?.is_user === true) return 'user';
   if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
   return 'system';
+}
+
+export function assistantBoundaryExchange(chat = [], endMessageId, knownLineage = null) {
+  const rows = Array.isArray(chat) ? chat : [];
+  if (!Number.isInteger(endMessageId) || endMessageId < 0 || endMessageId >= rows.length) return [];
+  if (roleOf(rows[endMessageId]) !== 'assistant') return [];
+
+  const lineage = Array.isArray(knownLineage) && knownLineage.length > endMessageId
+    ? knownLineage
+    : chatLineage(rows);
+  let startMessageId = 0;
+  for (let index = endMessageId - 1; index >= 0; index -= 1) {
+    if (roleOf(rows[index]) === 'assistant') {
+      startMessageId = index + 1;
+      break;
+    }
+  }
+
+  return rows.slice(startMessageId, endMessageId + 1).map((message, offset) => {
+    const messageId = startMessageId + offset;
+    return {
+      ...clone(message),
+      messageId,
+      lineageKey: lineage[messageId]?.lineageKey || '',
+    };
+  });
 }
 
 function clip(value, max) {

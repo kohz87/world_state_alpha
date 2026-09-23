@@ -82,7 +82,7 @@ Ambiguous narration, hypothetical language, plans, questions, predictions, and m
 
 ## C06. Capture
 
-Routine capture examines only the completed current exchange plus the minimum already-retrieved state/lore context required to interpret it.
+Routine capture examines only the completed current assistant boundary: messages after the previous assistant response through the current assistant response, plus the minimum already-retrieved state/lore context required to interpret it. It must not use a rolling history window that includes the previous assistant turn; chronological rebuild uses the same boundary semantics.
 
 Default Alpha cadence is one eligible capture after each completed assistant exchange. A duplicate receipt for an already processed raw-message boundary must not issue a second automatic request. One automatic capture provider call is permitted per eligible boundary; malformed output is not automatically repaired with a second model call.
 

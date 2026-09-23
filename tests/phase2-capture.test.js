@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { chatLineage } from '../branch.js';
 import {
+  assistantBoundaryExchange,
   CAPTURE_SYSTEM_PROMPT,
   buildCapturePrompt,
   extractWorldStateCompletenessHints,
@@ -42,6 +43,24 @@ function sourceBoundary(exchange) {
   const last = exchange.at(-1);
   return { sourceMessageId: last.messageId, sourceLineageKey: last.lineageKey };
 }
+
+test('assistant boundary exchange excludes the previous assistant turn', () => {
+  const chat = [
+    { role: 'user', content: 'I enter Brackenford.' },
+    { role: 'assistant', content: 'The market is busy and a dock strike is discussed.' },
+    { role: 'user', content: 'I ignore the market and head south.' },
+    { role: 'assistant', content: 'At Applecross Culvert, seven trench-boars are bedded beneath the roots.' },
+  ];
+  const lineage = chatLineage(chat);
+
+  const first = assistantBoundaryExchange(chat, 1, lineage);
+  assert.deepEqual(first.map(item => item.messageId), [0, 1]);
+
+  const second = assistantBoundaryExchange(chat, 3, lineage);
+  assert.deepEqual(second.map(item => item.messageId), [2, 3]);
+  assert.equal(second.some(item => /dock strike/i.test(item.content)), false);
+  assert.equal(second.at(-1).lineageKey, lineage[3].lineageKey);
+});
 
 function ctxReturning(text, calls = { count: 0 }) {
   return {

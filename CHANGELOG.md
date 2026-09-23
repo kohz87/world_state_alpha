@@ -12,6 +12,7 @@
 - Scoped WebKit scrollbar arrow buttons are suppressed while scrolling remains available.
 - Capture now admits materially persistent rumor/news circulation as information state when the summary explicitly preserves reported/rumored/believed status instead of asserting the underlying claim as verified reality.
 - The source firewall now detects mutations supported only by quoted dialogue and rejects summaries that drop that epistemic framing, preventing tavern talk or other hearsay from silently becoming objective world truth.
+- Live automatic capture now uses the exact completed assistant boundary (messages after the previous assistant through the current assistant), matching chronological rebuild semantics instead of feeding the previous turn into a rolling capture window.
 
 ### Responsive behavior
 
