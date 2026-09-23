@@ -334,6 +334,20 @@ Pass criteria:
 - Current and Places reflect the full five-boundary chronology after durable persistence
 - adding any prose before or after the fence still fails closed and leaves prior canonical state unchanged
 
+### L26. Alpha.10 structured completeness checklist
+
+Use the Brackenford scene containing visible market shakedown prose plus `<World_State>` `Off-Screen` and `Unresolved Threads` entries for the same extortion. Run Reset -> Rebuild from Chat with the normal Gemini profile.
+
+Pass criteria:
+
+- the rebuild request contains a bounded structured current-state completeness checklist
+- the checklist contains the extortion current-state entry even in a long assistant message
+- Planted Seeds, Consequence Timers, Arc/Scene Phase, CYOA, inner chatter, writer planning, and inventory/skill state are not promoted into that checklist
+- the provider proposes the ongoing extortion as a `development` unless an equivalent visible current record already exists
+- the ordinary source firewall still requires grounded narration/World_State evidence before admission
+- Diagnostics shows a nonzero `State checklist` count for the affected rebuild boundary
+- Current retains the extortion development after the later boar-only boundaries complete
+
 ## 3. Contractual bounds to verify live
 
 These are behavioral ceilings, not latency predictions:
@@ -388,6 +402,7 @@ L22 Persistent off-screen capture completeness: PASS / FAIL / NOT RUN
 L23 Alpha.7 audit hardening: PASS / FAIL / NOT RUN
 L24 Alpha.8 live rebuild interoperability: PASS / FAIL / NOT RUN
 L25 Alpha.9 fenced final rebuild response: PASS / FAIL / NOT RUN
+L26 Alpha.10 structured completeness checklist: PASS / FAIL / NOT RUN
 
 Measured:
 RP TTFT baseline:

@@ -90,7 +90,7 @@ Provider capture/rebuild output must contain exactly one JSON object. The object
 
 If no material world change is established, capture returns no mutations.
 
-Capture is bounded for completeness rather than ranked only by immediate PC salience. Before output, the single capture request must sweep the whole bounded current exchange for each distinct materially persistent current condition established there, up to the existing mutation cap.
+Capture is bounded for completeness rather than ranked only by immediate PC salience. Before output, the single capture request must sweep the whole bounded current exchange for each distinct materially persistent current condition established there, up to the existing mutation cap. When a narrator-authored `<World_State>` block is present, the host may surface a bounded advisory checklist from its `Off-Screen` and `Unresolved Threads` entries so less-salient persistent conditions remain visible to the same provider request. The checklist is not a second authority or a local mutation path: every proposed mutation still requires source-firewall evidence and all ordinary exclusions remain in force.
 
 PC proximity, current objective, and player intervention are not admission criteria. An established ongoing condition that will continue independently after the PC leaves or ignores it remains a valid `development`, including when it is now off-screen.
 
@@ -455,7 +455,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, and 0.9.0-alpha.9 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, 0.9.0-alpha.9, and 0.9.0-alpha.10 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 

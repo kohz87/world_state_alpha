@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0-alpha.10 - Structured completeness checklist
+
+### Fixed
+
+- Capture/rebuild now extracts a bounded advisory completeness checklist from narrator-authored `<World_State>` `Off-Screen` and `Unresolved Threads` entries before prompt clipping.
+- The same single provider request must re-check each checklist item and represent materially persistent conditions that are established by the exchange and not already present in visible current state.
+- Long scenes no longer rely solely on salience inside the clipped narrative window for off-screen persistence completeness; Brackenford-style market extortion remains visible to the extractor alongside boar combat, handcart state, and Spatial continuity.
+- Diagnostics now expose a bounded `State checklist` count for each capture/rebuild boundary so operators can verify that structured completeness hints were supplied.
+- Added exact HTML/source-firewall regression coverage for the Brackenford extortion payload to prove the development is admitted and retained once proposed.
+
+### Preserved
+
+- The checklist is advisory only and never writes canonical state itself.
+- `Planted Seeds`, consequence timers, arc/scene phase, CYOA, NPC inner chatter, writer planning, and character inventory/skill state remain excluded from the checklist/capture authority.
+- No second provider call, correction retry, full-world scan, or new Story Director behavior was added.
+- Every admitted mutation still passes the existing source firewall, duplicate gate, reducer, branch ownership, and rebuild atomicity rules.
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+
 ## 0.9.0-alpha.9 - Fenced provider response interoperability
 
 ### Fixed

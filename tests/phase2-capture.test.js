@@ -5,6 +5,7 @@ import { chatLineage } from '../branch.js';
 import {
   CAPTURE_SYSTEM_PROMPT,
   buildCapturePrompt,
+  extractWorldStateCompletenessHints,
   processCaptureResponse,
   runCaptureOperation,
 } from '../capture.js';
@@ -175,9 +176,104 @@ test('capture prompt requires persistent off-screen completeness instead of PC-o
   });
 
   assert.match(prompt.prompt, /PERSISTENCE COMPLETENESS CHECK/);
+  assert.match(prompt.prompt, /STRUCTURED CURRENT-STATE COMPLETENESS CHECKLIST/);
   assert.match(prompt.prompt, /Orson blocks an elderly farmer/);
   assert.match(prompt.prompt, /Extortion at Brackenford market stalls by local carters went uninterrupted/);
   assert.match(prompt.prompt, /off-screen, ignored by the PC/i);
+  assert.equal(prompt.completenessHints.some(item => /Extortion at Brackenford/i.test(item.text)), true);
+  assert.equal(prompt.completenessHints.some(item => /brush-thieves targeting cart wheels/i.test(item.text)), false);
+});
+
+
+test('World_State Off-Screen and Unresolved Threads become a bounded completeness checklist', () => {
+  const assistant = [
+    '<writer_state>world_motion: market stalls unpacking; boars concealed near the ditch.</writer_state>',
+    '<font color="#C05A46">"Every crate off that wagon touches village gravel, Garrow."</font>',
+    'The speaker was a thick-necked carter blocking an elderly farmer ten paces inside Brackenford gate.',
+    '<font color="#C05A46">"Gravel belongs to the haulers\' guild. Two Aon for the cobbles. Pay it now. We don\'t want these crates tipped in the horse gutters."</font>',
+    '<World_State>',
+    '**📡 Off-Screen:**',
+    '* Karr — Working the timber yard at Northgate Stockyard',
+    '* Orson & Market Drovers — Harassing traders along the Brackenford stall rows',
+    '',
+    '**🔥 Unresolved Threads:**',
+    '* Trench-boar sounder is bedded down directly beneath Noc\'s tree, unseen from the water line.',
+    '* Rented handcart sits concealed in the alder brush forty paces up the bank.',
+    '* Extortion at Brackenford market stalls by local carters went uninterrupted.',
+    '* The Long Root Pattern Core Weave remains hidden at Snake stage.',
+    '',
+    '**🌱 Planted Seeds:** Reeve bounty payout; haulers shakedown; brush-thieves',
+    '**⏳ Consequence Timers:** Handcart rental due back by dusk',
+    '**🎯 Arc Phase:** Setup',
+    '</World_State>',
+    '<NPC_Inner_Chatter>KARR: private thought</NPC_Inner_Chatter>',
+  ].join('\n');
+  const exchange = withLineage([{ role: 'assistant', content: assistant }]);
+  const hints = extractWorldStateCompletenessHints(exchange);
+
+  assert.equal(hints.some(item => /Extortion at Brackenford market stalls/i.test(item.text)), true);
+  assert.equal(hints.some(item => /Orson & Market Drovers/i.test(item.text)), true);
+  assert.equal(hints.some(item => /Planted Seeds|brush-thieves|Consequence Timers|Arc Phase/i.test(item.text)), false);
+
+  const prompt = buildCapturePrompt({ exchange, operation: 'rebuild' });
+  assert.match(prompt.prompt, /STRUCTURED CURRENT-STATE COMPLETENESS CHECKLIST/);
+  assert.match(prompt.prompt, /Extortion at Brackenford market stalls by local carters went uninterrupted/);
+  assert.match(prompt.prompt, /Re-check each entry before returning/);
+  assert.equal(prompt.completenessHints.length, hints.length);
+});
+
+test('live Brackenford extortion payload is admitted through HTML narration and survives beside other records', () => {
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: [
+      '<font color="#C05A46">"Every crate off that wagon touches village gravel, Garrow."</font>',
+      'The speaker was a thick-necked carter in a grease-stained leather vest, planted square before an elderly farmer\'s handcart ten paces inside the gate.',
+      '<font color="#C05A46">"Gravel belongs to the haulers\' guild. Two Aon for the cobbles. Pay it now. We don\'t want these crates tipped in the horse gutters."</font>',
+      'Two other rough-shirted drovers stood behind the carter, thumbs hooked in their rope belts, eyes drifting over the morning crowd to see if the village watchman had finished his ale at the gatehouse.',
+      '<World_State>',
+      '**📡 Off-Screen:**',
+      '* Orson & Market Drovers — Harassing traders along the Brackenford stall rows',
+      '**🔥 Unresolved Threads:**',
+      '* Extortion at Brackenford market stalls by local carters went uninterrupted.',
+      '</World_State>',
+    ].join('\n'),
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        summary: "Haulers' guild carters in Brackenford are extorting fees from inbound farmers and market stalls under threat of tipping their cargo.",
+        status: 'active',
+        trend: 'stable',
+        anchors: ['Brackenford', "haulers' guild", 'extortion'],
+        evidence: [
+          {
+            sourceMessageId: 0,
+            claim: "Gravel belongs to the haulers' guild. Two Aon for the cobbles. Pay it now. We don't want these crates tipped in the horse gutters.",
+          },
+          {
+            sourceMessageId: 0,
+            claim: 'Two other rough-shirted drovers stood behind the carter, thumbs hooked in their rope belts, eyes drifting over the morning crowd to see if the village watchman had finished his ale at the gatehouse.',
+          },
+        ],
+      }],
+    }),
+    state: createState('live-brackenford-extortion'),
+    exchange,
+    chatKey: 'live-brackenford-extortion',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+    operation: 'rebuild',
+    evidenceSourceClass: 'rebuild',
+  });
+
+  assert.equal(result.acceptedCount, 1);
+  assert.equal(result.rejected.length, 0);
+  assert.equal(result.state.records.length, 1);
+  assert.equal(result.state.records[0].kind, 'development');
+  assert.match(result.state.records[0].summary, /extorting fees/i);
 });
 
 test('established market extortion can coexist with a PC-adjacent capture in one bounded call', async () => {

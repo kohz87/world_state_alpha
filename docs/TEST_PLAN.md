@@ -109,6 +109,8 @@ No fixture may require schema code specific to its setting.
 - rebuild passive duplicate of resolved episode -> reject
 - rebuild explicit new related episode -> create new record, retain tombstone
 - rebuild historical exchange contains an ignored persistent off-screen condition -> recover it as current development with `rebuild` evidence, without replaying hidden evolution
+- long assistant exchange contains narrator-authored World_State Off-Screen/Unresolved entries -> bounded completeness checklist retains those current-state candidates while excluding Planted Seeds/timers/arc-scene/CYOA/inner chatter/planning
+- exact Brackenford HTML extortion evidence remains grounded through the source firewall and is not deleted by the reducer once proposed
 - meaningful elapsed hint remains visible across subsequent bounded exchanges -> at most one background sweep for that elapsed evidence boundary
 - meaningful elapsed time in an unrelated scene -> examine at most 32 indexed active-development entries, fill at most three background slots, and keep the combined evolution batch at six or fewer
 - empty UI search -> no accidental whole-database dump

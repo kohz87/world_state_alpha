@@ -19,10 +19,10 @@ const packageSource = fs.readFileSync('scripts/package-design.mjs', 'utf8');
 if (inventory.stage !== 'phase8-release-hardening' && inventory.stage !== 'phase9-spatial-continuity') {
   throw new Error('Phase 8 runtime inventory stage mismatch: ' + inventory.stage);
 }
-if (!['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9'].includes(pkg.version) || manifest.version !== pkg.version) {
+if (!['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10'].includes(pkg.version) || manifest.version !== pkg.version) {
   throw new Error('Phase 8 application version markers inconsistent in package.json/manifest.json');
 }
-if (!indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.8.0-alpha.1'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.1'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.2'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.3'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.4'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.5'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.6'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.7'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.8'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.9'")) {
+if (!indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.8.0-alpha.1'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.1'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.2'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.3'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.4'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.5'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.6'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.7'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.8'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.9'") && !indexSource.includes("WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.10'")) {
   throw new Error('Phase 8 index.js version marker not synchronized');
 }
 for (const required of [

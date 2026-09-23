@@ -18,7 +18,75 @@ export const CAPTURE_LIMITS = Object.freeze({
   perMessageChars: 7000,
   visibleRecords: 8,
   loreChars: 3500,
+  completenessHints: 10,
+  completenessHintChars: 320,
 });
+
+function normalizeChecklistText(value) {
+  return String(value ?? '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/^\s*[-*]+\s*/u, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseWorldStateSectionLine(line) {
+  const raw = String(line ?? '');
+  const cleaned = raw
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[*#_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const offScreen = cleaned.match(/^[^\p{L}\p{N}]*off-screen\s*:\s*(.*)$/iu);
+  if (offScreen) return { section: 'off_screen', inline: offScreen[1] || '' };
+
+  const unresolved = cleaned.match(/^[^\p{L}\p{N}]*unresolved threads\s*:\s*(.*)$/iu);
+  if (unresolved) return { section: 'unresolved_threads', inline: unresolved[1] || '' };
+
+  const headingLike = cleaned.match(/^[^:]{2,80}:\s*(.*)$/u);
+  return headingLike ? { section: 'other', inline: headingLike[1] || '' } : null;
+}
+
+export function extractWorldStateCompletenessHints(exchange = []) {
+  const messages = (Array.isArray(exchange) ? exchange : [])
+    .filter(message => roleOf(message) === 'assistant' && Number.isInteger(message?.messageId))
+    .slice(-CAPTURE_LIMITS.exchangeMessages);
+  const hints = [];
+  const seen = new Set();
+
+  function pushHint(messageId, section, rawValue) {
+    const value = normalizeChecklistText(rawValue).slice(0, CAPTURE_LIMITS.completenessHintChars);
+    const key = value.normalize('NFKC').toLocaleLowerCase();
+    if (!value || key.length < 8 || seen.has(key)) return false;
+    seen.add(key);
+    hints.push({ sourceMessageId: messageId, section, text: value });
+    return hints.length >= CAPTURE_LIMITS.completenessHints;
+  }
+
+  for (const message of messages) {
+    const narration = sanitizeAssistantNarration(messageText(message));
+    const blocks = narration.match(/<World_State(?:\s+[^>]*)?>[\s\S]*?(?:<\/World_State>|$)/gi) || [];
+    for (const block of blocks) {
+      let section = '';
+      for (const rawLine of block.split(/\r?\n/u)) {
+        const parsed = parseWorldStateSectionLine(rawLine);
+        if (parsed) {
+          section = parsed.section === 'other' ? '' : parsed.section;
+          if (section && parsed.inline && pushHint(message.messageId, section, parsed.inline)) return hints;
+          continue;
+        }
+        if (/^\s*---+\s*$/u.test(rawLine)) {
+          section = '';
+          continue;
+        }
+        if (!section || !/^\s*[-*]\s+/u.test(rawLine)) continue;
+        if (pushHint(message.messageId, section, rawLine)) return hints;
+      }
+    }
+  }
+  return hints;
+}
 
 export const CAPTURE_SYSTEM_PROMPT = [
   'Return exactly one valid JSON object for World State Alpha capture. No markdown or commentary.',
@@ -122,6 +190,7 @@ export function buildCapturePrompt({
   spatialProfile = null,
 } = {}) {
   const currentExchange = normalizeCaptureExchange(exchange);
+  const completenessHints = extractWorldStateCompletenessHints(exchange);
   const records = renderRecords(visibleRecords);
   const lore = clip(loreText, CAPTURE_LIMITS.loreChars);
   const prompt = [
@@ -138,6 +207,11 @@ export function buildCapturePrompt({
     lore || '(none)',
     '',
     'PERSISTENCE COMPLETENESS CHECK: Before output, sweep the entire CURRENT EXCHANGE again. Represent every distinct materially persistent current condition established there, even when it is off-screen, ignored by the PC, unrelated to the current objective, or continuing elsewhere after the PC leaves. Do not promote transient scene detail or mere notices/rumors/plans/options into reality. Do not duplicate one condition across mutations.',
+    completenessHints.length ? 'STRUCTURED CURRENT-STATE COMPLETENESS CHECKLIST:' : '',
+    completenessHints.length ? JSON.stringify(completenessHints) : '',
+    completenessHints.length
+      ? 'Checklist policy: these are bounded narrator-authored entries extracted only from the current World_State Off-Screen and Unresolved Threads sections. Re-check each entry before returning. If it describes a materially persistent world condition established by this exchange and is not already represented by a visible current record, include one mutation for it. Prefer ordinary narrated prose as evidence when available; the World_State line may corroborate. Still exclude transient positions, character inventory/skill state, Planted Seeds, Consequence Timers, Arc/Scene Phase, CYOA, inner chatter, writer planning, rumors, and mere possibilities.'
+      : '',
     '',
     spatialEnabled ? 'VISIBLE SPATIAL CONTINUITY (current/base authority; use only shown IDs):' : '',
     spatialEnabled ? JSON.stringify((Array.isArray(visibleLocations) ? visibleLocations : []).slice(0, 8).map(location => ({
@@ -164,6 +238,7 @@ export function buildCapturePrompt({
     systemPrompt: CAPTURE_SYSTEM_PROMPT,
     prompt,
     responseLength: CAPTURE_RESPONSE_TOKENS,
+    completenessHints,
     quietToLoud: false,
     instructOverride: true,
     trimNames: false,
@@ -419,6 +494,7 @@ export async function runCaptureOperation({
       profileId: receipt.profileId || '',
       providerCalls,
       candidateRecords: Math.min(visibleRecords.length, CAPTURE_LIMITS.visibleRecords),
+      completenessHints: options.completenessHints?.length || 0,
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: 0,
       durationMs: Date.now() - startedAt,
@@ -447,6 +523,7 @@ export async function runCaptureOperation({
       profileId: dispatched.receipt?.profileId || '',
       providerCalls: 1,
       candidateRecords: Math.min(visibleRecords.length, CAPTURE_LIMITS.visibleRecords),
+      completenessHints: options.completenessHints?.length || 0,
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
@@ -491,6 +568,7 @@ export async function runCaptureOperation({
       rejected: processed.rejected.length + spatialRejected,
       aliasRepairs: processed.aliasRepairs || 0,
       candidateRecords: Math.min(visibleRecords.length, CAPTURE_LIMITS.visibleRecords),
+      completenessHints: options.completenessHints?.length || 0,
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
@@ -509,6 +587,7 @@ export async function runCaptureOperation({
       profileId: dispatched.receipt?.profileId || '',
       providerCalls: 1,
       candidateRecords: Math.min(visibleRecords.length, CAPTURE_LIMITS.visibleRecords),
+      completenessHints: options.completenessHints?.length || 0,
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
