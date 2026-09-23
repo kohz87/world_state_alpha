@@ -156,6 +156,8 @@ Observe:
 - import/reset publish only after durable persistence
 - rebuild is never automatic
 - rebuild from chat recovers materially persistent narrated off-screen developments even when later scenes never revisit them
+- if an earlier reconstructed active development is explicitly ended/completed/eliminated/replaced by later narration, the rebuilt final state moves it to Resolved/Superseded instead of leaving it active
+- a short implicit follow-up ending such as `the last two collapse` may close a recently reconstructed development when the shown lifecycle candidate plus current exchange make the ending grounded; mere disappearance/escape/uncertainty must remain active
 - with **Include hidden chat messages** enabled, deliberately hidden user/assistant RP can be reconstructed without visibly unhiding the messages, saving the chat, or changing their hidden state afterward
 - hidden tool/system/UI rows remain excluded even when hidden-message scanning is enabled
 - disabling the option excludes both hidden user and hidden assistant rows

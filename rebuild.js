@@ -9,6 +9,8 @@ export const REBUILD_LIMITS = Object.freeze({
   maxBoundaries: 1024,
   maxVisibleRecords: 8,
   resolvedVisibleRecords: 2,
+  lifecycleVisibleRecords: 2,
+  lifecycleRecentMessages: 12,
 });
 
 function messageText(message) {
@@ -164,49 +166,93 @@ export function planChronologicalRebuild(chat = [], {
   };
 }
 
-function historicalRelevant(record, recentText) {
-  const haystack = normalizeAnchor(recentText);
-  const terms = new Set(extractContextTerms(recentText));
+function rebuildMatchContext(recentText) {
+  return {
+    haystack: normalizeAnchor(recentText),
+    terms: new Set(extractContextTerms(recentText)),
+  };
+}
+
+function historicalRelevant(record, context) {
   const anchorHit = (record?.anchors || []).some(anchor => {
     const normalized = normalizeAnchor(anchor);
     if (!normalized) return false;
     const anchorTerms = normalized.split(' ').filter(Boolean);
     return anchorTerms.length > 1
-      ? haystack.includes(normalized)
-      : terms.has(normalized);
+      ? context.haystack.includes(normalized)
+      : context.terms.has(normalized);
   });
   if (anchorHit) return true;
 
   const summaryTerms = extractContextTerms(record?.summary || '');
   let overlap = 0;
-  for (const term of summaryTerms) if (terms.has(term)) overlap += 1;
+  for (const term of summaryTerms) if (context.terms.has(term)) overlap += 1;
   return overlap >= 2;
+}
+
+function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessageId) {
+  const lifecycle = [];
+  const historical = [];
+  const context = rebuildMatchContext(recentText);
+
+  for (const record of state.records || []) {
+    const lastChanged = Number.isInteger(record?.lastChangedMessage) ? record.lastChangedMessage : -1;
+    const overlapsExchange = historicalRelevant(record, context);
+
+    if (record?.kind === 'development' && record?.status === 'active') {
+      const recentlyChanged = Number.isInteger(boundaryMessageId)
+        && lastChanged >= 0
+        && boundaryMessageId > lastChanged
+        && (boundaryMessageId - lastChanged) <= REBUILD_LIMITS.lifecycleRecentMessages;
+      if (overlapsExchange || recentlyChanged) {
+        lifecycle.push({ record, overlapsExchange, lastChanged });
+      }
+      continue;
+    }
+
+    if (['resolved', 'superseded'].includes(record?.status) && overlapsExchange) {
+      historical.push({ record, lastChanged });
+    }
+  }
+
+  lifecycle.sort((left, right) => {
+    if (left.overlapsExchange !== right.overlapsExchange) return left.overlapsExchange ? -1 : 1;
+    if (right.lastChanged !== left.lastChanged) return right.lastChanged - left.lastChanged;
+    return String(left.record?.id || '').localeCompare(String(right.record?.id || ''));
+  });
+  historical.sort((left, right) => {
+    if (right.lastChanged !== left.lastChanged) return right.lastChanged - left.lastChanged;
+    return String(left.record?.id || '').localeCompare(String(right.record?.id || ''));
+  });
+
+  return {
+    lifecycle: lifecycle.slice(0, REBUILD_LIMITS.lifecycleVisibleRecords).map(item => item.record),
+    historical: historical.slice(0, REBUILD_LIMITS.resolvedVisibleRecords).map(item => item.record),
+  };
 }
 
 function visibleForRebuild(state, exchange, boundaryMessageId) {
   const recentText = exchangeText(exchange);
+  const reserved = rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessageId);
+  const lifecycle = reserved.lifecycle;
+  const historical = reserved.historical;
+
   const active = selectRelevantRecords(state, {
     recentText,
     currentMessageId: boundaryMessageId,
-    maxRecords: Math.min(6, REBUILD_LIMITS.maxVisibleRecords),
+    maxRecords: REBUILD_LIMITS.maxVisibleRecords,
   }).selected.map(entry => entry.record);
 
-  const remaining = Math.max(0, REBUILD_LIMITS.maxVisibleRecords - active.length);
-  if (!remaining) return active.slice(0, CAPTURE_LIMITS.visibleRecords);
-
-  const historical = (state.records || [])
-    .filter(record => ['resolved', 'superseded'].includes(record?.status))
-    .filter(record => historicalRelevant(record, recentText))
-    .sort((left, right) => {
-      const a = Number.isInteger(left?.lastChangedMessage) ? left.lastChangedMessage : -1;
-      const b = Number.isInteger(right?.lastChangedMessage) ? right.lastChangedMessage : -1;
-      if (b !== a) return b - a;
-      return String(left?.id || '').localeCompare(String(right?.id || ''));
-    })
-    .slice(0, Math.min(REBUILD_LIMITS.resolvedVisibleRecords, remaining));
-
   const byId = new Map();
-  for (const record of [...active, ...historical]) {
+  for (const record of lifecycle) {
+    if (record?.id && !byId.has(record.id)) byId.set(record.id, record);
+  }
+  for (const record of historical) {
+    if (byId.size >= REBUILD_LIMITS.maxVisibleRecords) break;
+    if (record?.id && !byId.has(record.id)) byId.set(record.id, record);
+  }
+  for (const record of active) {
+    if (byId.size >= REBUILD_LIMITS.maxVisibleRecords) break;
     if (record?.id && !byId.has(record.id)) byId.set(record.id, record);
   }
   return [...byId.values()].slice(0, CAPTURE_LIMITS.visibleRecords);

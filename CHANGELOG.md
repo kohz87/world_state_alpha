@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0-alpha.16 - Lifecycle reconciliation recovery
+
+### Fixed
+
+- Capture now explicitly reconciles lifecycle for shown active developments: grounded endings resolve, explicit replacements supersede, continuing changed conditions update, and mere silence/off-screen absence/escape/uncertainty does not close a thread.
+- Rebuild now treats later historical boundaries as possible closures of earlier reconstructed active threads, so a full rebuild can retire episodes that ended in old chat instead of leaving them permanently active.
+- Each rebuild boundary reserves up to two active development lifecycle candidates before ordinary relevance filling. Candidates qualify by current-exchange overlap or by having changed within the previous 12 raw messages, covering short implicit follow-ups such as “the last two collapse.”
+- Lifecycle and resolved-tombstone reservation share one bounded state pass; rebuild does not add another provider call or replay background evolution.
+- Added direct source-firewalled resolve coverage and an end-to-end rebuild regression proving an indirectly phrased later ending moves the reconstructed thread to Resolved.
+
+### Preserved
+
+- Resolution still requires grounded CURRENT EXCHANGE evidence and the existing source firewall; rebuild never closes a thread merely because it disappears from narration.
+- Automatic capture remains one provider request per eligible assistant boundary. Rebuild remains explicit, chronological, atomic, and capture-only.
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+
 ## 0.9.0-alpha.15 - World-state integrity hardening
 
 ### Fixed

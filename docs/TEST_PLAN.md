@@ -85,7 +85,10 @@ No fixture may require schema code specific to its setting.
 53. With hidden-message scanning enabled, a hidden user turn and a hidden assistant turn with ordinary assistant-generation markers are virtually included in chronological rebuild windows, while genuine system/tool/UI rows remain excluded.
 54. The virtual hidden-message rebuild view never mutates the original chat object or any stored `is_system` flag, and accepted hidden assistant narration can still pass the ordinary capture/source-firewall path as rebuild evidence.
 55. With hidden-message scanning disabled, hidden user and hidden assistant rows are both excluded from rebuild evidence/boundaries.
-56. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
+56. Direct capture may resolve a visible active development only from grounded current-exchange evidence explicitly establishing its ending; the source firewall remains authoritative.
+57. Full chronological rebuild creates an active development at an earlier boundary, then later narration such as `the last two collapse` can resolve it even when that later exchange no longer repeats the original anchor phrase, because a bounded recent lifecycle candidate remains visible.
+58. Rebuild lifecycle reservation remains bounded to two active developments and never treats silence, off-screen status, temporary absence, escape, interruption, or uncertainty as deterministic resolution.
+59. Live acceptance verification is governed by [LIVE_ACCEPTANCE.md](file:///C:/AI-Agent/worktrees/504dbad2-phase8-release-hardening/docs/LIVE_ACCEPTANCE.md).
 
 ## Additional safety tests
 
