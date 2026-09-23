@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.0-alpha.14 - Virtual hidden-message rebuild
+
+### Added
+
+- Rebuild from Chat now includes an **Include hidden chat messages** option, enabled by default.
+- Hidden roleplay messages are reconstructed through an immutable virtual rebuild view. SillyTavern `chat[]`, `is_system`, DOM visibility, saves, and canonical lineage are never toggled during rebuild.
+- Hidden user turns are admitted as user evidence when enabled. Hidden assistant turns are admitted only when conservative roleplay markers remain (assistant role/type, character avatar metadata, swipes, generation timing, or model/API generation metadata).
+- Known system/tool/UI messages remain excluded, including small-system/tool rows and named system message types.
+- Rebuild Operations/status telemetry reports how many hidden messages and hidden assistant boundaries were actually included.
+
+### Fixed
+
+- Disabling hidden-message scanning now excludes hidden user messages as well as hidden assistant messages; the previous role resolver could let hidden user rows pass because it checked `is_user` before `is_system`.
+
+### Preserved
+
+- No live chat unhide/rehide mutation, save, UI flicker, branch event, lineage rewrite, schema change, or additional provider call is introduced.
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+
 ## 0.9.0-alpha.13 - Passive lineage rewrite hardening
 
 ### Fixed

@@ -22,6 +22,7 @@ Included in the current gate:
 - 0.9.0-alpha.11 responsive operator UX: adaptive desktop/tablet/mobile projection, Operations inspection, atomic rebuild progress/cancel, safe exact-prefix partial rebuild ranges, and configurable manual rebuild boundary cap
 - 0.9.0-alpha.12 flat disclosure UX: continuity icon/title branding, inline expandable Reality records, flatter Operations/Data presentation, dismissible floating rebuild status, and scrollbar-arrow suppression
 - 0.9.0-alpha.13 passive-lineage hardening: protect the exact latest captured assistant boundary from unannounced host/regex/reasoning rewrites while keeping explicit edit/delete/swipe rollback authoritative and exposing branch reconciliation diagnostics
+- 0.9.0-alpha.14 virtual hidden-message rebuild: optional/default-on immutable rebuild view that reclassifies eligible hidden user/assistant roleplay for recovery only, excludes genuine system/tool/UI rows, and never toggles live chat visibility or lineage
 - explicit coexistence hardening against NPC State Delta and Ukiyo/Megumin ownership
 - cumulative Phase 1-9 deterministic tests and validation
 

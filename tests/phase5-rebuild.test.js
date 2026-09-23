@@ -127,6 +127,107 @@ test('chronological rebuild planning is assistant-boundary based and bounded bef
   );
 });
 
+test('rebuild can virtually include eligible hidden roleplay messages without mutating chat', () => {
+  const chat = [
+    { role: 'user', content: 'I arrive at the gate.' },
+    { role: 'assistant', content: 'The gate is open.' },
+    { is_user: true, is_system: true, mes: 'I quietly bribe the porter.' },
+    {
+      name: 'System',
+      is_user: false,
+      is_system: true,
+      mes: 'Tool result that must remain system-only.',
+      extra: { isSmallSys: true, tool_invocations: [{ id: 'tool-1' }] },
+    },
+    {
+      name: 'Gatekeeper',
+      is_user: false,
+      is_system: true,
+      mes: 'The porter pockets the coin and waves you through.',
+      swipes: ['The porter pockets the coin and waves you through.'],
+      swipe_id: 0,
+      extra: { api: 'test', model: 'test-model' },
+    },
+    { role: 'user', content: 'I continue inside.' },
+    { role: 'assistant', content: 'The courtyard is quiet.' },
+  ];
+  const original = structuredClone(chat);
+
+  const included = planChronologicalRebuild(chat, { includeHiddenMessages: true });
+  assert.deepEqual(included.windows.map(item => item.messageId), [1, 4, 6]);
+  assert.equal(included.metrics.hiddenMessagesIncluded, 2);
+  assert.equal(included.metrics.hiddenAssistantBoundaries, 1);
+  assert.equal(included.metrics.includeHiddenMessages, true);
+  assert.deepEqual(included.windows[1].exchange.map(item => item.messageId), [2, 3, 4]);
+  assert.equal(included.windows[1].exchange[0].role, 'user');
+  assert.equal(included.windows[1].exchange[0].is_system, false);
+  assert.equal(included.windows[1].exchange[1].is_system, true);
+  assert.equal(included.windows[1].exchange[2].role, 'assistant');
+  assert.equal(included.windows[1].exchange[2].is_system, false);
+  assert.deepEqual(chat, original, 'virtual rebuild view must never mutate SillyTavern chat visibility');
+
+  const excluded = planChronologicalRebuild(chat, { includeHiddenMessages: false });
+  assert.deepEqual(excluded.windows.map(item => item.messageId), [1, 6]);
+  assert.equal(excluded.metrics.hiddenMessagesIncluded, 0);
+  assert.equal(excluded.metrics.hiddenAssistantBoundaries, 0);
+  assert.equal(excluded.metrics.includeHiddenMessages, false);
+  assert.equal(excluded.windows[1].exchange[0].messageId, 2);
+  assert.equal(excluded.windows[1].exchange[0].is_system, true);
+  assert.deepEqual(chat, original, 'disabled hidden scanning must also leave chat untouched');
+});
+
+test('manual rebuild consumes hidden assistant narration virtually and preserves original hidden state', async () => {
+  const chat = [{
+    name: 'Innkeeper',
+    is_user: false,
+    is_system: true,
+    mes: 'Reports are circulating that the north road bridge collapsed overnight.',
+    swipes: ['Reports are circulating that the north road bridge collapsed overnight.'],
+    swipe_id: 0,
+    extra: { api: 'test', model: 'test-model' },
+  }];
+  const original = structuredClone(chat);
+  let calls = 0;
+
+  const result = await runManualRebuild({
+    ctx: {},
+    state: createState('hidden-rebuild'),
+    chat,
+    chatKey: 'hidden-rebuild',
+    includeHiddenMessages: true,
+    isCurrent: () => true,
+    dispatcher: async (_ctx, options) => {
+      calls += 1;
+      assert.match(options.prompt, /Reports are circulating that the north road bridge collapsed overnight\./);
+      return {
+        text: JSON.stringify({
+          mutations: [{
+            action: 'create',
+            kind: 'development',
+            summary: 'Reports are circulating that the north road bridge collapsed overnight.',
+            anchors: ['north road', 'bridge'],
+            evidence: [{
+              sourceMessageId: 0,
+              claim: 'Reports are circulating that the north road bridge collapsed overnight.',
+            }],
+          }],
+        }),
+        receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' },
+      };
+    },
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.equal(calls, 1);
+  assert.equal(result.providerCalls, 1);
+  assert.equal(result.plan.hiddenMessagesIncluded, 1);
+  assert.equal(result.plan.hiddenAssistantBoundaries, 1);
+  assert.equal(result.state.records.length, 1);
+  assert.match(result.state.records[0].summary, /Reports are circulating/i);
+  assert.deepEqual(chat, original, 'manual rebuild must never toggle persisted chat visibility');
+  assert.equal(chat[0].is_system, true);
+});
+
 test('live capture boundary extraction matches rebuild window semantics', () => {
   const chat = fixtureChat();
   const plan = planChronologicalRebuild(chat);

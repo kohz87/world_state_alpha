@@ -465,6 +465,9 @@ export function buildWorldStateUiModel(state, {
             mode: clean(runtimeInfo.rebuildStatus.mode, 20),
             startMessageId: integer(runtimeInfo.rebuildStatus.startMessageId) ?? 0,
             maxBoundaries: integer(runtimeInfo.rebuildStatus.maxBoundaries) ?? 0,
+            includeHiddenMessages: runtimeInfo.rebuildStatus.includeHiddenMessages !== false,
+            hiddenMessagesIncluded: integer(runtimeInfo.rebuildStatus.hiddenMessagesIncluded) ?? 0,
+            hiddenAssistantBoundaries: integer(runtimeInfo.rebuildStatus.hiddenAssistantBoundaries) ?? 0,
             processedBoundaries: integer(runtimeInfo.rebuildStatus.processedBoundaries) ?? 0,
             totalBoundaries: integer(runtimeInfo.rebuildStatus.totalBoundaries) ?? 0,
             currentMessageId: integer(runtimeInfo.rebuildStatus.currentMessageId),
@@ -933,6 +936,7 @@ function rebuildStatusHtml(status, { dismissible = true } = {}) {
     '<span>' + status.providerCalls + ' calls</span>' +
     '<span>' + status.currentRecords + ' current</span>' +
     '<span>' + status.places + ' places</span>' +
+    (Number(status.hiddenMessagesIncluded) > 0 ? '<span>' + Number(status.hiddenMessagesIncluded) + ' hidden included</span>' : '') +
     '</div></div>' +
     (cancellable ? '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-cancel-rebuild>Cancel</button>' : '') +
     '</aside>';
@@ -947,6 +951,7 @@ function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
   const startMessageId = Number.isInteger(form.startMessageId) ? form.startMessageId : 0;
   const lastMessages = Number.isInteger(form.lastMessages) ? form.lastMessages : Math.min(20, Math.max(1, rebuild.chatMessages));
   const maxBoundaries = Number.isInteger(form.maxBoundaries) ? form.maxBoundaries : rebuild.defaultMaxBoundaries;
+  const includeHiddenMessages = form.includeHiddenMessages !== false;
 
   const body = active
     ? '<div class="wsa-rebuild-running">' + rebuildStatusHtml(status, { dismissible: false }) +
@@ -960,6 +965,7 @@ function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
       '<label class="wsa-inline-field"><span>Start message</span><input type="number" min="0" max="' + Math.max(0, rebuild.chatMessages - 1) + '" value="' + startMessageId + '" data-wsa-rebuild-start></label>' +
       '</fieldset>' +
       '<fieldset><legend>Safety &amp; limits</legend>' +
+      '<label class="wsa-radio"><input type="checkbox" data-wsa-rebuild-hidden' + (includeHiddenMessages ? ' checked' : '') + '><span><strong>Include hidden chat messages</strong><small>Virtually scans eligible hidden roleplay messages without changing chat visibility or lineage.</small></span></label>' +
       '<label class="wsa-inline-field"><span>Maximum assistant boundaries</span><input type="number" min="1" max="' + rebuild.maxAllowedBoundaries + '" value="' + maxBoundaries + '" data-wsa-rebuild-max></label>' +
       '<div class="wsa-rebuild-scope"><span>Reality / Current State</span><strong>Enabled</strong></div>' +
       '<div class="wsa-rebuild-scope"><span>Places</span><strong>' + (rebuild.spatialEnabled ? 'Enabled' : 'Disabled in settings') + '</strong></div>' +
@@ -1077,6 +1083,7 @@ export function createWorldStateUiController({
       startMessageId: 0,
       lastMessages: 20,
       maxBoundaries: null,
+      includeHiddenMessages: true,
     },
     destroyed: false,
   };
@@ -1237,6 +1244,7 @@ export function createWorldStateUiController({
       const startInput = form?.querySelector?.('[data-wsa-rebuild-start]');
       const lastInput = form?.querySelector?.('[data-wsa-rebuild-last]');
       const maxInput = form?.querySelector?.('[data-wsa-rebuild-max]');
+      const hiddenInput = form?.querySelector?.('[data-wsa-rebuild-hidden]');
       const currentModel = model();
       const maxAllowed = currentModel.maintenance.rebuild.maxAllowedBoundaries;
       const chatMessages = currentModel.maintenance.rebuild.chatMessages;
@@ -1255,7 +1263,8 @@ export function createWorldStateUiController({
           ? Math.trunc(Number(maxInput.value))
           : currentModel.maintenance.rebuild.defaultMaxBoundaries,
       ));
-      ui.rebuildForm = { mode, startMessageId, lastMessages, maxBoundaries };
+      const includeHiddenMessages = hiddenInput ? Boolean(hiddenInput.checked) : ui.rebuildForm.includeHiddenMessages !== false;
+      ui.rebuildForm = { mode, startMessageId, lastMessages, maxBoundaries, includeHiddenMessages };
       if (typeof onMaintenanceAction === 'function') {
         await onMaintenanceAction('rebuild', { rebuild: { ...ui.rebuildForm } });
       }
@@ -1383,6 +1392,12 @@ export function createWorldStateUiController({
     const maxInput = closest(event.target, '[data-wsa-rebuild-max]');
     if (maxInput) {
       ui.rebuildForm.maxBoundaries = Math.max(1, Math.trunc(Number(maxInput.value) || 1));
+      return;
+    }
+
+    const hiddenInput = closest(event.target, '[data-wsa-rebuild-hidden]');
+    if (hiddenInput) {
+      ui.rebuildForm.includeHiddenMessages = Boolean(hiddenInput.checked);
     }
   }
 

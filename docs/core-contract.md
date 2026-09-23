@@ -315,6 +315,8 @@ Rebuild is explicit/manual expensive recovery, never ordinary runtime and never 
 The Phase 5 rebuild contract is:
 
 - plan the selected chat range in bounded chronological assistant-completed exchange windows using original global message IDs
+- explicit rebuild may include hidden roleplay through an immutable virtual view, enabled by default but operator-toggleable; the stored chat array, `is_system` flags, DOM visibility, saves, and lineage fingerprints remain untouched
+- hidden user rows may be virtually restored as user evidence; hidden assistant rows require conservative ordinary-assistant markers, while genuine system/tool/UI messages remain system and are excluded
 - Full chat rebuild starts from a clean isolated root; an explicit partial rebuild may start from a later message only when the exact canonical prefix before that message can be proven and restored from lineage/checkpoint history
 - after Reset or whenever the exact prefix is unavailable, partial rebuild fails before provider work and instructs the operator to use Full chat rather than approximating older state
 - fail before provider work if the configurable assistant-boundary cap is exceeded; explicit maintenance may raise that cap up to the hard 4096-boundary ceiling
@@ -462,7 +464,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, 0.9.0-alpha.9, 0.9.0-alpha.10, 0.9.0-alpha.11, 0.9.0-alpha.12, and 0.9.0-alpha.13 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, 0.9.0-alpha.9, 0.9.0-alpha.10, 0.9.0-alpha.11, 0.9.0-alpha.12, 0.9.0-alpha.13, and 0.9.0-alpha.14 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 

@@ -422,7 +422,7 @@ test('responsive renderer exposes Operations, Places, mobile navigation, atomic 
   const html = renderWorldStatePanel(idleModel, {
     activeTab: 'current',
     rebuildOpen: true,
-    rebuildForm: { mode: 'from', startMessageId: 10, lastMessages: 20, maxBoundaries: 2048 },
+    rebuildForm: { mode: 'from', startMessageId: 10, lastMessages: 20, maxBoundaries: 2048, includeHiddenMessages: true },
   });
   assert.match(html, />Operations</);
   assert.match(html, />Places</);
@@ -431,6 +431,9 @@ test('responsive renderer exposes Operations, Places, mobile navigation, atomic 
   assert.match(html, /Full chat/);
   assert.match(html, /Last N messages/);
   assert.match(html, /Start message/);
+  assert.match(html, /Include hidden chat messages/);
+  assert.match(html, /data-wsa-rebuild-hidden checked/);
+  assert.match(html, /without changing chat visibility or lineage/);
   assert.match(html, /Maximum assistant boundaries/);
   assert.match(html, /Atomic replacement/);
 
@@ -451,12 +454,15 @@ test('responsive renderer exposes Operations, Places, mobile navigation, atomic 
         rejected: 1,
         currentRecords: 5,
         places: 4,
+        hiddenMessagesIncluded: 3,
+        hiddenAssistantBoundaries: 1,
         detail: 'Processed message 15.',
       },
     },
   });
   const runningHtml = renderWorldStatePanel(runningModel, { activeTab: 'current', rebuildOpen: true });
   assert.match(runningHtml, /7\/18 boundaries/);
+  assert.match(runningHtml, /3 hidden included/);
   assert.match(runningHtml, /Cancel/);
   assert.doesNotMatch(runningHtml, /Start Rebuild/);
 

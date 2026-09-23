@@ -36,6 +36,8 @@ export function sanitizeCaptureDiagnostic(raw = {}) {
     completenessHints: int(raw.completenessHints),
     processedBoundaries: int(raw.processedBoundaries),
     totalBoundaries: int(raw.totalBoundaries),
+    hiddenMessagesIncluded: int(raw.hiddenMessagesIncluded),
+    hiddenAssistantBoundaries: int(raw.hiddenAssistantBoundaries),
     candidateRecords: int(raw.candidateRecords),
     promptChars: int(raw.promptChars),
     responseChars: int(raw.responseChars),
