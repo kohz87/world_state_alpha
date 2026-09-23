@@ -127,6 +127,66 @@ test('chronological rebuild planning is assistant-boundary based and bounded bef
   );
 });
 
+
+test('rebuild planner supports a global start message without renumbering historical boundaries', () => {
+  const chat = fixtureChat();
+  const partial = planChronologicalRebuild(chat, { startMessageId: 2, maxBoundaries: 10 });
+  assert.deepEqual(partial.windows.map(item => item.messageId), [3, 5]);
+  assert.equal(partial.windows[0].exchange[0].messageId, 2);
+  assert.equal(partial.windows[0].exchange.at(-1).messageId, 3);
+  assert.equal(partial.metrics.startMessageId, 2);
+});
+
+test('partial rebuild uses an exact proven prior boundary and converges with full current semantics', async () => {
+  const chat = fixtureChat();
+  const current = await buildIncrementally('partial-range', chat, scriptedDispatcher());
+  const progress = [];
+  const result = await runManualRebuild({
+    ctx: {},
+    dispatcher: scriptedDispatcher(),
+    state: current,
+    chat,
+    chatKey: 'partial-range',
+    startMessageId: 2,
+    maxBoundaries: 10,
+    isCurrent: () => true,
+    onProgress: item => progress.push(item),
+  });
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.providerCalls, 2);
+  assert.equal(result.processedBoundaries, 2);
+  assert.equal(result.plan.startMessageId, 2);
+  assert.deepEqual(progress.map(item => item.messageId), [3, 5]);
+  assert.deepEqual(progress.map(item => item.processedBoundaries), [1, 2]);
+  assert.equal(compareWorldStateSemantics(current, result.state).equivalent, true);
+  assert.equal(result.state.checkpoints.some(item => item.messageId === -1), true);
+});
+
+test('partial rebuild after reset fails closed before any provider call when prior canonical history is unavailable', async () => {
+  const chat = fixtureChat();
+  let calls = 0;
+  const dispatcher = async () => {
+    calls += 1;
+    return { text: '{"mutations":[]}', receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' } };
+  };
+  const original = createState('partial-after-reset');
+  const result = await runManualRebuild({
+    ctx: {},
+    dispatcher,
+    state: original,
+    chat,
+    chatKey: 'partial-after-reset',
+    startMessageId: 2,
+    isCurrent: () => true,
+  });
+  assert.equal(result.outcome, 'failure');
+  assert.equal(result.errorCode, 'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE');
+  assert.match(result.errorMessage, /Full chat after a reset|exact canonical/i);
+  assert.equal(result.providerCalls, 0);
+  assert.equal(calls, 0);
+  assert.deepEqual(result.state, original);
+});
+
 test('manual rebuild reconstructs chat chronology using rebuild evidence and no lazy evolution calls', async () => {
   const chat = fixtureChat();
   const calls = { count: 0 };

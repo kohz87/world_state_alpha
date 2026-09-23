@@ -30,7 +30,7 @@ Delta's per-chat sidecar has revision guards, writer locking, bounded retries, u
 
 ### Bounded diagnostics
 
-Delta diagnostics are explicitly non-authoritative and avoid storing prompts, transcripts, credentials, and provider payloads. World State should copy this privacy/safety posture.
+Delta diagnostics are explicitly non-authoritative and avoid storing prompts, transcripts, credentials, and provider transport payloads. World State keeps that boundary while Alpha.11 intentionally adds an operator-only exception for bounded extracted model response/rejection content in the ephemeral Operations inspector; prompts, headers, reasoning content, credentials and transcripts remain excluded.
 
 ### Exact-boundary branch recovery
 

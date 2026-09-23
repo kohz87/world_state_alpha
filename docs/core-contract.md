@@ -273,7 +273,7 @@ They may record:
 - stale/cancelled/failure outcome
 - retrieval/injection counts
 
-Diagnostics never become canonical state and never store credentials, full private prompts, full story transcripts, or full provider responses.
+Diagnostics never become canonical state and never store credentials, private prompts, story transcripts, transport headers, hidden/reasoning content, session identifiers, or other connection secrets. The explicit operator-only Operations inspector may retain a bounded slice of the model's extracted text response and bounded rejection JSON for debugging; this is ephemeral telemetry, never evidence/canonical authority, and is escaped before rendering.
 
 ## C18. Performance
 
@@ -310,9 +310,11 @@ Rebuild is explicit/manual expensive recovery, never ordinary runtime and never 
 
 The Phase 5 rebuild contract is:
 
-- plan the current chat in bounded chronological assistant-completed exchange windows
-- fail before provider work if the configured boundary cap is exceeded
-- rebuild into an isolated candidate state from the root, never incrementally overwrite canonical state while scanning
+- plan the selected chat range in bounded chronological assistant-completed exchange windows using original global message IDs
+- Full chat rebuild starts from a clean isolated root; an explicit partial rebuild may start from a later message only when the exact canonical prefix before that message can be proven and restored from lineage/checkpoint history
+- after Reset or whenever the exact prefix is unavailable, partial rebuild fails before provider work and instructs the operator to use Full chat rather than approximating older state
+- fail before provider work if the configurable assistant-boundary cap is exceeded; explicit maintenance may raise that cap up to the hard 4096-boundary ceiling
+- rebuild into an isolated candidate state, never incrementally overwrite canonical state while scanning
 - reuse the existing capture prompt, including its persistent-condition completeness sweep, source firewall, duplicate gate, reducer, request dispatcher, and exact message lineage
 - historical rebuild windows explicitly recover materially persistent narrated conditions even when they were already off-screen, ignored by the PC, or unrelated to the PC objective
 - tag reconstructed narrative evidence as `rebuild`
@@ -355,23 +357,23 @@ The Phase 6 UI surface provides:
 - Resolved: resolved and superseded tombstones
 - Search: bounded free-text summary/anchor search using the existing manual query semantics
 - Detail/evidence: current summary/status/trend, anchors, message boundaries, optional time anchor, bounded evidence, and causal/related records
-- Diagnostics: allowlisted sanitized telemetry only
-- Data & maintenance: health/count summaries plus explicit export/import/rebuild/reset action intents
+- Operations: expandable allowlisted telemetry for capture/rebuild/evolution, including bounded model response content and rejection JSON when available
+- Data & maintenance: health/count summaries plus explicit export/import/rebuild/clear action intents; Clear is destructive and visually separated from rebuild
 
 UI rules:
 
 - the UI never calls the canonical reducer, storage writer, import/reset applier, or rebuild executor directly
 - maintenance buttons emit caller-owned action intents; destructive preview/confirm semantics remain owned by Phase 5/caller wiring
 - all canonical, evidence, and diagnostic text is escaped before HTML rendering
-- ordinary rendered UI must not expose raw record IDs, evidence IDs, lineage fingerprints, checksums, rollback sequence numbers, undo patches, prompts, transcripts, credentials, or provider payloads
+- ordinary Current/Recent/Resolved/Places/Search/Data views must not expose raw record IDs, evidence IDs, lineage fingerprints, checksums, rollback sequence numbers, undo patches, prompts, transcripts, credentials, transport headers, reasoning content, or provider payloads; the explicit Operations inspector is the sole exception for bounded escaped model response/rejection content
 - journal data may contribute a small human change label such as "Captured from story" or "Manual correction", but rollback internals are not an ordinary UI surface
 - evidence is bounded and source classes are translated to human labels
 - diagnostics pass through the existing allowlist sanitizer before display
 - list/detail/search outputs are bounded even when the backend contains hundreds or thousands of records
-- desktop uses a bounded two-pane panel; mobile at 700px and below becomes full-screen with a vertically scrollable body and mobile-size touch targets
+- desktop uses a wider bounded master/detail workspace; tablet landscape uses an adaptive 40/60 master/detail pane; tablet portrait becomes single-pane list/detail; mobile uses full-screen single-pane navigation with Current / Places / Ops / More bottom navigation, full-height rebuild sheet, safe-area handling, and >=44px touch targets
 - UI namespace/classes remain isolated under World State Alpha
 
-Phase 6 exposes a host-neutral DOM mount/controller that accepts caller-supplied state, diagnostics, close, and maintenance callbacks. The Phase 6 module does not register SillyTavern event hooks, slash commands, launchers, settings integration, extension manifests, or cross-extension adapters. Phase 7 may mount this controller through the separate host shell without moving host authority into `ui.js`.
+Phase 6 exposes a host-neutral DOM mount/controller that accepts caller-supplied state, diagnostics/runtime status, close, and maintenance callbacks. The Phase 6 module does not register SillyTavern event hooks, slash commands, launchers, settings integration, extension manifests, or cross-extension adapters. Phase 7 may mount this controller through the separate host shell without moving host authority into `ui.js`.
 
 
 ## C22. Phase 7 SillyTavern host and coexistence boundary
@@ -455,7 +457,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, 0.9.0-alpha.9, and 0.9.0-alpha.10 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, 0.9.0-alpha.9, 0.9.0-alpha.10, and 0.9.0-alpha.11 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 

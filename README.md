@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.10 builds on Alpha.9 by surfacing a bounded completeness checklist from narrator-authored `<World_State>` `Off-Screen` and `Unresolved Threads` entries. The checklist is advisory to the same single capture/rebuild provider call and does not bypass the source firewall: materially persistent conditions such as an established market extortion racket are re-checked before output, while Planted Seeds, timers, arc/scene state, CYOA, inner chatter, writer planning, character inventory/skill state, rumors, and mere possibilities remain excluded. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.11 keeps the Alpha.10 completeness semantics and redesigns the operator surface: desktop/tablet/mobile adaptive navigation, expandable Operations with bounded model response/rejection inspection, visible rebuild progress and cancellation, atomic rebuild without Clear, Full / Last N / From-message recovery controls, and a configurable assistant-boundary cap up to the hard 4096 limit. Partial rebuild is fail-closed and requires exact canonical history before the selected start; after Reset, use Full chat. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

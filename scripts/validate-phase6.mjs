@@ -54,7 +54,7 @@ if (WORLD_STATE_UI_LIMITS.currentRecords !== 120
   || WORLD_STATE_UI_LIMITS.recentRecords !== 40
   || WORLD_STATE_UI_LIMITS.resolvedRecords !== 80
   || WORLD_STATE_UI_LIMITS.searchRecords !== 100
-  || WORLD_STATE_UI_LIMITS.diagnostics !== 40
+  || WORLD_STATE_UI_LIMITS.diagnostics !== 80
   || WORLD_STATE_UI_LIMITS.evidence !== 32
   || WORLD_STATE_UI_LIMITS.relations !== 24) {
   throw new Error('Phase 6 UI bounds drifted');
@@ -63,13 +63,30 @@ if (WORLD_STATE_UI_LIMITS.currentRecords !== 120
 const actions = WORLD_STATE_UI_MAINTENANCE_ACTIONS.map(item => item.id).join(',');
 if (actions !== 'export,import,rebuild,reset') throw new Error('Phase 6 maintenance intent surface drifted');
 
+for (const required of [
+  'data-wsa-open-rebuild',
+  'data-wsa-start-rebuild',
+  'data-wsa-cancel-rebuild',
+  'data-wsa-mobile-more',
+  'Model response JSON',
+  'Rejected mutations / reasons',
+  'Danger zone',
+  'Atomic replacement',
+]) {
+  if (!ui.includes(required)) throw new Error('Phase 6 responsive/Operations invariant missing: ' + required);
+}
+
 for (const pattern of [
-  /width:\s*min\(1040px,\s*calc\(100vw - 32px\)\)/,
-  /@media \(max-width:\s*700px\)/,
+  /width:\s*min\(1180px,\s*calc\(100vw - 32px\)\)/,
+  /@media \(max-width:\s*1099px\) and \(min-width:\s*768px\)/,
+  /@media \(max-width:\s*767px\)/,
+  /@media \(max-width:\s*599px\)/,
+  /\.wsa-mobile-nav\s*\{/,
+  /\.wsa-rebuild-sheet\s*\{/,
+  /\.wsa-operation\s*\{/,
   /width:\s*100vw/,
   /height:\s*100dvh/,
   /min-height:\s*44px/,
-  /@media \(max-width:\s*420px\)/,
   /focus-visible/,
 ]) {
   if (!pattern.test(css)) throw new Error('Phase 6 responsive/accessibility CSS invariant missing: ' + pattern);

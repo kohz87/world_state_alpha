@@ -202,6 +202,7 @@ Deliverables:
 - v0.9.0-alpha.8 live rebuild hardening: exact Reality output schema under Spatial mode, bounded provider alias compatibility, persistent shared rebuild diagnostics/status, named-place salvage when only optional relation precision is unsupported, and conservative compositional proper-place grounding
 - v0.9.0-alpha.9 fenced-response hardening: accept a single bare or singly fenced JSON object from providers without weakening no-prose/no-multiple-object validation or atomic rebuild semantics
 - v0.9.0-alpha.10 completeness-checklist hardening: surface bounded narrator-authored World_State Off-Screen/Unresolved entries to the existing capture/rebuild request as advisory completeness hints while retaining source-firewall and exclusion rules
+- v0.9.0-alpha.11 responsive operator UX: master/detail desktop, adaptive tablet, mobile bottom navigation/sheets, Operations expansion with bounded response/rejection content, atomic rebuild progress/cancel, and exact-prefix Full/Last/From range controls
 
 Acceptance:
 

@@ -116,7 +116,7 @@ Phase 4 evolution uses the same canonical mutation model but marks the batch own
 
 Phase 5 does not change the persisted schema. Targeted operator corrections use `manual` evidence at an exact current raw-message head. Chronological rebuild reuses ordinary narrative evidence ownership checks, then stores accepted reconstructed evidence as `rebuild`. Foreign import uses `foreign_import` and clears local message/lineage provenance unless same-chat message provenance preservation is explicitly requested.
 
-Phase 6 also changes no persisted schema. UI rows/details/diagnostics are bounded ephemeral projections derived from canonical state and allowlisted telemetry. UI selection/search state is presentation state only and is never persisted as canonical world truth.
+Phase 6 and the Alpha.11 responsive/Operations revision change no persisted schema. UI rows/details/rebuild progress are bounded ephemeral projections derived from canonical state and runtime status. Operations telemetry may retain bounded extracted model response/rejection content for operator inspection, but remains non-canonical and non-persistent; prompts, transport headers, reasoning content, credentials and story transcripts are excluded. UI selection/search/range state is presentation state only and is never persisted as canonical world truth.
 
 ## Per-chat state
 

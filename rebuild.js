@@ -1,4 +1,4 @@
-import { chatLineage, commitMutationBoundary, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { CAPTURE_LIMITS, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
@@ -40,14 +40,16 @@ function exchangeText(exchange) {
 
 export function planChronologicalRebuild(chat = [], {
   maxBoundaries = REBUILD_LIMITS.maxBoundaries,
+  startMessageId = 0,
 } = {}) {
   const rows = Array.isArray(chat) ? chat : [];
   const lineage = chatLineage(rows);
   const limit = boundedInt(maxBoundaries, REBUILD_LIMITS.maxBoundaries, 1, 4096);
+  const start = boundedInt(startMessageId, 0, 0, Math.max(0, rows.length));
   const windows = [];
-  let previousAssistant = -1;
+  let previousAssistant = start - 1;
 
-  for (let messageId = 0; messageId < rows.length; messageId += 1) {
+  for (let messageId = start; messageId < rows.length; messageId += 1) {
     if (roleOf(rows[messageId]) !== 'assistant') continue;
     const raw = rows.slice(previousAssistant + 1, messageId + 1);
     const exchange = raw.map((message, offset) => {
@@ -81,6 +83,7 @@ export function planChronologicalRebuild(chat = [], {
       chatMessages: rows.length,
       assistantBoundaries: windows.length,
       maxBoundaries: limit,
+      startMessageId: start,
     },
   };
 }
@@ -195,7 +198,9 @@ export async function runManualRebuild({
   dispatcher = undefined,
   diagnostics = undefined,
   loreResolver = undefined,
+  onProgress = undefined,
   maxBoundaries = REBUILD_LIMITS.maxBoundaries,
+  startMessageId = 0,
   spatialEnabled = false,
   baseMap = null,
   spatialProfile = null,
@@ -205,7 +210,7 @@ export async function runManualRebuild({
   if (!owner) throw new Error('chatKey is required');
   if (original.chatKey && original.chatKey !== owner) throw new Error('rebuild chatKey does not match state owner');
 
-  const plan = planChronologicalRebuild(chat, { maxBoundaries });
+  const plan = planChronologicalRebuild(chat, { maxBoundaries, startMessageId });
   if (plan.windows.length && typeof isCurrent !== 'function') {
     const error = new Error('manual rebuild requires an isCurrent(snapshotToken) guard');
     error.code = 'WORLD_STATE_REBUILD_CURRENT_GUARD_REQUIRED';
@@ -227,13 +232,53 @@ export async function runManualRebuild({
     };
   }
 
-  let candidate = seedRootCheckpoint(createState(owner));
-  if (spatialEnabled) {
-    candidate.spatial.profile = spatialProfile || original.spatial?.profile || null;
-    candidate.spatial.baseMapRef = original.spatial?.baseMapRef || null;
+  let candidate;
+  if (plan.metrics.startMessageId > 0) {
+    const prefix = (Array.isArray(chat) ? chat : []).slice(0, plan.metrics.startMessageId);
+    const currentLineage = chatLineage(Array.isArray(chat) ? chat : []);
+    const priorLineage = Array.isArray(original.lineage) ? original.lineage : [];
+    const prefixProven = priorLineage.length >= plan.metrics.startMessageId
+      && priorLineage.slice(0, plan.metrics.startMessageId)
+        .every((item, index) => item?.lineageKey && item.lineageKey === currentLineage[index]?.lineageKey);
+    if (!prefixProven) {
+      return {
+        outcome: 'failure',
+        state: clone(original),
+        providerCalls: 0,
+        processedBoundaries: 0,
+        plan: plan.metrics,
+        snapshotToken,
+        failedBoundary: plan.metrics.startMessageId,
+        receipts: [],
+        errorCode: 'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE',
+        errorMessage: 'Partial rebuild requires exact canonical history before the selected start message. Use Full chat after a reset.',
+      };
+    }
+    const restored = reconcileBranch(original, prefix);
+    if (restored.failClosed || !restored.exactRestored) {
+      return {
+        outcome: 'failure',
+        state: clone(original),
+        providerCalls: 0,
+        processedBoundaries: 0,
+        plan: plan.metrics,
+        snapshotToken,
+        failedBoundary: plan.metrics.startMessageId,
+        receipts: [],
+        errorCode: 'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE',
+        errorMessage: 'Exact canonical state before the selected start message is unavailable. Use Full chat or choose a later proven boundary.',
+      };
+    }
+    candidate = normalizeState(clone(restored.state), { strictSchema: true, chatKey: owner });
   } else {
-    // Reality-only rebuild must never erase the disabled sibling subsystem.
-    candidate.spatial = clone(original.spatial);
+    candidate = seedRootCheckpoint(createState(owner));
+    if (spatialEnabled) {
+      candidate.spatial.profile = spatialProfile || original.spatial?.profile || null;
+      candidate.spatial.baseMapRef = original.spatial?.baseMapRef || null;
+    } else {
+      // Reality-only rebuild must never erase the disabled sibling subsystem.
+      candidate.spatial = clone(original.spatial);
+    }
   }
   let providerCalls = 0;
   let processedBoundaries = 0;
@@ -327,6 +372,7 @@ export async function runManualRebuild({
       applied: boundaryApplied,
       rejected: allRejected.length,
       aliasRepairs: Number(result.aliasRepairs) || 0,
+      completenessHints: Number(result.completenessHints) || 0,
       rejections: allRejected.slice(0, 8).map(item => ({
         stage: String(item?.stage || '').slice(0, 40),
         code: String(item?.code || '').slice(0, 80),
@@ -360,6 +406,25 @@ export async function runManualRebuild({
       );
     }
     processedBoundaries += 1;
+    if (typeof onProgress === 'function') {
+      try {
+        await onProgress({
+          operationId,
+          messageId: window.messageId,
+          processedBoundaries,
+          totalBoundaries: plan.metrics.assistantBoundaries,
+          providerCalls,
+          boundaryApplied,
+          boundaryRejected: allRejected.length,
+          aliasRepairs: Number(result.aliasRepairs) || 0,
+          completenessHints: Number(result.completenessHints) || 0,
+          currentRecords: (candidate.records || []).filter(record => record?.status === 'active').length,
+          places: (candidate.spatial?.locations || []).filter(location => location?.status !== 'archived').length,
+        });
+      } catch {
+        // Progress reporting is presentation-only and must never fail an atomic rebuild.
+      }
+    }
   }
 
   candidate.lineage = plan.lineage;

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.0-alpha.11 - Responsive Operations and rebuild workspace
+
+### Added
+
+- Reworked the World State panel into an adaptive desktop/tablet/mobile workspace: desktop master/detail, tablet adaptive split/single-pane detail, and mobile Current / Places / Ops / More bottom navigation.
+- Added a full rebuild sheet with Full chat, Last N messages, From message, and configurable maximum assistant-boundary controls.
+- Added visible rebuild progress with processed/total boundaries, provider calls, current-record count, place count, final success/failure state, and a real Cancel action.
+- Added expandable Operations rows for capture, rebuild and lazy/background evolution. Operations can inspect bounded escaped model response content and rejection JSON and copy that content.
+- Expanded ephemeral diagnostics retention from 40 to 80 rows for operator debugging.
+- Separated Data & Maintenance into State files, Recovery, and a visually isolated Danger zone for Clear World State.
+
+### Safety and behavior
+
+- Rebuild no longer implies Clear. Full rebuild constructs an isolated candidate and atomically replaces canonical state only after complete success and durable persistence.
+- Partial rebuild preserves the exact historical prefix and existing rollback/checkpoint journal. It is admitted only when stored lineage proves the prefix and exact reconciliation succeeds.
+- After Reset, a partial/nonzero start fails before provider work with `WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE`; Full chat remains the safe recovery path.
+- Explicit manual rebuild boundary caps may be raised up to the existing hard 4096-boundary ceiling.
+- Rebuild cancellation bypasses the serialized writer queue only as control-plane abort; all canonical mutations and persistence remain serialized.
+- Operations never retain/display prompts, story transcripts, provider transport headers, hidden/reasoning content, session identifiers, credentials or API secrets. Bounded extracted model response/rejection content is ephemeral telemetry only and never canonical authority.
+- No new automatic provider request path, persisted schema field, Story Director behavior, or cross-extension dependency was added.
+
+### Responsive behavior
+
+- Desktop workspace expands to approximately 1180 px.
+- Tablet landscape (768-1099 px) uses an adaptive 40/60 split.
+- Tablet portrait (<768 px) uses list/detail single-pane navigation.
+- Mobile (<600 px) uses full-screen bottom navigation, safe-area handling, >=44 px touch controls, full-height rebuild sheet, and internally scrollable JSON inspectors.
+
 ## 0.9.0-alpha.10 - Structured completeness checklist
 
 ### Fixed

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { chatLineage, commitMutationBoundary, reconcileBranch } from '../branch.js';
+import { createDiagnosticStore } from '../diagnostics.js';
 import {
   EVOLUTION_SYSTEM_PROMPT,
   buildEvolutionContext,
@@ -208,12 +209,15 @@ test('stable catch-up advances evaluation provenance without changing current wo
     derived: [],
   });
   const calls = { count: 0 };
+  const diagnostics = createDiagnosticStore();
   const result = await runLazyEvolution({
     ctx: provider(response, calls),
     state: seeded.state,
     selectedEntries: selected(seeded.state),
     exchange,
     chatKey: 'stable',
+    diagnostics,
+    operationId: 'evolution-stable-test',
     isCurrent: () => true,
     ...sourceBoundary(exchange),
   });
@@ -229,6 +233,10 @@ test('stable catch-up advances evaluation provenance without changing current wo
   assert.ok(elapsedEvidence);
   assert.match(elapsedEvidence.claim, /Five weeks later/);
   assert.match(elapsedEvidence.claim, /Kesselpass|freight|returns|later/i);
+  const diagnostic = diagnostics.records('stable').at(-1);
+  assert.equal(diagnostic.label, 'lazy-evolution');
+  assert.match(diagnostic.responseJson, /evaluations/);
+  assert.doesNotMatch(diagnostic.responseJson, /systemPrompt|CURRENT EXCHANGE/i);
 });
 
 test('time alone may not admit a changed outcome', async () => {

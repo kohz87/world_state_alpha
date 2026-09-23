@@ -678,6 +678,7 @@ export async function runLazyEvolution({
     const stale = error?.code === 'WORLD_STATE_ROUTE_CANCELLED' && !current();
     diagnosticStore.record(chatKey, {
       operationId,
+      label: 'lazy-evolution',
       sourceMessageId,
       outcome: stale ? 'stale' : (receipt.outcome || 'failure'),
       code: error?.code || 'PROVIDER_ERROR',
@@ -706,6 +707,7 @@ export async function runLazyEvolution({
   if (!current()) {
     diagnosticStore.record(chatKey, {
       operationId,
+      label: 'lazy-evolution',
       sourceMessageId,
       outcome: 'stale',
       code: 'WORLD_STATE_EVOLUTION_STALE',
@@ -716,6 +718,7 @@ export async function runLazyEvolution({
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
+      responseJson: dispatched.text,
     });
     return {
       outcome: 'stale',
@@ -742,6 +745,7 @@ export async function runLazyEvolution({
     const outcome = processed.changedCount > 0 || processed.derivedCount > 0 ? 'evolved' : 'stable';
     diagnosticStore.record(chatKey, {
       operationId,
+      label: 'lazy-evolution',
       sourceMessageId,
       outcome,
       route: dispatched.receipt?.route || '',
@@ -755,6 +759,8 @@ export async function runLazyEvolution({
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
+      responseJson: dispatched.text,
+      rejectionsJson: JSON.stringify(processed.rejectedDerived || []),
     });
     return {
       ...processed,
@@ -768,6 +774,7 @@ export async function runLazyEvolution({
     if (!(error instanceof EvolutionWireError)) throw error;
     diagnosticStore.record(chatKey, {
       operationId,
+      label: 'lazy-evolution',
       sourceMessageId,
       outcome: 'invalid-response',
       code: error.code,
@@ -778,6 +785,8 @@ export async function runLazyEvolution({
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
+      responseJson: dispatched.text,
+      rejectionsJson: JSON.stringify([{ stage: 'response', code: error.code, reason: String(error.message || error).slice(0, 320) }]),
     });
     return {
       outcome: 'invalid-response',

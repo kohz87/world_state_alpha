@@ -572,8 +572,20 @@ export async function runCaptureOperation({
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
+      responseJson: dispatched.text,
+      rejectionsJson: JSON.stringify([
+        ...(processed.rejected || []),
+        ...(processed.spatial?.rejected || []),
+      ]),
     });
-    return { ...processed, outcome, providerCalls: 1, snapshotToken, routeReceipt: dispatched.receipt };
+    return {
+      ...processed,
+      outcome,
+      providerCalls: 1,
+      snapshotToken,
+      routeReceipt: dispatched.receipt,
+      completenessHints: options.completenessHints?.length || 0,
+    };
   } catch (error) {
     if (!(error instanceof CaptureWireError)) throw error;
     diagnosticStore.record(chatKey, {
@@ -591,6 +603,8 @@ export async function runCaptureOperation({
       promptChars: options.systemPrompt.length + options.prompt.length,
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
+      responseJson: dispatched.text,
+      rejectionsJson: JSON.stringify([{ stage: 'response', code: error.code, reason: String(error.message || error).slice(0, 320) }]),
     });
     return {
       outcome: 'invalid-response',

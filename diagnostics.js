@@ -1,6 +1,6 @@
 import { hashText } from './hash.js';
 
-const DEFAULT_LIMIT = 40;
+const DEFAULT_LIMIT = 80;
 
 function clean(value, max) {
   return typeof value === 'string' ? value.slice(0, max) : '';
@@ -40,6 +40,8 @@ export function sanitizeCaptureDiagnostic(raw = {}) {
     promptChars: int(raw.promptChars),
     responseChars: int(raw.responseChars),
     durationMs: int(raw.durationMs),
+    responseJson: clean(raw.responseJson, 16000),
+    rejectionsJson: clean(raw.rejectionsJson, 12000),
   };
 }
 
@@ -76,7 +78,7 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
       diagnosticVersion: 1,
       applicationVersion: clean(applicationVersion, 40),
       chatIdentityHash: hashText(key),
-      privacy: 'Allowlisted operation telemetry only; no prompts, story transcript, credentials, provider payloads, or canonical authority.',
+      privacy: 'Allowlisted ephemeral operation telemetry plus bounded model response JSON only; no prompts, headers, reasoning content, credentials, or canonical authority.',
       operations: records(key),
     };
   }
