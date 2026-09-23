@@ -370,7 +370,7 @@ UI rules:
 - evidence is bounded and source classes are translated to human labels
 - diagnostics pass through the existing allowlist sanitizer before display
 - list/detail/search outputs are bounded even when the backend contains hundreds or thousands of records
-- desktop uses a wider bounded master/detail workspace; tablet landscape uses an adaptive 40/60 master/detail pane; tablet portrait becomes single-pane list/detail; mobile uses full-screen single-pane navigation with Current / Places / Ops / More bottom navigation, full-height rebuild sheet, safe-area handling, and >=44px touch targets
+- desktop uses a wider bounded flat workspace where Reality records expand inline to anchors/timeline/evidence/relations; Places may retain a dedicated list/detail editor; tablet preserves inline Reality disclosures while adapting Places between split and single-pane detail; mobile uses full-screen navigation with Current / Places / Ops / More bottom navigation, full-height rebuild sheet, safe-area handling, and >=44px touch targets
 - UI namespace/classes remain isolated under World State Alpha
 
 Phase 6 exposes a host-neutral DOM mount/controller that accepts caller-supplied state, diagnostics/runtime status, close, and maintenance callbacks. The Phase 6 module does not register SillyTavern event hooks, slash commands, launchers, settings integration, extension manifests, or cross-extension adapters. Phase 7 may mount this controller through the separate host shell without moving host authority into `ui.js`.
@@ -457,7 +457,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, 0.9.0-alpha.9, 0.9.0-alpha.10, and 0.9.0-alpha.11 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7, 0.9.0-alpha.8, 0.9.0-alpha.9, 0.9.0-alpha.10, 0.9.0-alpha.11, and 0.9.0-alpha.12 hardening releases change no durable format: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 

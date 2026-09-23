@@ -488,7 +488,7 @@ function pill(label, className) {
   return '<span class="wsa-pill ' + escapeHtml(className || '') + '">' + escapeHtml(label) + '</span>';
 }
 
-function recordCard(record, selected, index) {
+function recordDisclosure(record, expanded, index, detail = null) {
   const meta = [
     pill(record.kindLabel, 'wsa-kind'),
     pill(record.statusLabel, 'wsa-status-' + record.status),
@@ -497,12 +497,14 @@ function recordCard(record, selected, index) {
   const changed = record.lastChangedMessage === null
     ? ''
     : '<small>Changed at message ' + record.lastChangedMessage + '</small>';
-  return '<button type="button" class="wsa-record' + (selected ? ' is-selected' : '') +
-    '" data-wsa-record-index="' + index + '" aria-pressed="' + (selected ? 'true' : 'false') + '">' +
-    '<span class="wsa-record-meta">' + meta + '</span>' +
-    '<strong>' + escapeHtml(record.summary || 'Untitled world state') + '</strong>' +
-    changed +
-    '</button>';
+  return '<details class="wsa-record-disclosure' + (expanded ? ' is-expanded' : '') + '"' + (expanded ? ' open' : '') + '>' +
+    '<summary data-wsa-record-index="' + index + '">' +
+    '<span class="wsa-record-summary-main"><span class="wsa-record-meta">' + meta + '</span>' +
+    '<strong>' + escapeHtml(record.summary || 'Untitled world state') + '</strong>' + changed + '</span>' +
+    '<span class="wsa-disclosure-icon" aria-hidden="true">›</span>' +
+    '</summary>' +
+    (expanded && detail ? '<div class="wsa-record-expanded">' + recordExpandedHtml(detail) + '</div>' : '') +
+    '</details>';
 }
 
 function spatialCard(loc, selected, key) {
@@ -528,22 +530,25 @@ function emptyState(title, body) {
   return '<div class="wsa-empty"><strong>' + escapeHtml(title) + '</strong><p>' + escapeHtml(body) + '</p></div>';
 }
 
-function recordsPane(records, model, emptyTitle, emptyBody, truncated) {
+function recordsPane(records, model, emptyTitle, emptyBody, truncated, expanded = false) {
   const rows = records.length
-    ? records.map((record, index) => recordCard(record, record.key === model.selectedRecordId, index)).join('')
+    ? records.map((record, index) => {
+      const isExpanded = expanded && record.key === model.selectedRecordId;
+      return recordDisclosure(record, isExpanded, index, isExpanded ? model.detail : null);
+    }).join('')
     : emptyState(emptyTitle, emptyBody);
   const note = truncated > 0
     ? '<p class="wsa-list-note">' + truncated + ' additional records are hidden from this bounded view. Use Search to narrow the list.</p>'
     : '';
-  return '<div class="wsa-record-list" role="list">' + rows + note + '</div>';
+  return '<div class="wsa-record-list wsa-flat-records" role="list">' + rows + note + '</div>';
 }
 
 function messageValue(value) {
   return value === null || value === undefined ? 'Not recorded' : 'Message ' + value;
 }
 
-function detailHtml(detail) {
-  if (!detail) return emptyState('No record selected', 'Choose a record to inspect its current state and evidence.');
+function recordExpandedHtml(detail) {
+  if (!detail) return '';
 
   const anchors = detail.anchors.length
     ? '<div class="wsa-chip-row">' + detail.anchors.map(anchor => '<span class="wsa-chip">' + escapeHtml(anchor) + '</span>').join('') + '</div>'
@@ -568,16 +573,7 @@ function detailHtml(detail) {
     }).join('') + '</ul>'
     : '<p class="wsa-muted">No causal or related records are attached.</p>';
 
-  return '<article class="wsa-detail-card">' +
-    '<div class="wsa-detail-head">' +
-    '<div class="wsa-record-meta">' +
-    pill(detail.kindLabel, 'wsa-kind') +
-    pill(detail.statusLabel, 'wsa-status-' + detail.status) +
-    (detail.trendLabel ? pill(detail.trendLabel, 'wsa-trend') : '') +
-    '</div>' +
-    '<h2>' + escapeHtml(detail.summary) + '</h2>' +
-    (detail.changeReason ? '<p class="wsa-change-reason">' + escapeHtml(detail.changeReason) + '</p>' : '') +
-    '</div>' +
+  return '<div class="wsa-record-expanded-grid">' +
     '<section><h3>Anchors</h3>' + anchors + '</section>' +
     '<section><h3>Timeline</h3><dl class="wsa-timeline">' +
     '<div><dt>Created</dt><dd>' + messageValue(detail.createdAtMessage) + '</dd></div>' +
@@ -585,9 +581,15 @@ function detailHtml(detail) {
     '<div><dt>Evaluated</dt><dd>' + messageValue(detail.lastEvaluatedMessage) + '</dd></div>' +
     (detail.timeAnchor ? '<div><dt>World time</dt><dd>' + escapeHtml(detail.timeAnchor) + '</dd></div>' : '') +
     '</dl></section>' +
-    '<section><h3>Evidence</h3>' + evidence + '</section>' +
-    '<section><h3>Connections</h3>' + relations + '</section>' +
-    '</article>';
+    '<section class="wsa-record-expanded-wide"><h3>Evidence</h3>' + evidence + '</section>' +
+    '<section class="wsa-record-expanded-wide"><h3>Connections</h3>' + relations + '</section>' +
+    (detail.changeReason ? '<p class="wsa-change-reason wsa-record-expanded-wide">' + escapeHtml(detail.changeReason) + '</p>' : '') +
+    '</div>';
+}
+
+function detailHtml(detail) {
+  if (!detail) return emptyState('No record selected', 'Choose a record to inspect its current state and evidence.');
+  return '<article class="wsa-detail-card">' + recordExpandedHtml(detail) + '</article>';
 }
 
 function spatialDetailHtml(detail) {
@@ -764,17 +766,13 @@ function recordsViewHtml(model, tab, { detailOpen = false } = {}) {
       escapeHtml(model.search.query) + '" autocomplete="off" spellcheck="false" placeholder="e.g. Northglass bridge"></label>'
     : '';
 
-  return '<section class="wsa-view" aria-label="' + escapeHtml(title) + '">' +
+  return '<section class="wsa-view wsa-records-view" aria-label="' + escapeHtml(title) + '">' +
     search +
-    '<div class="wsa-two-pane wsa-adaptive-pane' + (detailOpen ? ' is-detail-open' : '') + '">' +
-    '<aside class="wsa-list-pane"><div class="wsa-pane-title"><h2>' + escapeHtml(title) + '</h2>' +
+    '<div class="wsa-pane-title"><h2>' + escapeHtml(title) + '</h2>' +
     (tab === 'current' ? '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-accent" data-wsa-open-rebuild>Rebuild</button>' : '') +
     '</div>' +
-    recordsPane(records, model, emptyTitle, emptyBody, truncated) +
-    '</aside>' +
-    '<div class="wsa-detail-pane"><div class="wsa-mobile-detail-head">' + mobileBackButton(title) + '</div>' +
-    detailHtml(model.detail) + '</div>' +
-    '</div></section>';
+    recordsPane(records, model, emptyTitle, emptyBody, truncated, detailOpen) +
+    '</section>';
 }
 
 function operationTime(value) {
@@ -908,7 +906,7 @@ function tabLabel(tab) {
   return 'Data';
 }
 
-function rebuildStatusHtml(status) {
+function rebuildStatusHtml(status, { dismissible = true } = {}) {
   if (!status) return '';
   const total = Math.max(0, Number(status.totalBoundaries) || 0);
   const processed = Math.max(0, Number(status.processedBoundaries) || 0);
@@ -916,19 +914,26 @@ function rebuildStatusHtml(status) {
   const running = status.phase === 'running' || status.phase === 'cancelling';
   const tone = status.phase === 'failed' || status.phase === 'cancelled' ? ' error'
     : status.phase === 'completed' ? ' success' : ' running';
-  return '<div class="wsa-rebuild-banner' + tone + '">' +
-    '<div class="wsa-rebuild-banner-main"><strong>' +
-    escapeHtml(running ? (status.phase === 'cancelling' ? 'Cancelling rebuild…' : 'Rebuilding chat…') : 'Rebuild ' + (status.phase || 'status')) +
-    '</strong><span>' + escapeHtml(status.detail || '') + '</span></div>' +
+  const stateLabel = running
+    ? (status.phase === 'cancelling' ? 'Cancelling rebuild…' : 'Rebuilding chat…')
+    : status.phase === 'completed' ? 'Rebuild completed'
+      : status.phase === 'failed' ? 'Rebuild failed'
+        : 'Rebuild ' + (status.phase || 'status');
+  return '<aside class="wsa-rebuild-toast' + tone + '" aria-live="polite">' +
+    '<div class="wsa-rebuild-toast-icon" aria-hidden="true">' + (tone === 'success' ? '✓' : tone === 'error' ? '!' : '↻') + '</div>' +
+    '<div class="wsa-rebuild-toast-content"><div class="wsa-rebuild-toast-head"><strong>' + escapeHtml(stateLabel) + '</strong>' +
+    (dismissible ? '<button type="button" class="wsa-icon-btn" data-wsa-dismiss-rebuild aria-label="Dismiss rebuild status">×</button>' : '') +
+    '</div>' +
+    '<span>' + escapeHtml(status.detail || '') + '</span>' +
     '<div class="wsa-rebuild-progress"><div style="width:' + percent + '%"></div></div>' +
     '<div class="wsa-rebuild-stats">' +
     '<span>' + processed + '/' + total + ' boundaries</span>' +
     '<span>' + status.providerCalls + ' calls</span>' +
     '<span>' + status.currentRecords + ' current</span>' +
     '<span>' + status.places + ' places</span>' +
-    '</div>' +
+    '</div></div>' +
     (running ? '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-cancel-rebuild>Cancel</button>' : '') +
-    '</div>';
+    '</aside>';
 }
 
 function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
@@ -942,7 +947,7 @@ function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
   const maxBoundaries = Number.isInteger(form.maxBoundaries) ? form.maxBoundaries : rebuild.defaultMaxBoundaries;
 
   const body = active
-    ? '<div class="wsa-rebuild-running">' + rebuildStatusHtml(status) +
+    ? '<div class="wsa-rebuild-running">' + rebuildStatusHtml(status, { dismissible: false }) +
       '<p class="wsa-muted">The existing canonical state remains authoritative until the entire candidate rebuild succeeds and is persisted.</p></div>'
     : '<form class="wsa-rebuild-form" onsubmit="return false;">' +
       '<fieldset><legend>Rebuild source</legend>' +
@@ -991,6 +996,15 @@ function mobileNavigation(activeTab, moreOpen) {
   return '<nav class="wsa-mobile-nav" aria-label="World State mobile navigation">' + buttons + more + menu + '</nav>';
 }
 
+function continuityIconHtml() {
+  return '<span class="wsa-brand-icon" aria-hidden="true">' +
+    '<svg viewBox="0 0 48 48" focusable="false"><circle cx="24" cy="24" r="15"></circle>' +
+    '<path d="M12 19l8-7 11 3 6 9-5 10-12 2-9-8z"></path>' +
+    '<circle cx="20" cy="12" r="2.5"></circle><circle cx="31" cy="15" r="2.5"></circle>' +
+    '<circle cx="37" cy="24" r="2.5"></circle><circle cx="32" cy="34" r="2.5"></circle>' +
+    '<circle cx="20" cy="36" r="2.5"></circle><circle cx="11" cy="28" r="2.5"></circle></svg></span>';
+}
+
 export function renderWorldStatePanel(model, {
   activeTab = 'current',
   detailOpen = false,
@@ -998,6 +1012,7 @@ export function renderWorldStatePanel(model, {
   mobileMoreOpen = false,
   rebuildOpen = false,
   rebuildForm = {},
+  dismissedRebuildOperationId = '',
 } = {}) {
   const tab = WORLD_STATE_UI_TABS.includes(activeTab) ? activeTab : 'current';
   const tabs = WORLD_STATE_UI_TABS.map(item =>
@@ -1012,15 +1027,16 @@ export function renderWorldStatePanel(model, {
   else if (tab === 'maintenance') body = maintenanceHtml(model);
   else body = recordsViewHtml(model, tab, { detailOpen });
 
+  const rebuildStatus = model.maintenance.rebuild.status;
+  const showStatus = rebuildStatus && rebuildStatus.operationId !== dismissedRebuildOperationId;
   return '<div class="wsa-shell" data-world-state-alpha-ui>' +
     '<div class="wsa-backdrop" data-wsa-close aria-hidden="true"></div>' +
     '<section class="wsa-panel" role="dialog" aria-modal="true" aria-label="World State">' +
-    '<header class="wsa-header"><div>' +
-    '<p class="wsa-eyebrow">World State Alpha</p><h1>World continuity</h1>' +
-    '<span>' + model.counts.current + ' current · ' + (model.counts.resolved + model.counts.superseded) + ' historical · ' + model.counts.spatialLocations + ' places</span>' +
-    '</div><div class="wsa-header-actions"><button type="button" class="wsa-btn wsa-btn-accent wsa-header-rebuild" data-wsa-open-rebuild>Rebuild</button>' +
+    '<header class="wsa-header"><div class="wsa-brand">' + continuityIconHtml() + '<div class="wsa-brand-copy"><h1>World continuity</h1>' +
+    '<span>' + model.counts.current + ' current · ' + (model.counts.resolved + model.counts.superseded) + ' historical · ' + model.counts.spatialLocations + ' places</span></div></div>' +
+    '<div class="wsa-header-actions"><button type="button" class="wsa-btn wsa-btn-accent wsa-header-rebuild" data-wsa-open-rebuild><span aria-hidden="true">↻</span> Rebuild</button>' +
     '<button type="button" class="wsa-close" data-wsa-close aria-label="Close World State">×</button></div></header>' +
-    rebuildStatusHtml(model.maintenance.rebuild.status) +
+    (showStatus ? rebuildStatusHtml(rebuildStatus) : '') +
     '<nav class="wsa-tabs" role="tablist" aria-label="World State views">' + tabs + '</nav>' +
     '<main class="wsa-body">' + body + '</main>' +
     mobileNavigation(tab, mobileMoreOpen) +
@@ -1053,6 +1069,7 @@ export function createWorldStateUiController({
     spatialDetailOpen: false,
     mobileMoreOpen: false,
     rebuildOpen: false,
+    dismissedRebuildOperationId: '',
     rebuildForm: {
       mode: 'full',
       startMessageId: 0,
@@ -1078,6 +1095,10 @@ export function createWorldStateUiController({
   function refresh({ restoreSearchFocus = false, restoreSpatialFocus = false } = {}) {
     if (ui.destroyed) return null;
     const next = model();
+    const liveOperationId = next.maintenance.rebuild.status?.operationId || '';
+    if (ui.dismissedRebuildOperationId && liveOperationId && liveOperationId !== ui.dismissedRebuildOperationId) {
+      ui.dismissedRebuildOperationId = '';
+    }
     ui.selectedRecordId = next.selectedRecordId;
     ui.selectedSpatialKey = next.spatial.selectedKey;
     if (!Number.isInteger(ui.rebuildForm.maxBoundaries)) {
@@ -1097,6 +1118,7 @@ export function createWorldStateUiController({
       mobileMoreOpen: ui.mobileMoreOpen,
       rebuildOpen: ui.rebuildOpen,
       rebuildForm: ui.rebuildForm,
+      dismissedRebuildOperationId: ui.dismissedRebuildOperationId,
     });
 
     if (restoreSearchFocus && ui.activeTab === 'search') {
@@ -1194,6 +1216,13 @@ export function createWorldStateUiController({
       return;
     }
 
+    if (closest(event.target, '[data-wsa-dismiss-rebuild]')) {
+      const currentModel = model();
+      ui.dismissedRebuildOperationId = currentModel.maintenance.rebuild.status?.operationId || '';
+      refresh();
+      return;
+    }
+
     if (closest(event.target, '[data-wsa-cancel-rebuild]')) {
       if (typeof onMaintenanceAction === 'function') await onMaintenanceAction('cancel_rebuild', {});
       refresh();
@@ -1251,8 +1280,9 @@ export function createWorldStateUiController({
       const currentModel = model();
       const rows = selectedRecordRows(currentModel);
       if (Number.isInteger(index) && index >= 0 && rows[index]?.key) {
+        const same = ui.selectedRecordId === rows[index].key;
         ui.selectedRecordId = rows[index].key;
-        ui.detailOpen = true;
+        ui.detailOpen = same ? !ui.detailOpen : true;
         refresh();
       }
       return;
@@ -1371,6 +1401,7 @@ export function createWorldStateUiController({
         spatialDetailOpen: ui.spatialDetailOpen,
         mobileMoreOpen: ui.mobileMoreOpen,
         rebuildOpen: ui.rebuildOpen,
+        dismissedRebuildOperationId: ui.dismissedRebuildOperationId,
         rebuildForm: { ...ui.rebuildForm },
         destroyed: ui.destroyed,
       };

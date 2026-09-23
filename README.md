@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.11 keeps the Alpha.10 completeness semantics and redesigns the operator surface: desktop/tablet/mobile adaptive navigation, expandable Operations with bounded model response/rejection inspection, visible rebuild progress and cancellation, atomic rebuild without Clear, Full / Last N / From-message recovery controls, and a configurable assistant-boundary cap up to the hard 4096 limit. Partial rebuild is fail-closed and requires exact canonical history before the selected start; after Reset, use Full chat. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.12 keeps the Alpha.11 rebuild/range semantics and refines the operator surface into a flatter disclosure workspace: continuity icon + title branding, inline expandable Reality records, expandable Operations diagnostics/JSON, dismissible floating rebuild status that never shifts navigation, flatter Data/maintenance sections, and suppressed scrollbar arrow buttons. Responsive tablet/mobile behavior remains intact. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

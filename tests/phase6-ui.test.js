@@ -273,7 +273,7 @@ test('render escapes canonical/evidence/diagnostic text and exposes no raw backe
     }],
   });
 
-  const html = renderWorldStatePanel(model, { activeTab: 'current' }) +
+  const html = renderWorldStatePanel(model, { activeTab: 'current', detailOpen: true }) +
     renderWorldStatePanel(model, { activeTab: 'diagnostics' });
   const projected = JSON.stringify(model);
 
@@ -285,7 +285,7 @@ test('render escapes canonical/evidence/diagnostic text and exposes no raw backe
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.match(html, /&lt;b onclick=&quot;steal\(\)&quot;&gt;Evidence&lt;\/b&gt;/);
   assert.match(html, /&lt;svg onload=&quot;steal\(\)&quot;&gt;/);
-  assert.doesNotMatch(html, /<img|<script|<svg|onclick="|onerror="/);
+  assert.doesNotMatch(html, /<img|<script|<svg[^>]+onload=|onclick="|onerror="/);
 
   for (const forbidden of [
     'wsr_secret_identifier',
@@ -463,6 +463,73 @@ test('responsive renderer exposes Operations, Places, mobile navigation, atomic 
   const dataHtml = renderWorldStatePanel(idleModel, { activeTab: 'maintenance' });
   assert.match(dataHtml, /Danger zone/);
   assert.match(dataHtml, /Rebuild does not require Clear/);
+});
+
+test('Alpha.12 flat UI exposes inline record disclosures, expandable Operations, icon branding, and dismissible rebuild status', () => {
+  const model = buildWorldStateUiModel(fixtureState(), {
+    selectedRecordId: 'wsr_hidden_strike',
+    diagnostics: [{
+      operationId: 'rebuild:15:1:0',
+      label: 'rebuild',
+      outcome: 'applied',
+      sourceMessageId: 15,
+      applied: 2,
+      rejected: 0,
+      responseJson: '{"mutations":[{"action":"update"}]}',
+      rejectionsJson: '[]',
+    }],
+    runtimeInfo: {
+      chatMessages: 20,
+      assistantBoundaries: 8,
+      defaultRebuildBoundaries: 1024,
+      maxRebuildBoundaries: 4096,
+      spatialEnabled: true,
+      rebuildStatus: {
+        phase: 'completed',
+        operationId: 'rebuild:15:1:0',
+        processedBoundaries: 8,
+        totalBoundaries: 8,
+        providerCalls: 8,
+        currentRecords: 2,
+        places: 3,
+        detail: 'Rebuild completed and persisted.',
+      },
+    },
+  });
+
+  const current = renderWorldStatePanel(model, { activeTab: 'current', detailOpen: true });
+  assert.match(current, /wsa-brand-icon/);
+  assert.match(current, /<h1>World continuity<\/h1>/);
+  assert.doesNotMatch(current, />World State Alpha</);
+  assert.match(current, /wsa-record-disclosure is-expanded/);
+  assert.match(current, /<details[^>]+open/);
+  assert.match(current, /Anchors/);
+  assert.match(current, /Evidence/);
+  assert.match(current, /data-wsa-dismiss-rebuild/);
+  assert.match(current, /wsa-rebuild-toast/);
+
+  const dismissed = renderWorldStatePanel(model, {
+    activeTab: 'current',
+    detailOpen: true,
+    dismissedRebuildOperationId: 'rebuild:15:1:0',
+  });
+  assert.doesNotMatch(dismissed, /wsa-rebuild-toast/);
+
+  const operations = renderWorldStatePanel(model, { activeTab: 'diagnostics' });
+  assert.match(operations, /<details class="wsa-operation/);
+  assert.match(operations, /Model response JSON/);
+  assert.match(operations, /data-wsa-copy-json="response"/);
+});
+
+test('Alpha.12 flat CSS suppresses scrollbar arrows and removes nested-card depth from record/operation rows', () => {
+  const css = fs.readFileSync('ui.css', 'utf8');
+  assert.match(css, /webkit-scrollbar-button/);
+  assert.match(css, /display:\s*none\s*!important/);
+  assert.match(css, /\.wsa-record-disclosure/);
+  assert.match(css, /\.wsa-record-expanded-grid/);
+  assert.match(css, /\.wsa-rebuild-toast/);
+  assert.match(css, /\.wsa-brand-icon/);
+  assert.match(css, /\.wsa-operation\s*\{[\s\S]*?border:\s*0;/);
 });
 
 test('Phase 6 UI namespace is isolated from NPC State and host/bootstrap code', () => {
