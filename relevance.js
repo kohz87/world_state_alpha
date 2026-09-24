@@ -675,9 +675,7 @@ export function selectLifecycleCandidates(state, {
   };
 
   if (current[0]) add(current[0]);
-  const currentIds = new Set(current.map(item => item?.record?.id).filter(Boolean));
   for (const item of context) {
-    if (currentIds.has(item?.record?.id)) continue;
     if (add(item)) break;
   }
   for (const item of current.slice(1)) add(item);
