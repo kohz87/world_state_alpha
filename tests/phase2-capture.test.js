@@ -250,7 +250,7 @@ test('interpretive lifecycle binding cannot retarget an unrelated visible record
       mutations: [{
         action: 'resolve',
         recordId: dock.id,
-        summary: 'The Southport dock strike remains active; collapse ends it.',
+        summary: 'The Southport dock strike remains active; collapse.',
         evidence: [{
           sourceMessageId: 0,
           claim: 'The last two collapse in the mud. Nothing stirs afterward.',
@@ -1410,6 +1410,51 @@ test('explicit new episode may create a new record while preserving resolved pre
   assert.equal(result.state.records.length, 2);
   assert.equal(result.state.records.find(record => record.id === prior.id).status, 'resolved');
   assert.ok(result.state.records.some(record => record.id !== prior.id && record.status === 'active'));
+});
+
+test('explicit new episode cannot link an unrelated event through a broad shared place anchor', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'The Southport dock strike ended after an agreement.',
+  }]);
+  const state = existingState('new-episode-broad-anchor-reject', base, {
+    action: 'create',
+    kind: 'development',
+    status: 'resolved',
+    summary: 'The Southport dock strike is resolved.',
+    anchors: ['Southport', 'dock strike'],
+  });
+  const prior = state.records[0];
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'A new Southport ferry schedule begins today.',
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        summary: 'A new Southport ferry schedule is active.',
+        anchors: ['Southport'],
+        newEpisodeOfRecordId: prior.id,
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'A new Southport ferry schedule begins today.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [prior],
+    chatKey: 'new-episode-broad-anchor-reject',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records.length, 1);
+  assert.equal(result.rejected[0].stage, 'duplicate-gate');
+  assert.match(result.rejected[0].reason, /sufficiently related/i);
 });
 
 test('explicit new-episode proposals consolidate into an already-active recurrence instead of duplicating Current', () => {

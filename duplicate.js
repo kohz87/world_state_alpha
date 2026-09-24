@@ -51,6 +51,21 @@ function mergeAnchors(existing = [], incoming = [], max = 20) {
   return out;
 }
 
+function explicitNewEpisodeRelated(candidate, prior, score, threshold) {
+  if (score >= threshold) return true;
+  const candidateAnchors = anchorSet(candidate);
+  const priorAnchors = anchorSet(prior);
+  const sharedAnchors = [...candidateAnchors].filter(anchor => priorAnchors.has(anchor));
+  const strongSharedAnchor = sharedAnchors.some(anchor => anchor.includes(' '));
+
+  const candidateSummary = tokenSet(candidate?.summary || '');
+  const priorSummary = tokenSet(prior?.summary || '');
+  let sharedSummaryTokens = 0;
+  for (const token of candidateSummary) if (priorSummary.has(token)) sharedSummaryTokens += 1;
+
+  return strongSharedAnchor && sharedSummaryTokens >= 2;
+}
+
 export function consolidateCreateCandidate(
   mutation,
   visibleRecords = [],
@@ -69,7 +84,9 @@ export function consolidateCreateCandidate(
     }
     const prior = records.find(record => record.id === mutation.newEpisodeOfRecordId) || null;
     const score = prior ? duplicateSimilarity(mutation, prior) : 0;
-    if (!prior || !['resolved', 'superseded'].includes(prior.status) || score < newEpisodeThreshold) {
+    if (!prior
+      || !['resolved', 'superseded'].includes(prior.status)
+      || !explicitNewEpisodeRelated(mutation, prior, score, newEpisodeThreshold)) {
       return {
         ok: false,
         reason: 'newEpisodeOfRecordId must identify a sufficiently related visible resolved/superseded episode',
