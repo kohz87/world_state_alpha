@@ -84,7 +84,7 @@ test('lifecycle retrieval can use prior scene context without making it mutation
   });
   const result = selectLifecycleCandidates(state([...other, target, dock, plague]), {
     currentText: 'The last two collapse in the mud. The Southport dock strike and harbor plague are also discussed.',
-    contextText: 'Two ditch boars remain active in the orchard. The hunter closes in on them. The Southport dock strike and harbor plague are also discussed.',
+    contextText: 'Two ditch boars remain active in the orchard. The hunter closes in on them.',
     currentMessageId: 60,
     maxRecords: 2,
   });

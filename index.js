@@ -1355,12 +1355,15 @@ async function handleAssistantMessage(messageId) {
     const before = stateCache.get(chatKey);
     const index = getRelevanceIndex(chatKey, before);
     const captureText = recentText(normalizeCaptureExchange(exchange));
-    const lifecycleContext = recentText(normalizeCaptureExchange(boundedExchange(
-      liveChat,
-      messageId,
-      CAPTURE_LIMITS.lifecycleContextMessages,
-      currentState?.lineage,
-    )));
+    const currentExchangeIds = new Set(exchange.map(row => row?.messageId).filter(Number.isInteger));
+    const lifecycleContext = recentText(normalizeCaptureExchange(
+      boundedExchange(
+        liveChat,
+        messageId,
+        CAPTURE_LIMITS.lifecycleContextMessages,
+        currentState?.lineage,
+      ).filter(row => !currentExchangeIds.has(row?.messageId)),
+    ));
     const lifecycleVisible = selectLifecycleCandidates(before, {
       index,
       currentText: captureText,
