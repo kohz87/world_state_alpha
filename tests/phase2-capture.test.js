@@ -305,7 +305,7 @@ test('terminal create consolidation is re-firewalled against the chosen active t
         action: 'create',
         kind: 'development',
         status: 'resolved',
-        summary: 'The Southport dock strike ends after the last two collapse.',
+        summary: 'The Southport dock strike remains active; collapse.',
         anchors: ['Southport', 'dock strike'],
         evidence: [{
           sourceMessageId: 0,

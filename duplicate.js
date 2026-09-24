@@ -98,11 +98,12 @@ export function consolidateCreateCandidate(
     for (const record of records) {
       if (record.status !== 'active') continue;
       const activeScore = duplicateSimilarity(mutation, record);
+      if (!explicitNewEpisodeRelated(mutation, record, activeScore, threshold)) continue;
       if (!activeDuplicate || activeScore > activeDuplicate.score) {
         activeDuplicate = { record, score: activeScore };
       }
     }
-    if (activeDuplicate && activeDuplicate.score >= threshold) {
+    if (activeDuplicate) {
       const record = activeDuplicate.record;
       return {
         ok: true,
