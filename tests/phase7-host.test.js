@@ -507,7 +507,7 @@ test('host guards the latest captured boundary against passive post-processing r
   const source = fs.readFileSync('index.js', 'utf8');
 
   assert.match(source, /const passiveCaptureRebaseCandidates = new Map\(\)/);
-  assert.match(source, /passiveCaptureRebaseCandidates\.set\(chatKey, \{[\s\S]*messageId,[\s\S]*narrationFingerprint:\s*fingerprintAssistantNarration/);
+  assert.match(source, /passiveCaptureRebaseCandidates\.set\(chatKey, messageId\)/);
   assert.match(source, /passiveCaptureRebaseCandidates\.get\(chatKey\)/);
   assert.match(source, /passiveCaptureMessageId:/);
   assert.doesNotMatch(source, /passiveCaptureNarrationFingerprint:/);

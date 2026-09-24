@@ -52,7 +52,7 @@ test('core safety invariants are present', () => {
     /Spatial state changes only from trusted base geography/i,
     /Spatial Continuity is an \*\*optional sibling subsystem\*\*/i,
     /never stores locations, spatial relations, or routes inside `records\[\]`/i,
-    /Ternia is an adapter\/acceptance fixture, not core ontology/i,
+    /one canonical base-map document shape/i,
     /Spatial automatic capture shares the existing eligible Reality capture request/i,
     /Canonical schema version 2 adds the durable `spatial` namespace/i,
     /suppress both Reality and Spatial private continuity injection/i,
