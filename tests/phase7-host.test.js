@@ -336,7 +336,7 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
 
   assert.equal((source.match(/runCaptureOperation\s*\(\s*\{/g) || []).length, 1);
   assert.match(source, /selectLifecycleCandidates\([\s\S]*contextText:\s*lifecycleContext[\s\S]*maxRecords:\s*CAPTURE_LIMITS\.lifecycleVisibleRecords/);
-  assert.match(source, /lifecycleSelection\.selected[\s\S]*lifecycleSource === 'scene-context'[\s\S]*\.map\(item => item\.record\?\.id\)/);
+  assert.match(source, /lifecycleSelection\.selected\.length === 1[\s\S]*lifecycleSelection\.selected\[0\]\?\.lifecycleSource === 'scene-context'[\s\S]*\[lifecycleSelection\.selected\[0\]\.record\?\.id\]/);
   assert.match(source, /boundedExchange\([\s\S]*CAPTURE_LIMITS\.lifecycleContextMessages[\s\S]*\.filter\(row => !currentExchangeIds\.has/);
   assert.match(source, /runCaptureOperation\(\{[\s\S]*visibleRecords:\s*visible,[\s\S]*lifecycleContextRecordIds,/);
   assert.match(source, /selectRelevantRecords\([\s\S]*maxRecords:\s*CAPTURE_LIMITS\.visibleRecords/);

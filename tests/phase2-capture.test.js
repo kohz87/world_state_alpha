@@ -250,7 +250,7 @@ test('interpretive lifecycle binding cannot retarget an unrelated visible record
       mutations: [{
         action: 'resolve',
         recordId: dock.id,
-        summary: 'The Southport dock strike remains active until it ends after the last two collapse.',
+        summary: 'The Southport dock strike remains active; collapse ends it.',
         evidence: [{
           sourceMessageId: 0,
           claim: 'The last two collapse in the mud. Nothing stirs afterward.',
@@ -1438,7 +1438,7 @@ test('explicit new-episode proposals consolidate into an already-active recurren
   const active = state.records.find(record => record.status === 'active');
   const exchange = withLineage([{
     role: 'assistant',
-    content: 'The new dock strike remains active as talks stall.',
+    content: 'A new dock strike is active; talks stall.',
   }]);
 
   const result = processCaptureResponse({
@@ -1446,12 +1446,12 @@ test('explicit new-episode proposals consolidate into an already-active recurren
       mutations: [{
         action: 'create',
         kind: 'development',
-        summary: 'The new dock strike remains active as talks stall.',
+        summary: 'A new dock strike is active; talks stall.',
         anchors: ['dock strike', 'harbor wages'],
         newEpisodeOfRecordId: prior.id,
         evidence: [{
           sourceMessageId: 0,
-          claim: 'The new dock strike remains active as talks stall.',
+          claim: 'A new dock strike is active; talks stall.',
         }],
       }],
     }),
@@ -1464,6 +1464,7 @@ test('explicit new-episode proposals consolidate into an already-active recurren
   });
 
   assert.equal(result.state.records.length, 2);
+  assert.ok(result.applied.length > 0, JSON.stringify({ rejected: result.rejected, records: result.state.records }));
   assert.equal(result.applied[0].recordId, active.id);
   assert.match(result.state.records.find(record => record.id === active.id).summary, /talks stall/i);
 });

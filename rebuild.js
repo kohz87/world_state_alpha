@@ -189,6 +189,43 @@ function historicalRelevant(record, context) {
   return overlap >= 2;
 }
 
+const REBUILD_DIRECT_STOPWORDS = new Set([
+  'the', 'and', 'that', 'this', 'with', 'from', 'into', 'onto', 'over', 'under', 'after', 'before',
+  'while', 'where', 'when', 'then', 'than', 'they', 'them', 'their', 'there', 'here', 'have', 'has',
+  'had', 'was', 'were', 'are', 'is', 'been', 'being', 'will', 'would', 'could', 'should', 'about',
+  'among', 'through', 'around', 'still', 'current', 'currently', 'now', 'near', 'behind', 'outside',
+  'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'first', 'second',
+  'third', 'last', 'remain', 'remains', 'active',
+]);
+
+function rebuildDirectTerms(value) {
+  return normalizeAnchor(value)
+    .split(' ')
+    .filter(token => token.length >= 3 && !REBUILD_DIRECT_STOPWORDS.has(token))
+    .map(token => {
+      if (token.length > 5 && token.endsWith('ies')) return token.slice(0, -3) + 'y';
+      if (token.length > 4 && token.endsWith('s')) return token.slice(0, -1);
+      return token;
+    });
+}
+
+function rebuildDirectlyAddresses(record, recentText) {
+  const haystack = normalizeAnchor(recentText);
+  if (!haystack) return false;
+
+  const anchors = (Array.isArray(record?.anchors) ? record.anchors : [])
+    .map(normalizeAnchor)
+    .filter(Boolean);
+  if (anchors.some(anchor => anchor.includes(' ') && ` ${haystack} `.includes(` ${anchor} `))) return true;
+  if (anchors.length === 1 && anchors[0].length >= 5 && ` ${haystack} `.includes(` ${anchors[0]} `)) return true;
+
+  const left = new Set(rebuildDirectTerms(record?.summary || ''));
+  const right = new Set(rebuildDirectTerms(recentText));
+  let shared = 0;
+  for (const token of left) if (right.has(token)) shared += 1;
+  return shared >= 2;
+}
+
 function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessageId) {
   const lifecycle = [];
   const historical = [];
@@ -197,6 +234,9 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
   for (const record of state.records || []) {
     const lastChanged = Number.isInteger(record?.lastChangedMessage) ? record.lastChangedMessage : -1;
     const overlapsExchange = historicalRelevant(record, context);
+    const directlyAddressed = record?.kind === 'development' && record?.status === 'active'
+      ? rebuildDirectlyAddresses(record, recentText)
+      : false;
 
     if (record?.kind === 'development' && record?.status === 'active') {
       const recentlyChanged = Number.isInteger(boundaryMessageId)
@@ -204,7 +244,7 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
         && boundaryMessageId > lastChanged
         && (boundaryMessageId - lastChanged) <= REBUILD_LIMITS.lifecycleRecentMessages;
       if (overlapsExchange || recentlyChanged) {
-        lifecycle.push({ record, overlapsExchange, lastChanged });
+        lifecycle.push({ record, overlapsExchange, directlyAddressed, lastChanged });
       }
       continue;
     }
@@ -227,10 +267,9 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
   const selectedLifecycle = lifecycle.slice(0, REBUILD_LIMITS.lifecycleVisibleRecords);
   return {
     lifecycle: selectedLifecycle.map(item => item.record),
-    lifecycleContextRecordIds: selectedLifecycle
-      .filter(item => !item.overlapsExchange)
-      .map(item => item.record?.id)
-      .filter(Boolean),
+    lifecycleContextRecordIds: selectedLifecycle.length === 1 && !selectedLifecycle[0].directlyAddressed
+      ? [selectedLifecycle[0].record?.id].filter(Boolean)
+      : [],
     historical: historical.slice(0, REBUILD_LIMITS.resolvedVisibleRecords).map(item => item.record),
   };
 }

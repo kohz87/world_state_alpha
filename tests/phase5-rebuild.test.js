@@ -187,7 +187,11 @@ test('rebuild reserves recent active developments so later implicit endings can 
     },
   });
 
-  assert.equal(result.outcome, 'completed');
+  assert.equal(result.outcome, 'completed', JSON.stringify({
+    errorCode: result.errorCode,
+    errorMessage: result.errorMessage,
+    receipts: result.receipts,
+  }));
   assert.equal(calls, 2);
   assert.equal(result.state.records.length, 1);
   assert.equal(result.state.records[0].status, 'resolved');

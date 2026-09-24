@@ -1372,10 +1372,10 @@ async function handleAssistantMessage(messageId) {
       maxRecords: CAPTURE_LIMITS.lifecycleVisibleRecords,
     });
     const lifecycleVisible = lifecycleSelection.selected.map(item => item.record);
-    const lifecycleContextRecordIds = lifecycleSelection.selected
-      .filter(item => item.lifecycleSource === 'scene-context')
-      .map(item => item.record?.id)
-      .filter(Boolean);
+    const lifecycleContextRecordIds = lifecycleSelection.selected.length === 1
+      && lifecycleSelection.selected[0]?.lifecycleSource === 'scene-context'
+      ? [lifecycleSelection.selected[0].record?.id].filter(Boolean)
+      : [];
     const activeVisible = selectRelevantRecords(before, {
       index,
       recentText: captureText,
