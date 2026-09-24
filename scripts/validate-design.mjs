@@ -62,7 +62,7 @@ for (const phrase of [
   'Spatial state changes only from trusted base geography',
   'Spatial Continuity is an **optional sibling subsystem**',
   'never stores locations, spatial relations, or routes inside `records[]`',
-  'Ternia is an adapter/acceptance fixture, not core ontology',
+  'one canonical base-map document shape',
   'Spatial automatic capture shares the existing eligible Reality capture request',
   'Canonical schema version 2 adds the durable `spatial` namespace',
   'suppress both Reality and Spatial private continuity injection',
