@@ -67,8 +67,8 @@ function lexicalAffinity(left, right, anchors = []) {
 function targetAffinity(record, text) {
   if (!record) return false;
 
-  const left = significantTokens(record.summary || '');
-  const right = significantTokens(text);
+  const left = new Set(significantTokens(record.summary || ''));
+  const right = new Set(significantTokens(text));
   const shared = [...left].filter(token => right.has(token));
   if (shared.length >= 2) return true;
   if (shared.length === 1) {

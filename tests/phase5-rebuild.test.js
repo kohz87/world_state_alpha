@@ -15,7 +15,7 @@ function scriptedDispatcher(calls = { count: 0 }) {
   return async (_ctx, options) => {
     calls.count += 1;
     const prompt = options.prompt;
-    const visibleMatch = prompt.match(/VISIBLE CURRENT WORLD STATE \(current authority; use only these IDs\):\n(\[[^\n]*\])/);
+    const visibleMatch = prompt.match(/VISIBLE WORLD STATE CONTEXT \(active records are current authority; resolved\/superseded records are recurrence context only; use only these IDs\):\n(\[[^\n]*\])/);
     const visible = visibleMatch ? JSON.parse(visibleMatch[1]) : [];
     const existing = visible.find(record => Array.isArray(record.anchors)
       && record.anchors.some(anchor => String(anchor).toLocaleLowerCase().includes('dock strike')));
@@ -144,7 +144,7 @@ test('rebuild reserves recent active developments so later implicit endings can 
     isCurrent: () => true,
     dispatcher: async (_ctx, options) => {
       calls += 1;
-      const visibleMatch = options.prompt.match(/VISIBLE CURRENT WORLD STATE \(current authority; use only these IDs\):\n(\[[^\n]*\])/);
+      const visibleMatch = options.prompt.match(/VISIBLE WORLD STATE CONTEXT \(active records are current authority; resolved\/superseded records are recurrence context only; use only these IDs\):\n(\[[^\n]*\])/);
       const visible = visibleMatch ? JSON.parse(visibleMatch[1]) : [];
 
       if (options.prompt.includes('Two ditch boars remain alive in the orchard and keep circling the roots.')) {
@@ -537,7 +537,7 @@ test('rebuild keeps relevant resolved tombstones visible so passive history cann
     const currentMatch = prompt.match(/CURRENT EXCHANGE \(the only automatic mutation evidence source\):\n(\[[^\n]*\])/);
     const current = currentMatch ? JSON.parse(currentMatch[1]) : [];
     const assistantText = current.find(message => message.role === 'assistant')?.content || '';
-    const visibleMatch = prompt.match(/VISIBLE CURRENT WORLD STATE \(current authority; use only these IDs\):\n(\[[^\n]*\])/);
+    const visibleMatch = prompt.match(/VISIBLE WORLD STATE CONTEXT \(active records are current authority; resolved\/superseded records are recurrence context only; use only these IDs\):\n(\[[^\n]*\])/);
     const visible = visibleMatch ? JSON.parse(visibleMatch[1]) : [];
     const dock = visible.find(record => (record.anchors || []).includes('dock strike'));
 
@@ -605,7 +605,7 @@ test('rebuild permits an explicit genuinely new episode linked to a visible reso
     const currentMatch = prompt.match(/CURRENT EXCHANGE \(the only automatic mutation evidence source\):\n(\[[^\n]*\])/);
     const current = currentMatch ? JSON.parse(currentMatch[1]) : [];
     const assistantText = current.find(message => message.role === 'assistant')?.content || '';
-    const visibleMatch = prompt.match(/VISIBLE CURRENT WORLD STATE \(current authority; use only these IDs\):\n(\[[^\n]*\])/);
+    const visibleMatch = prompt.match(/VISIBLE WORLD STATE CONTEXT \(active records are current authority; resolved\/superseded records are recurrence context only; use only these IDs\):\n(\[[^\n]*\])/);
     const visible = visibleMatch ? JSON.parse(visibleMatch[1]) : [];
     const dock = visible.find(record => (record.anchors || []).includes('dock strike'));
 
@@ -1198,7 +1198,7 @@ test('five-boundary rebuild accepts a fenced final Gemini response without rolli
   let calls = 0;
   const dispatcher = async (_ctx, options) => {
     calls += 1;
-    const visibleRecordMatch = options.prompt.match(/VISIBLE CURRENT WORLD STATE \(current authority; use only these IDs\):\n(\[[^\n]*\])/);
+    const visibleRecordMatch = options.prompt.match(/VISIBLE WORLD STATE CONTEXT \(active records are current authority; resolved\/superseded records are recurrence context only; use only these IDs\):\n(\[[^\n]*\])/);
     const visibleRecords = visibleRecordMatch ? JSON.parse(visibleRecordMatch[1]) : [];
     const boars = visibleRecords.find(record => /trench-boar/i.test(record.summary || ''));
     const visibleSpatialMatch = options.prompt.match(/VISIBLE SPATIAL CONTINUITY \(current\/base authority; use only shown IDs\):\n(\[[^\n]*\])/);

@@ -250,7 +250,7 @@ test('interpretive lifecycle binding cannot retarget an unrelated visible record
       mutations: [{
         action: 'resolve',
         recordId: dock.id,
-        summary: 'The Southport dock strike ends after the last two collapse.',
+        summary: 'The Southport dock strike remains active until it ends after the last two collapse.',
         evidence: [{
           sourceMessageId: 0,
           claim: 'The last two collapse in the mud. Nothing stirs afterward.',
