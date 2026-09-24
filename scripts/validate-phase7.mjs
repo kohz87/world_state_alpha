@@ -35,7 +35,8 @@ for (const file of inventory.modules) {
   await import(new URL('../' + file, import.meta.url));
 }
 
-if (!['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13', '0.9.0-alpha.14', '0.9.0-alpha.15', '0.9.0-alpha.16', '0.9.0-alpha.17', '0.9.0-alpha.18'].includes(pkg.version) || manifest.version !== pkg.version) {
+const supportedApplicationVersion = /^(?:0\.7\.0-alpha\.1|0\.8\.0-alpha\.1|0\.9\.0-alpha\.\d+)$/.test(pkg.version);
+if (!supportedApplicationVersion || manifest.version !== pkg.version) {
   throw new Error('Phase 7 application version markers are inconsistent');
 }
 if (manifest.display_name !== 'World State Alpha'
