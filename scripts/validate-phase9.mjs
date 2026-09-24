@@ -11,14 +11,10 @@ import {
   createSpatialState,
   deriveCoordinate,
   directionFromDelta,
-  normalizeSpatialState,
-  reduceSpatialMutations,
-  resolveEffectiveLocations,
   straightLineDistance,
 } from '../spatial-core.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations } from '../spatial-relevance.js';
-import { createState, normalizeState, reduceMutations } from '../state-core.js';
-import { commitMutationBoundary, reconcileBranch } from '../branch.js';
+import { normalizeState } from '../state-core.js';
 import { sanitizeAssistantNarration } from '../narrative-sanitizer.js';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
@@ -59,27 +55,30 @@ for (const file of inventory.modules) {
 }
 
 // 4. Base map parsing validation
-const sampleJson = fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8');
+const sampleJson = fs.readFileSync('tests/fixtures/cartesian-base-map-sample.json', 'utf8');
 const baseMap = parseBaseMap(sampleJson);
 if (!baseMap.id || !baseMap.digest || baseMap.locations.length < 5) {
   throw new Error('Phase 9 base map parser failed on sample fixture');
 }
-if (baseMap.adapter !== 'ternia_v0_9_10') {
-  throw new Error('Phase 9 base map adapter mismatch: ' + baseMap.adapter);
+if ('adapter' in baseMap) {
+  throw new Error('Phase 9 base maps must not expose world/version-specific adapters');
 }
 const genericBase = parseBaseMap({
   name: 'Generic Fixture',
-  coordinate_system: {
-    north: '+y',
-    east: '+x',
-    unit_km: 2,
-    bounds: { x_min: -10, x_max: 10, y_min: -20, y_max: 20 },
-    decimal_step: 0.5,
+  profile: {
+    system: 'cartesian2d',
+    northAxis: '+y',
+    eastAxis: '+x',
+    unitKm: 2,
+    bounds: { xMin: -10, xMax: 10, yMin: -20, yMax: 20 },
+    decimalStep: 0.5,
+    trueNorthLocked: true,
   },
-  locations: [{ name: 'Node', type: 'module', coord: [1, 2] }],
+  locations: [{ name: 'Node', type: 'module', coordinate: { x: 1, y: 2 } }],
+  routes: [],
 });
-if (genericBase.adapter !== 'generic_v1' || genericBase.profile.unitKm !== 2) {
-  throw new Error('Phase 9 generic coordinate_system was incorrectly coupled to the Ternia adapter');
+if (genericBase.profile.unitKm !== 2) {
+  throw new Error('Phase 9 generalized Cartesian base-map profile was not preserved');
 }
 const halmere = baseMap.locations.find(l => l.name === 'Halmere');
 if (!halmere || !halmere.routeRefs.includes('North Road')) {
@@ -206,25 +205,22 @@ for (const required of [
     throw new Error('Phase 9 Spatial capture hardening missing: ' + required);
   }
 }
-if (!spatialBaseSource.includes("['generic_v1', 'ternia_v0_9_10'].includes(declaredAdapter)")) {
-  throw new Error('Phase 9 stored base-map adapter identity is not constrained to known adapters');
+if (/ternia|parseTerniaBaseMap|generic_v1|declaredAdapter/i.test(spatialBaseSource)) {
+  throw new Error('Phase 9 base-map parser still contains world/version-specific adapter logic');
 }
 if (!transferSource.includes("path: ''")) {
   throw new Error('Phase 9 foreign import must clear machine-local base-map source paths');
 }
 
-// 9. Schema 1 -> Schema 2 migration and rollback safety
-const schema1State = {
-  schemaVersion: 1,
-  chatKey: 'test:migration',
-  records: [],
-  evidence: {},
-  links: [],
-  lineage: [],
-};
-const migrated = normalizeState(schema1State, { strictSchema: true });
-if (migrated.schemaVersion !== 2 || !migrated.spatial || !Array.isArray(migrated.spatial.locations)) {
-  throw new Error('Phase 9 schema1 migration did not produce valid schema2 spatial state');
+// 9. Pre-1.0 current-schema-only contract
+let rejectedLegacySchema = false;
+try {
+  normalizeState({ schemaVersion: 1, records: [], evidence: {}, links: [] }, { strictSchema: true });
+} catch {
+  rejectedLegacySchema = true;
+}
+if (!rejectedLegacySchema) {
+  throw new Error('Phase 9 must reject pre-current canonical schemas during pre-1.0 development');
 }
 
-console.log(`World State Alpha Phase 9 validation passed: version ${pkg.version} synchronized, schemaVersion 2 durable, spatial base map adapter verified, authority firewall validated, narrative sanitizer working, and spatial relevance indexing bounded.`);
+console.log(`World State Alpha Phase 9 validation passed: version ${pkg.version} synchronized, schemaVersion 2 current-only, generalized Cartesian base maps verified, authority firewall validated, narrative sanitizer working, and spatial relevance indexing bounded.`);

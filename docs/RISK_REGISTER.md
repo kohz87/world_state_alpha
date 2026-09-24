@@ -71,7 +71,7 @@
 | Rebuild cancel starvation | Cancel is queued behind the provider-backed rebuild and cannot stop it | cancellation is control-plane only and bypasses the per-chat writer queue; canonical mutation/persistence remains serialized | provider prefix-cancel + host ordering fixtures |
 | Record detail invisibility | flatter list removes access to anchors/evidence/history | native disclosure row opens bounded anchors, timeline, evidence and relations inline; selected projection remains escaped/bounded | Phase 6 disclosure/XSS fixtures |
 | Status-banner navigation displacement | rebuild status consumes a grid row and pushes tabs/content out of reach | absolute dismissible rebuild toast anchored over content, not layout flow; mobile toast sits above bottom navigation | responsive renderer/CSS fixtures |
-| Storage schema version drift | Application maintenance release accidentally changes durable format versions | decouple app version (currently 0.9.0-alpha.22) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Storage schema version drift | Application maintenance release accidentally changes durable format versions | decouple app version (currently 0.9.0-alpha.23) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
 | Passive rewrite mass rollback | an older or multi-message host/Regex/reasoning cleanup is discovered late and exact reconciliation replays every later undo, emptying Current | durable role + sanitized narration fingerprints on lineage rows; narration-equivalent non-user rewrites rebase together; legacy unprovable non-user divergence fails closed with canonical records preserved | multi-message semantic rebase + legacy fail-closed branch fixtures |
 
 
@@ -86,11 +86,11 @@
 | Base-map mutation | campaign edit corrupts shared registry | immutable parsed base + campaign override layer | base immutability test |
 | Base-map host mismatch | host-neutral fake adapter passes while production SillyTavern import/reload cannot store or fetch the source | production storage adapter exposes and tests the JSON file API used by host-base-map | Phase 7 production-adapter test |
 | Sticky base-map outage | transient source read failure is cached as permanent absence | cache successful base maps only; failed reads retry while automatic Spatial work remains fail-closed | host lifecycle/static test |
-| Co-located anchor collapse | distinct city/institution/landmark sharing one coarse coordinate is merged as one place | deduplicate Ternia sources by explicit identity/name, never coordinate equality alone | co-located anchor parser test |
+| Co-located anchor collapse | distinct city/institution/landmark sharing one coarse coordinate is merged as one place | base-map identity uses explicit/stable ID or name-derived identity, never coordinate equality | co-located anchor parser test |
 | Implicit generic profile | generic map with no coordinate system silently inherits Cartesian/True-North assumptions | keep absent generic profile as null; derive only from explicit profile | profileless generic-map test |
 | Stale Spatial identity | old-chat panel/provider carries unknown explicit locationId and reducer mints it as a new place | explicit unknown locationId fails closed; creates omit locationId and use owned deterministic ID | stale-ID reducer test |
 | Cross-campaign leakage | generated location appears in another chat | deterministic IDs include chat owner; Spatial lives inside per-chat sidecar | campaign isolation test |
 | Dangling spatial graph | delete/merge leaves invalid relations/routes | reducer rewrites/removes graph references | merge/delete tests |
 | Spatial scan regression | large base/campaign map scanned every turn | ephemeral spatial relevance index + cached base map | 1000-location measurement/test |
-| Schema migration loss | 0.8 state/checkpoints fail after schema bump | strict schema1->2 normalizer; envelope versions unchanged | migration/rollback tests |
+| Accidental experimental-schema acceptance | pre-1.0 code silently normalizes obsolete state and preserves stale assumptions indefinitely | strict current-schema-only validation until a compatibility floor is explicitly declared | current-schema rejection + rollback tests |
 | UI authority bypass | manual editor creates impossible direction or base write | all intents pass Spatial manual reducer; base requires override | manual True North/override tests |

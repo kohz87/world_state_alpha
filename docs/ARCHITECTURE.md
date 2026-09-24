@@ -640,12 +640,10 @@ Phase 8 also removes full-chat lineage hashing from ordinary user/assistant even
 - Bounded exchange extraction reuses cached lineage.
 - Provider currentness guards compare the owned source-message fingerprint plus chat/state epoch instead of rebuilding the whole lineage.
 - Capture/evolution journal commits receive the already-known lineage.
-- After a successful live capture, the host still retains an ephemeral candidate for the latest captured assistant boundary as a compatibility proof for pre-Alpha.18 sidecars. While that candidate exists, the suffix fast path performs one O(1) fingerprint check on that boundary in addition to its normal tail check.
-- From Alpha.18, every newly owned lineage row also persists role metadata plus a sanitized narration fingerprint for non-user messages. Exact reconciliation can therefore prove that one or several older assistant messages were rewritten only in non-canonical presentation/planning text and rebase all owned lineage metadata without replaying undo.
-- Existing Alpha.17 lineage rows are backfilled from the live chat whenever their raw fingerprint still matches. The metadata upgrade is persisted once during ordinary exact reconciliation.
-- If a legacy non-user row has already diverged before narration-equivalence metadata can be established, Alpha preserves canonical records and enters recovery-required state with `legacy-lineage-semantic-proof-unavailable` rather than guessing and destructively rolling journal history backward.
+- After a successful live capture, the host retains the latest captured boundary ID so the suffix fast path performs one extra O(1) raw-fingerprint check on that boundary. This detects delayed host/Regex normalization even if newer tail messages already exist.
+- Every newly owned lineage row persists role metadata plus a sanitized narration fingerprint for non-user messages. Exact reconciliation can therefore prove that one or several older assistant messages were rewritten only in non-canonical presentation/planning text and rebase all owned lineage metadata without replaying undo.
 
-Full `chatLineage` / exact `reconcileBranch` work remains appropriate for chat hydration, edit/delete/swipe recovery, explicit rebuild, and other operations that genuinely need whole-history proof. Branch-changing events still bump the local epoch and cancel Alpha requests immediately, but they retain the passive compatibility proof until exact reconciliation classifies the divergence. Genuine semantic edits, user edits, swipes, and deletions continue through exact rollback.
+Full `chatLineage` / exact `reconcileBranch` work remains appropriate for chat hydration, edit/delete/swipe recovery, explicit rebuild, and other operations that genuinely need whole-history proof. Genuine semantic edits, user edits, swipes, and deletions continue through exact rollback.
 
 ### C. Canonical evidence compaction
 
@@ -657,7 +655,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.22`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
+Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.23`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 
@@ -719,13 +717,11 @@ wire validation
 
 The deterministic current-location supplement is not a writer. It binds only an unambiguous place name and same-header coordinate pair from the bounded current exchange, merges with a matching model proposal when possible, and otherwise emits one ordinary Spatial proposal. Conflicts/ambiguity fail closed. Base-map authority, currentness, rollback, and Spatial enablement still apply.
 
-### 24.2 Base map adapter boundary
+### 24.2 General base-map boundary
 
-`spatial-base-map.js` has a generic Cartesian adapter and an explicit Ternia v0.9.10 adapter.
+`spatial-base-map.js` accepts one setting-agnostic document shape: source `id/name/version` metadata, optional Cartesian `profile`, `locations[]`, and optional `routes[]`. There are no world/version-specific parser branches or adapter identifiers.
 
-The generic adapter accepts a compact map document containing a profile/coordinate system, locations and optional routes. It does not depend on Ternia fields.
-
-The Ternia adapter additionally understands the supplied registry layers such as top-level locations, starting-area/local features, Wild Zones, geographic features, major-route anchors and route metadata. Route draw geometry is not imported as Cartesian displacement. Base-map parsing creates an immutable runtime projection and a deterministic digest.
+Source version is descriptive metadata only. Derived map/location/route IDs do not depend on source version, so a normal map revision does not automatically orphan campaign overrides. The deterministic content digest does include normalized source content and therefore changes when authoritative map content changes. The host convenience registry indexes stored sources by both digest and stable map ID: a campaign with its own source path remains pinned, while a pathless transferred campaign can rebind by stable ID.
 
 The original source file is never modified. `host-base-map.js` stores a read-only normalized source payload and the campaign sidecar stores only `baseMapRef`. Base-map authority is preloaded when a chat hydrates. If an attached source is unavailable, Spatial automatic capture/injection pauses rather than presenting a partial generated-only map as authoritative.
 
@@ -754,7 +750,7 @@ Spatial profile is setting-agnostic Cartesian 2D:
 
 Coordinates support exact known X/Y or unresolved X/Y. Authority and lock are separate.
 
-The absence of a profile is meaningful: Spatial may still remember named places, explicit X/Y, and relative relations, but it does not assume Ternia's scale, bounds, or compass transform. A profile may also omit unit scale; in that case scale-dependent derivation remains disabled. A configured profile may orient north/east along any perpendicular signed Cartesian axes.
+The absence of a profile is meaningful: Spatial may still remember named places, explicit X/Y, and relative relations, but it does not assume any setting-specific scale, bounds, or compass transform. A profile may also omit unit scale; in that case scale-dependent derivation remains disabled. A configured profile may orient north/east along any perpendicular signed Cartesian axes.
 
 Deterministic coordinate derivation accepts only established anchor coordinate + grounded direction + grounded straight-line distance under an explicit profile. Diagonals use normalized vector math projected through the profile's declared north/east axes. Route/travel distances remain relational metadata only.
 
@@ -770,10 +766,10 @@ The existing World State panel adds a Spatial tab. `ui.js` projects fields and e
 
 The editor supports add, rename, type/context, coordinate authority/lock, relative anchor/direction/distance, route associations, archive/delete, duplicate merge, campaign override, and evidence inspection. Reducer-level delete/merge rewrites or removes related spatial graph references so the UI cannot create dangling topology.
 
-### 24.7 Branch/migration/rebuild
+### 24.7 Branch/rebuild
 
-Schema 1 normalizes to schema 2 by adding an empty Spatial namespace. Existing Reality data and old rollback checkpoints remain valid.
+During pre-1.0 development, canonical state is current-schema-only. Old experimental schemas/checkpoint payloads are intentionally unsupported instead of carrying migration code forward.
 
-Spatial undo patches are nested in the same journal boundary as Reality undo. Whole-state checkpoint restore normalizes legacy snapshots before use.
+Spatial undo patches are nested in the same journal boundary as Reality undo. Whole-state checkpoint restore therefore expects a current-schema snapshot.
 
 Rebuild starts from a clean schema-2 Reality candidate. When Spatial reconstruction is enabled it retains the attached profile/base-map reference and rebuilds generated Spatial state through the same sanitized/authority-guarded pipeline; when Spatial is disabled it preserves the existing Spatial sibling wholesale. Rebuild remains atomic/fail-closed.

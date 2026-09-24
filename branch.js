@@ -317,43 +317,13 @@ function restoreByJournal(state, previousLineage, divergence) {
   return { state: working, headSeq: seq, targetMessageId };
 }
 
-function enrichLineageMetadata(previousLineage, currentLineage) {
-  const next = clone(previousLineage);
-  let upgraded = false;
-  const limit = Math.min(next.length, currentLineage.length);
-
-  for (let index = 0; index < limit; index += 1) {
-    const previous = next[index];
-    const current = currentLineage[index];
-    if (!previous || !current || previous.fingerprint !== current.fingerprint) continue;
-
-    if (!previous.role && current.role) {
-      previous.role = current.role;
-      upgraded = true;
-    }
-    if (previous.narrationFingerprint === undefined && current.narrationFingerprint !== undefined) {
-      previous.narrationFingerprint = current.narrationFingerprint;
-      upgraded = true;
-    }
-  }
-
-  return { lineage: next, upgraded };
-}
-
-function semanticRewritePlan(
-  state,
-  previousLineage,
-  currentLineage,
-  options = {},
-) {
+function semanticRewritePlan(previousLineage, currentLineage) {
   if (currentLineage.length < previousLineage.length) {
     return { kind: 'destructive', changedMessageIds: [] };
   }
 
   const changedMessageIds = [];
-  let ambiguousLegacy = false;
   let semanticChange = false;
-  let usedLegacyCandidate = false;
 
   for (let index = 0; index < previousLineage.length; index += 1) {
     const previous = previousLineage[index];
@@ -361,27 +331,16 @@ function semanticRewritePlan(
     if (previous?.fingerprint === current?.fingerprint) continue;
     changedMessageIds.push(index);
 
-    const legacyCandidate = index === options.passiveCaptureMessageId
-      && state.lastCaptureMessage === index
-      && String(options.passiveCaptureNarrationFingerprint || '')
-      ? String(options.passiveCaptureNarrationFingerprint)
-      : '';
-    const previousRole = String(previous?.role || (legacyCandidate ? 'assistant' : ''));
-    const previousNarration = String(previous?.narrationFingerprint || legacyCandidate || '');
+    const previousRole = String(previous?.role || '');
+    const previousNarration = String(previous?.narrationFingerprint || '');
     const currentRole = String(current?.role || '');
     const currentNarration = String(current?.narrationFingerprint || '');
 
-    if (previousRole !== 'user'
+    if (previousRole
+      && previousRole !== 'user'
       && currentRole !== 'user'
       && previousNarration
       && previousNarration === currentNarration) {
-      if (!previous?.narrationFingerprint && legacyCandidate) usedLegacyCandidate = true;
-      continue;
-    }
-
-    if (!previousRole || previous.narrationFingerprint === undefined) {
-      if (currentRole !== 'user') ambiguousLegacy = true;
-      else semanticChange = true;
       continue;
     }
 
@@ -390,21 +349,13 @@ function semanticRewritePlan(
 
   if (!changedMessageIds.length) return { kind: 'none', changedMessageIds };
   if (semanticChange) return { kind: 'destructive', changedMessageIds };
-  if (ambiguousLegacy) return { kind: 'ambiguous-legacy', changedMessageIds };
-  return {
-    kind: 'semantic-rebase',
-    changedMessageIds,
-    usedLegacyCandidate,
-  };
+  return { kind: 'semantic-rebase', changedMessageIds };
 }
 
 export function reconcileBranch(inputState, chat, options = {}) {
   const state = normalizeState(clone(inputState));
   const currentLineage = chatLineage(chat);
-  const storedLineage = Array.isArray(state.lineage) ? state.lineage : [];
-  const enriched = enrichLineageMetadata(storedLineage, currentLineage);
-  const previousLineage = enriched.lineage;
-  state.lineage = previousLineage;
+  const previousLineage = Array.isArray(state.lineage) ? state.lineage : [];
   const divergence = firstLineageDivergence(previousLineage, currentLineage);
 
   if (divergence === -1 || (divergence === previousLineage.length && currentLineage.length >= previousLineage.length)) {
@@ -416,11 +367,10 @@ export function reconcileBranch(inputState, chat, options = {}) {
       action: divergence === -1 ? 'same' : 'forward-extension',
       exactRestored: true,
       failClosed: false,
-      lineageMetadataUpgraded: enriched.upgraded,
     };
   }
 
-  const semanticPlan = semanticRewritePlan(state, previousLineage, currentLineage, options);
+  const semanticPlan = semanticRewritePlan(previousLineage, currentLineage);
   if (semanticPlan.kind === 'semantic-rebase') {
     const rebasedPrefix = rebaseLineageMetadata(
       state,
@@ -440,27 +390,10 @@ export function reconcileBranch(inputState, chat, options = {}) {
       rebasedMessageIds: semanticPlan.changedMessageIds,
       exactRestored: true,
       failClosed: false,
-      lineageMetadataUpgraded: enriched.upgraded,
     };
   }
 
   const targetMessageId = divergence - 1;
-  if (semanticPlan.kind === 'ambiguous-legacy') {
-    state.recoveryRequired = {
-      reason: 'legacy-lineage-semantic-proof-unavailable',
-      divergence,
-      targetMessageId,
-    };
-    return {
-      state,
-      divergence,
-      action: 'fail-closed',
-      exactRestored: false,
-      failClosed: true,
-      lineageMetadataUpgraded: enriched.upgraded,
-      ambiguousMessageIds: semanticPlan.changedMessageIds,
-    };
-  }
   const journalRestore = restoreByJournal(state, previousLineage, divergence);
   let restored = null;
   let action = '';

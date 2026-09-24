@@ -143,7 +143,7 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
     if (strictSchema) throw new Error('state payload is not an object');
     return createState(chatKey);
   }
-  if (strictSchema && raw.schemaVersion !== 1 && raw.schemaVersion !== SCHEMA_VERSION) {
+  if (strictSchema && raw.schemaVersion !== SCHEMA_VERSION) {
     throw new Error(`unsupported state schema version: ${raw.schemaVersion}`);
   }
   const state = createState(raw.chatKey || chatKey);

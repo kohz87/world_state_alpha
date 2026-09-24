@@ -175,8 +175,6 @@ On swipe/delete/edit/truncation/branch:
 - exact known boundary restore is allowed
 - abandoned suffix mutations are removed
 - narration-equivalent rewrites of one or more previously assistant-owned messages may rebase lineage metadata without undo replay only when durable sanitized narration fingerprints prove every changed owned row semantically equivalent; raw lineage keys are still rewritten to the live branch
-- legacy lineage rows that still match raw chat are backfilled with role + sanitized narration fingerprints and that metadata upgrade is persisted
-- if a legacy non-user lineage has already diverged before semantic equivalence can be proven, fail closed and preserve canonical state rather than replaying destructive rollback
 - no older approximate checkpoint may substitute for a missing parent
 - if exact recovery cannot be proven, fail closed and preserve canonical state while marking targeted rebuild/rescan need
 - while branch ownership is unresolved or `recoveryRequired` is set, retain state only for recovery/inspection and suppress both Reality and Spatial private continuity injection
@@ -189,7 +187,7 @@ One canonical per-chat state owner and one sidecar persistence boundary.
 
 Requirements:
 
-- schema versioning/migration
+- strict current-schema validation during pre-1.0 development; backward compatibility begins only after an explicit compatibility floor is declared
 - deterministic IDs
 - revision/concurrency guard
 - atomic/corruption-safe writes where host APIs allow
@@ -417,8 +415,8 @@ Normal lifecycle ownership:
 - user message before the next generation -> hydrate/prepare from the last durably committed branch-safe state -> compact private injection immediately -> serialize optional provider-backed meaningful elapsed-time/background catch-up on the existing chat writer queue for later injections
 - chat load/change -> cancel World State in-flight work, hydrate/reconcile current owned state, then refresh only the World State prompt/UI
 - edit/delete/swipe lifecycle -> cancel World State requests and run exact `reconcileBranch`; retain the latest passive compatibility proof until reconciliation classifies the divergence, then clear it
-- presentation-only assistant rewrites -> durable lineage role + sanitized narration fingerprints may prove one or many changed historical assistant rows narration-equivalent and rebase owned lineage metadata without undoing canonical state; a legacy latest-capture ephemeral proof remains a compatibility fallback
-- semantic assistant edits, user edits, swipes, deletes, and truncations -> use ordinary exact rollback when the change is proven; legacy non-user divergence without semantic proof fails closed with canonical records preserved
+- presentation-only assistant rewrites -> durable lineage role + sanitized narration fingerprints may prove one or many changed historical assistant rows narration-equivalent and rebase owned lineage metadata without undoing canonical state; the latest captured boundary also receives one bounded O(1) raw-fingerprint watch so delayed host normalization cannot hide behind a newer unchanged tail
+- semantic assistant edits, user edits, swipes, deletes, and truncations -> use ordinary exact rollback when the change is proven
 - character/chat rename -> migrate the owner-qualified World State key and pointer only after the new owned sidecar is durably written; host historical-name rewrites rebase proven lineage keys without rolling current world truth backward
 - chat/group-chat/character delete -> resolve exact owner ownership, neutralize the retired sidecar when possible, persist a lifecycle tombstone, then remove active pointer/cache ownership; ambiguity preserves data fail-closed
 - routing/enablement setting changes -> advance the state epoch and cancel matching provider work before new settings take effect
@@ -514,15 +512,15 @@ Reality Core and Spatial Continuity may share per-chat ownership, sidecar envelo
 
 ### C24.1 Optional universal profile
 
-Spatial Continuity is disabled independently by default and must remain usable outside Ternia. The durable profile is generic Cartesian 2D metadata: north/east axes, unit scale, optional bounds, decimal precision, and True North lock.
+Spatial Continuity is disabled independently by default and is setting-agnostic. The durable profile is generic Cartesian 2D metadata: north/east axes, unit scale, optional bounds, decimal precision, and True North lock.
 
 A campaign with Spatial enabled but no configured profile may still retain named places, explicit coordinates, and relative-only relations. It must not inherit a hidden unit scale, bounds, or True North transform. Scale-based coordinate derivation requires an explicit profile with a positive unit scale; locked direction validation requires an explicit profile. The declared north/east axes are part of the math rather than decorative metadata.
-
-Ternia is an adapter/acceptance fixture, not core ontology. Its accepted profile is North = +Y, South = -Y, East = +X, West = -X; 5 km per coordinate unit; X/Y bounds -500..500; decimal step 0.1; True North locked.
 
 Route, road, river, and sea-lane geometry may curve. Route/travel length is not Cartesian displacement unless accepted evidence explicitly establishes straight-line/direct displacement.
 
 ### C24.2 Base map versus campaign state
+
+Read-only base geography uses one canonical base-map document shape: optional source metadata, optional Cartesian `profile`, `locations[]`, and optional `routes[]`. World/setting name and source version never select parser behavior. Derived base-map/location/route identity is independent of source version so ordinary source revisions do not orphan campaign overrides; the content digest still changes when source content changes.
 
 Read-only base geography and per-chat campaign Spatial state are different authorities.
 

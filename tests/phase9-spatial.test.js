@@ -7,7 +7,6 @@ import {
   ROLLBACK_JOURNAL_VERSION,
   SCHEMA_VERSION,
   SIDECAR_FORMAT_VERSION,
-  SPATIAL_ADMISSION_REASONS,
   SPATIAL_AUTHORITIES,
   SPATIAL_DISTANCE_MODES,
   SPATIAL_LIMITS,
@@ -19,7 +18,6 @@ import {
   deriveCoordinate,
   directionFromDelta,
   kmToUnits,
-  normalizeCoordinate,
   normalizeSpatialLocation,
   normalizeSpatialProfile,
   normalizeSpatialRelation,
@@ -27,16 +25,13 @@ import {
   normalizeSpatialState,
   reduceSpatialMutations,
   resolveEffectiveLocations,
-  resolveEffectiveRoutes,
   roundDecimal,
   straightLineDistance,
   unitsToKm,
-  validateBounds,
 } from '../spatial-core.js';
-import { parseBaseMap, parseGenericBaseMap, parseTerniaBaseMap } from '../spatial-base-map.js';
+import { parseBaseMap } from '../spatial-base-map.js';
 import { loadBaseMapSource, storeBaseMapSource } from '../host-base-map.js';
 import { processSpatialCapture } from '../spatial-capture.js';
-import { validateSpatialEnvelope } from '../spatial-wire.js';
 import {
   buildSpatialRelevanceIndex,
   selectRelevantLocations,
@@ -60,7 +55,7 @@ import {
 import { buildCapturePrompt, runCaptureOperation } from '../capture.js';
 import { runManualRebuild } from '../rebuild.js';
 import { buildWorldStateUiModel, renderWorldStatePanel } from '../ui.js';
-import { createState, normalizeState, reduceMutations } from '../state-core.js';
+import { createState, normalizeState } from '../state-core.js';
 import { chatLineage, commitMutationBoundary, reconcileBranch, seedRootCheckpoint } from '../branch.js';
 import { exportBundle, importBundle } from '../transfer.js';
 
@@ -184,7 +179,7 @@ test('Coordinate math: deriveCoordinate with cardinal and diagonal vectors', () 
   assert.equal(routeDist, null);
 });
 
-test('Unconfigured Spatial profile never inherits Ternia scale or True North implicitly', () => {
+test('Unconfigured Spatial profile never inherits hidden scale or True North implicitly', () => {
   const spatial = createSpatialState();
   spatial.locations.push(normalizeSpatialLocation({
     id: 'wsloc_anchor_no_profile',
@@ -351,44 +346,49 @@ test('unknown explicit Spatial location IDs fail closed instead of becoming crea
   assert.match(result.rejected[0].reason, /locationId.*existing location/i);
 });
 
-test('Ternia base-map parsing preserves distinct co-located named anchors', () => {
-  const baseMap = parseTerniaBaseMap({
-    world: 'Ternia',
+test('general base-map parsing preserves distinct co-located named anchors', () => {
+  const baseMap = parseBaseMap({
+    name: 'Audit Map',
     version: 'audit',
-    coordinate_system: {
-      north: '+y',
-      east: '+x',
-      unit_km: 5,
-      bounds: { x: [-10, 10], y: [-10, 10] },
+    profile: {
+      system: 'cartesian2d',
+      northAxis: '+y',
+      eastAxis: '+x',
+      unitKm: 5,
+      bounds: { xMin: -10, xMax: 10, yMin: -10, yMax: 10 },
+      decimalStep: 0.1,
+      trueNorthLocked: true,
     },
     locations: [
-      { id: 'city', name: 'Crownspire City', type: 'capital', coord: [2, 3] },
-      { id: 'academy', name: 'Royal Academy', type: 'institution', coord: [2, 3] },
+      { id: 'city', name: 'Crownspire City', type: 'capital', coordinate: { x: 2, y: 3 } },
+      { id: 'academy', name: 'Royal Academy', type: 'institution', coordinate: { x: 2, y: 3 } },
     ],
+    routes: [],
   });
 
   assert.equal(baseMap.locations.length, 2);
   assert.deepEqual(baseMap.locations.map(item => item.name).sort(), ['Crownspire City', 'Royal Academy']);
 });
 
-test('generic base map without an explicit coordinate profile remains profileless', () => {
-  const baseMap = parseGenericBaseMap({
-    name: 'Profileless Generic Map',
+test('base map without an explicit coordinate profile remains profileless', () => {
+  const baseMap = parseBaseMap({
+    name: 'Profileless Map',
     version: '1',
     locations: [{ name: 'Dockside', type: 'district' }],
+    routes: [],
   });
 
   assert.equal(baseMap.profile, null);
 });
 
-test('Base map parsing on real Ternia v0.9.10 sample fixture', () => {
-  const rawJson = fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8');
+test('general Cartesian base-map fixture parses without world-specific adapters', () => {
+  const rawJson = fs.readFileSync('tests/fixtures/cartesian-base-map-sample.json', 'utf8');
   const baseMap = parseBaseMap(rawJson);
 
-  assert.match(baseMap.id, /^bmap_ternia_/);
-  assert.equal(baseMap.name, 'Ternia');
-  assert.equal(baseMap.version, '0.9.10');
-  assert.equal(baseMap.adapter, 'ternia_v0_9_10');
+  assert.equal(baseMap.id, 'sample-realm-cartesian');
+  assert.equal(baseMap.name, 'Sample Realm');
+  assert.equal(baseMap.version, '2026.09');
+  assert.equal('adapter' in baseMap, false);
   assert.equal(baseMap.profile.unitKm, 5);
   assert.equal(baseMap.profile.decimalStep, 0.1);
   assert.deepEqual(baseMap.profile.bounds, { xMin: -500, xMax: 500, yMin: -500, yMax: 500 });
@@ -407,29 +407,58 @@ test('Base map parsing on real Ternia v0.9.10 sample fixture', () => {
     'Gloamwood Pocket',
     'Skyrend Mountains',
   ]) {
-    assert.ok(names.has(expected), expected + ' imported from its real registry layer');
+    assert.ok(names.has(expected), expected + ' imported from the canonical locations array');
   }
 
   const halmere = baseMap.locations.find(l => l.name === 'Halmere');
   const brackenford = baseMap.locations.find(l => l.name === 'Brackenford');
   const stoneBridge = baseMap.locations.find(l => l.name === 'Stone Bridge');
   const cairnwatch = baseMap.locations.find(l => l.name === 'Cairnwatch');
-  assert.ok(halmere.routeRefs.includes('North Road'), 'exact major-route anchor associated');
-  assert.ok(brackenford.routeRefs.includes('North Road'), 'starting-area center associated');
-  assert.ok(stoneBridge.routeRefs.includes('North Road'), 'local_geometry support associated');
-  assert.ok(cairnwatch.routeRefs.includes('North Road'), 'local_geometry support associated');
+  assert.ok(halmere.routeRefs.includes('North Road'));
+  assert.ok(brackenford.routeRefs.includes('North Road'));
+  assert.ok(stoneBridge.routeRefs.includes('North Road'));
+  assert.ok(cairnwatch.routeRefs.includes('North Road'));
 
   const northRoad = baseMap.routes.find(route => route.name === 'North Road');
   assert.equal(northRoad.type, 'land');
-  assert.match(northRoad.context, /authoritative drawable route path/i);
-  assert.deepEqual(northRoad.waypoints, [], 'route draw_path is not imported as displacement geometry');
+  assert.match(northRoad.context, /north-south road corridor/i);
+  assert.deepEqual(northRoad.waypoints, ['halmere', 'brackenford', 'stone-bridge', 'cairnwatch']);
 
   assert.ok(Object.isFrozen(baseMap));
   assert.ok(Object.isFrozen(baseMap.locations));
 });
 
+test('base-map source version changes do not change derived identity', () => {
+  const source = {
+    name: 'Versioned Realm',
+    profile: {
+      system: 'cartesian2d',
+      northAxis: '+y',
+      eastAxis: '+x',
+      unitKm: 5,
+      decimalStep: 0.1,
+      trueNorthLocked: true,
+    },
+    locations: [
+      { name: 'Rivergate', type: 'city', coordinate: { x: 4, y: 9 } },
+      { name: 'Old Ford', type: 'crossing', coordinate: { x: 5, y: 11 } },
+    ],
+    routes: [
+      { name: 'King Road', type: 'road', context: 'Main corridor.' },
+    ],
+  };
+
+  const v12 = parseBaseMap({ ...source, version: '0.12.0' });
+  const v13 = parseBaseMap({ ...source, version: '0.13.0' });
+
+  assert.equal(v12.id, v13.id);
+  assert.deepEqual(v12.locations.map(item => item.id), v13.locations.map(item => item.id));
+  assert.deepEqual(v12.routes.map(item => item.id), v13.routes.map(item => item.id));
+  assert.notEqual(v12.digest, v13.digest, 'source version remains part of integrity metadata');
+});
+
 test('Base map immutability & campaign override shadowing', () => {
-  const sampleJson = fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8');
+  const sampleJson = fs.readFileSync('tests/fixtures/cartesian-base-map-sample.json', 'utf8');
   const baseMap = parseBaseMap(sampleJson);
 
   const spatialState = createSpatialState();
@@ -1187,37 +1216,20 @@ test('strict Spatial normalization rejects present invalid authority enums and c
     () => normalizeSpatialState({ ...createSpatialState(), profile: { northAxis: '+x', eastAxis: '-x' } }, { strict: true }),
     /spatial profile axes must be perpendicular/,
   );
+  assert.throws(
+    () => normalizeSpatialState({ ...createSpatialState(), profile: { system: 'spherical' } }, { strict: true }),
+    /unsupported spatial coordinate system: spherical/,
+  );
 
   const legacyEmpty = normalizeSpatialState(undefined, { strict: true });
   assert.deepEqual(legacyEmpty, createSpatialState());
 });
 
-test('Schema 1 to Schema 2 migration and old checkpoint rollback safety', () => {
-  const schema1 = {
-    schemaVersion: 1,
-    chatKey: 'chat:test:schema1',
-    records: [{
-      id: 'wsr_old',
-      kind: 'fact',
-      summary: 'Legacy fact from schema 1.',
-      status: 'active',
-      anchors: ['legacy'],
-      createdAtMessage: 1,
-      lastChangedMessage: 1,
-      lastEvaluatedMessage: 1,
-      timeAnchor: '',
-      evidenceIds: [],
-      causedBy: [],
-      affects: [],
-    }],
-    evidence: {},
-    links: [],
-    lineage: [],
-  };
-
-  const migrated = normalizeState(schema1, { strictSchema: true });
-  assert.equal(migrated.schemaVersion, 2);
-  assert.deepEqual(migrated.spatial, createSpatialState());
+test('current schema is required and current checkpoints roll back exactly', () => {
+  assert.throws(
+    () => normalizeState({ schemaVersion: 1, records: [], evidence: {}, links: [] }, { strictSchema: true }),
+    /unsupported state schema version: 1/,
+  );
 
   const originalChat = [
     { role: 'user', content: 'Message 0' },
@@ -1225,11 +1237,7 @@ test('Schema 1 to Schema 2 migration and old checkpoint rollback safety', () => 
   ];
   const lineage = chatLineage(originalChat);
   const checkpointState = normalizeState({
-    schemaVersion: 2,
-    chatKey: 'chat:test:branch',
-    records: [],
-    evidence: {},
-    links: [],
+    ...createState('chat:test:branch'),
     spatial: {
       ...createSpatialState(),
       profile: normalizeSpatialProfile({}),
@@ -1245,23 +1253,16 @@ test('Schema 1 to Schema 2 migration and old checkpoint rollback safety', () => 
       messageId: 0,
       lineageKey: lineage[0].lineageKey,
       rollbackSeq: 0,
-      snapshot: {
-        schemaVersion: 1,
-        records: [],
-        evidence: {},
-        links: [],
-        lastCaptureMessage: null,
-      },
+      snapshot: createState('chat:test:branch'),
     }],
     rollbackJournal: [],
-  });
+  }, { strictSchema: true });
 
   const reconciled = reconcileBranch(checkpointState, originalChat.slice(0, 1));
   assert.equal(reconciled.action, 'exact-checkpoint');
   assert.equal(reconciled.state.spatial.locations.length, 0);
   assert.equal(reconciled.state.schemaVersion, 2);
 });
-
 test('UI projections: escaped HTML rendering and spatial tab model', () => {
   const state = createState('chat:test:ui');
   state.spatial.locations.push(normalizeSpatialLocation({
@@ -1294,7 +1295,7 @@ test('UI projections: escaped HTML rendering and spatial tab model', () => {
   assert.ok(html.includes('Manual 🔒'));
 });
 
-test('Host base map storage adapter', async () => {
+test('Host base map storage round-trip', async () => {
   const fileStore = new Map();
   const hostAdapter = {
     async uploadJsonFile(filename, data) {
@@ -1308,11 +1309,11 @@ test('Host base map storage adapter', async () => {
     },
   };
 
-  const rawJson = fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8');
+  const rawJson = fs.readFileSync('tests/fixtures/cartesian-base-map-sample.json', 'utf8');
   const result = await storeBaseMapSource(hostAdapter, rawJson);
 
   assert.equal(result.pointer.id, result.baseMap.id);
-  assert.match(result.pointer.id, /^bmap_ternia_/);
+  assert.equal(result.pointer.id, 'sample-realm-cartesian');
   assert.ok(result.pointer.path.includes('world-state-alpha-basemap-'));
   assert.equal(result.pointer.digest, result.baseMap.digest);
 
@@ -1548,7 +1549,7 @@ test('Spatial UI exposes the complete manual continuity edit surface', () => {
     name: 'Fallow Watch',
     type: 'ruin',
     coordinate: { x: 42.3, y: 171.8, authority: 'manual', locked: true },
-    context: 'Northern Ternia',
+    context: 'Northern frontier',
   }));
   const html = renderWorldStatePanel(buildWorldStateUiModel(state), { activeTab: 'spatial' });
   for (const required of [
@@ -1659,26 +1660,28 @@ test('Rebuild may establish Spatial state from actual accepted narration', async
 });
 
 
-test('Generic coordinate_system stays generic rather than selecting the Ternia adapter', () => {
+test('base-map parser uses one generalized Cartesian contract', () => {
   const generic = parseBaseMap({
     name: 'Orbital Deck',
     version: '1.0',
-    coordinate_system: {
-      north: '+y',
-      east: '+x',
-      unit_km: 2,
-      bounds: { x_min: -20, x_max: 20, y_min: -10, y_max: 10 },
-      decimal_step: 0.5,
-      true_north_lock: true,
+    profile: {
+      system: 'cartesian2d',
+      northAxis: '+y',
+      eastAxis: '+x',
+      unitKm: 2,
+      bounds: { xMin: -20, xMax: 20, yMin: -10, yMax: 10 },
+      decimalStep: 0.5,
+      trueNorthLocked: true,
     },
     locations: [{
       name: 'Habitat Ring',
       type: 'module',
-      coord: [3.5, -2],
+      coordinate: { x: 3.5, y: -2 },
       context: 'Rotating habitat reference point',
     }],
+    routes: [],
   });
-  assert.equal(generic.adapter, 'generic_v1');
+  assert.equal('adapter' in generic, false);
   assert.equal(generic.profile.unitKm, 2);
   assert.deepEqual(generic.profile.bounds, { xMin: -20, xMax: 20, yMin: -10, yMax: 10 });
   assert.equal(generic.profile.decimalStep, 0.5);
@@ -1735,7 +1738,7 @@ test('Spatial-only automatic capture is classified applied without creating a Re
   assert.equal(result.state.spatial.locations[0].name, 'The Split Antler');
 });
 
-test('Stored Ternia base-map copy preserves adapter identity after reload', async () => {
+test('Stored generalized base-map copy preserves digest after reload', async () => {
   const fileStore = new Map();
   const hostAdapter = {
     async uploadJsonFile(filename, data) {
@@ -1749,13 +1752,13 @@ test('Stored Ternia base-map copy preserves adapter identity after reload', asyn
     },
   };
 
-  const rawJson = fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8');
+  const rawJson = fs.readFileSync('tests/fixtures/cartesian-base-map-sample.json', 'utf8');
   const stored = await storeBaseMapSource(hostAdapter, rawJson);
-  assert.equal(stored.baseMap.adapter, 'ternia_v0_9_10');
+  assert.equal('adapter' in stored.baseMap, false);
 
   const loaded = await loadBaseMapSource(hostAdapter, stored.pointer);
   assert.ok(loaded);
-  assert.equal(loaded.adapter, 'ternia_v0_9_10');
+  assert.equal('adapter' in loaded, false);
   assert.equal(loaded.digest, stored.baseMap.digest);
 });
 
@@ -1766,10 +1769,9 @@ test('Foreign campaign import retains base source identity but clears machine-lo
     trueNorthLocked: true,
   });
   state.spatial.baseMapRef = {
-    id: 'bmap_ternia_fixture',
-    name: 'Ternia',
-    version: '0.9.10',
-    adapter: 'ternia_v0_9_10',
+    id: 'sample-realm-cartesian',
+    name: 'Sample Realm',
+    version: '2026.09',
     digest: 'abc123',
     path: '/user/files/world-state-alpha-basemap-abc123.json',
   };
@@ -1777,9 +1779,8 @@ test('Foreign campaign import retains base source identity but clears machine-lo
   const text = exportBundle(state, { exportedAt: '2026-09-22T00:00:00.000Z' });
   const imported = importBundle(text, { targetChatKey: 'campaign:other' });
 
-  assert.equal(imported.spatial.baseMapRef.id, 'bmap_ternia_fixture');
+  assert.equal(imported.spatial.baseMapRef.id, 'sample-realm-cartesian');
   assert.equal(imported.spatial.baseMapRef.digest, 'abc123');
-  assert.equal(imported.spatial.baseMapRef.adapter, 'ternia_v0_9_10');
   assert.equal(imported.spatial.baseMapRef.path, '');
 });
 
@@ -1862,7 +1863,7 @@ test('Generic scenery may be admitted only when independent persistence is estab
 });
 
 test('Name-only capture cannot duplicate or automatically override a visible base location', () => {
-  const baseMap = parseBaseMap(fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8'));
+  const baseMap = parseBaseMap(fs.readFileSync('tests/fixtures/cartesian-base-map-sample.json', 'utf8'));
   const spatial = createSpatialState();
   spatial.profile = baseMap.profile;
   const halmere = resolveEffectiveLocations(spatial, baseMap).find(item => item.name === 'Halmere');
@@ -2130,7 +2131,7 @@ test('writer_state planning cannot move an established location or create a rout
 });
 
 test('rebuild cannot shadow a base-map location through narrative coordinate authority', async () => {
-  const baseMap = parseBaseMap(fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8'));
+  const baseMap = parseBaseMap(fs.readFileSync('tests/fixtures/cartesian-base-map-sample.json', 'utf8'));
   const halmere = baseMap.locations.find(item => item.name === 'Halmere');
   assert.ok(halmere);
 
@@ -2139,7 +2140,6 @@ test('rebuild cannot shadow a base-map location through narrative coordinate aut
   state.spatial.baseMapRef = {
     id: baseMap.id,
     digest: baseMap.digest,
-    adapter: baseMap.adapter,
   };
   const chat = [
     { role: 'user', content: 'I check the map.' },

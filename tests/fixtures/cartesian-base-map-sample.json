@@ -1,0 +1,100 @@
+{
+  "id": "sample-realm-cartesian",
+  "name": "Sample Realm",
+  "version": "2026.09",
+  "profile": {
+    "system": "cartesian2d",
+    "northAxis": "+y",
+    "eastAxis": "+x",
+    "unitKm": 5,
+    "bounds": {
+      "xMin": -500,
+      "xMax": 500,
+      "yMin": -500,
+      "yMax": 500
+    },
+    "decimalStep": 0.1,
+    "trueNorthLocked": true
+  },
+  "locations": [
+    {
+      "id": "lareth",
+      "name": "Lareth",
+      "type": "city",
+      "coordinate": { "x": -18, "y": 108 },
+      "context": "Southern strategic anchor on North Road.",
+      "routeRefs": ["North Road"]
+    },
+    {
+      "id": "halmere",
+      "name": "Halmere",
+      "type": "city",
+      "coordinate": { "x": 46, "y": 144 },
+      "context": "Regional center.",
+      "routeRefs": ["North Road"]
+    },
+    {
+      "id": "kesselpass",
+      "name": "Kesselpass",
+      "type": "fortress town",
+      "coordinate": { "x": 34, "y": 214 },
+      "context": "Fortified northern pass settlement.",
+      "routeRefs": ["North Road"]
+    },
+    {
+      "id": "brackenford",
+      "name": "Brackenford",
+      "type": "village",
+      "coordinate": { "x": 32, "y": 164 },
+      "context": "Market village on North Road.",
+      "routeRefs": ["North Road"]
+    },
+    {
+      "id": "stone-bridge",
+      "name": "Stone Bridge",
+      "type": "landmark",
+      "coordinate": { "x": 32.1, "y": 164.0 },
+      "context": "Main river crossing.",
+      "routeRefs": ["North Road"]
+    },
+    {
+      "id": "fordhouse-inn",
+      "name": "Fordhouse Inn",
+      "type": "inn",
+      "coordinate": { "x": 32.08, "y": 164.18 },
+      "context": "Large caravan inn."
+    },
+    {
+      "id": "cairnwatch",
+      "name": "Cairnwatch",
+      "type": "road post",
+      "coordinate": { "x": 33.4, "y": 171.8 },
+      "context": "Fortified road post.",
+      "routeRefs": ["North Road"]
+    },
+    {
+      "id": "gloamwood-pocket",
+      "name": "Gloamwood Pocket",
+      "type": "wilderness",
+      "coordinate": { "x": 35, "y": 169 },
+      "context": "Contained forest wild zone."
+    },
+    {
+      "id": "skyrend-mountains",
+      "name": "Skyrend Mountains",
+      "type": "mountain system",
+      "coordinate": { "x": 5, "y": 315 },
+      "context": "Northern alpine system."
+    }
+  ],
+  "routes": [
+    {
+      "id": "north-road",
+      "name": "North Road",
+      "type": "land",
+      "endpoints": ["lareth", "kesselpass"],
+      "waypoints": ["halmere", "brackenford", "stone-bridge", "cairnwatch"],
+      "context": "Primary north-south road corridor."
+    }
+  ]
+}

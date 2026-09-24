@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import {
   chatLineage,
   commitMutationBoundary,
-  fingerprintAssistantNarration,
   rebaseLineageMetadata,
   reconcileBranch,
   seedRootCheckpoint,
@@ -181,35 +180,16 @@ test('passive rewrite of the latest captured assistant boundary can be rebased w
     summary: 'The bridge is closed.',
     anchors: ['bridge'],
   });
-  assert.equal(state.records.length, 1);
-  assert.equal(state.lastCaptureMessage, 1);
-  const capturedNarrationFingerprint = fingerprintAssistantNarration(chat[1]);
 
   chat = [...chat, { role: 'user', content: 'I take the east road instead.' }];
   const extended = reconcileBranch(state, chat);
   assert.equal(extended.action, 'forward-extension');
   state = extended.state;
 
-  // Simulate a legacy alpha.17 sidecar that has raw lineage ownership
-  // but no durable narration-equivalence metadata yet.
-  delete state.lineage[1].role;
-  delete state.lineage[1].narrationFingerprint;
-
-  // SillyTavern/Regex/Reasoning normalizes the just-captured assistant
-  // message after capture, without changing the visible narration.
   chat[1] = { role: 'assistant', content: 'The bridge is closed.' };
   chat = [...chat, { role: 'assistant', content: 'Rain starts over the east road.' }];
 
-  const guarded = reconcileBranch(state, chat);
-  assert.equal(guarded.action, 'fail-closed');
-  assert.equal(guarded.failClosed, true);
-  assert.equal(guarded.state.records.length, 1, 'ambiguous legacy rewrite must preserve canonical records');
-  assert.equal(guarded.state.recoveryRequired.reason, 'legacy-lineage-semantic-proof-unavailable');
-
-  const rebased = reconcileBranch(state, chat, {
-    passiveCaptureMessageId: 1,
-    passiveCaptureNarrationFingerprint: capturedNarrationFingerprint,
-  });
+  const rebased = reconcileBranch(state, chat, { passiveCaptureMessageId: 1 });
   assert.equal(rebased.failClosed, false);
   assert.equal(rebased.action, 'passive-capture-rebase');
   assert.equal(rebased.divergence, 1);
@@ -296,33 +276,6 @@ test('hidden/system visibility toggles with unchanged narration do not roll back
   assert.equal(rebased.state.lineage[0].role, 'system');
 });
 
-test('unchanged legacy lineage is backfilled with durable narration metadata before future rewrites', () => {
-  const chat = [
-    { role: 'user', content: 'I wait.' },
-    { role: 'assistant', content: 'The bridge is closed.' },
-  ];
-  let state = seedRootCheckpoint(createState('legacy-lineage-upgrade'));
-  state = apply(state, chat, {
-    action: 'create',
-    kind: 'fact',
-    summary: 'The bridge is closed.',
-  });
-  for (const entry of state.lineage) {
-    delete entry.role;
-    delete entry.narrationFingerprint;
-  }
-
-  const reconciled = reconcileBranch(state, chat);
-  assert.equal(reconciled.action, 'same');
-  assert.equal(reconciled.failClosed, false);
-  assert.equal(reconciled.lineageMetadataUpgraded, true);
-  assert.equal(reconciled.state.lineage[0].role, 'user');
-  assert.equal(reconciled.state.lineage[0].narrationFingerprint, '');
-  assert.equal(reconciled.state.lineage[1].role, 'assistant');
-  assert.equal(typeof reconciled.state.lineage[1].narrationFingerprint, 'string');
-  assert.ok(reconciled.state.lineage[1].narrationFingerprint.length > 0);
-});
-
 test('passive capture rebase refuses to mask a second changed owned message', () => {
   let chat = [
     { role: 'assistant', content: 'The bridge is closed. <writer_state>private planning</writer_state>' },
@@ -344,7 +297,6 @@ test('passive capture rebase refuses to mask a second changed owned message', ()
   ];
   const reconciled = reconcileBranch(state, changed, {
     passiveCaptureMessageId: 0,
-    passiveCaptureNarrationFingerprint: fingerprintAssistantNarration(chat[0]),
   });
   assert.notEqual(reconciled.action, 'passive-capture-rebase');
   assert.equal(reconciled.state.records.length, 0);
@@ -359,12 +311,10 @@ test('passive capture rebase refuses a silent semantic rewrite of the captured a
     summary: 'The bridge is closed.',
     anchors: ['bridge'],
   });
-  const capturedNarrationFingerprint = fingerprintAssistantNarration(chat[0]);
 
   chat = [{ role: 'assistant', content: 'The bridge is open.' }];
   const reconciled = reconcileBranch(state, chat, {
     passiveCaptureMessageId: 0,
-    passiveCaptureNarrationFingerprint: capturedNarrationFingerprint,
   });
   assert.notEqual(reconciled.action, 'passive-capture-rebase');
   assert.equal(reconciled.state.records.length, 0);

@@ -15,7 +15,7 @@ Read in order:
 
 The user's current instruction controls scope and authorization. The core contract is the behavior authority. Architecture describes the accepted intended shape. The workplan defines implementation stages, not alternate runtime systems.
 
-The design and runtime candidate are accepted and **Phases 1-9** are implemented. Phase 9 introduced optional Spatial Continuity in 0.9.0-alpha.1; subsequent 0.9 alphas hardened host lifecycle, capture completeness, rebuild integrity/interoperability/UX, branch ownership, and hidden-message recovery. The current 0.9.0-alpha.22 candidate is a maintenance cleanup release: proven dead helpers/imports are removed and design-era documentation is synchronized with the shipped schema/module graph without removing compatibility needed by existing chats, semantic-lineage upgrades, provider aliases, host rename migration, or Spatial adapters. Alpha.21 lifecycle identity/history admission, Alpha.20 live lifecycle/rebuild/checkpoint hardening, Alpha.19 manual lifecycle controls, and Alpha.18 durable semantic lineage rebasing remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope versions remain 1. Spatial may share per-chat persistence, branch ownership, diagnostics, provider routing, settings and UI shell, but it must not become a third Reality Core record kind, mutate base-map sources, add Story Director behavior, or modify Megumin/Ukiyo.
+The design and runtime candidate are accepted and **Phases 1-9** are implemented. Phase 9 introduced optional Spatial Continuity in 0.9.0-alpha.1; subsequent 0.9 alphas hardened host lifecycle, capture completeness, rebuild integrity/interoperability/UX, branch ownership, and hidden-message recovery. The current 0.9.0-alpha.23 candidate intentionally simplifies the pre-1.0 surface: only canonical schema 2 is supported, old lineage-upgrade rescue paths are removed, and Spatial accepts one generalized Cartesian base-map contract with no world/version-specific adapters. Source version never selects parser behavior. Alpha.22 cleanup, Alpha.21 lifecycle identity/history admission, Alpha.20 live lifecycle/rebuild/checkpoint hardening, and current semantic lineage rebasing remain intact. Sidecar, bundle, and rollback-journal envelope versions remain 1. Spatial may share per-chat persistence, branch ownership, diagnostics, provider routing, settings and UI shell, but it must not become a third Reality Core record kind, mutate base-map sources, add Story Director behavior, or modify Megumin/Ukiyo.
 
 ## Product boundary
 
@@ -63,7 +63,7 @@ Spatial Continuity is optional and semantically separate from Reality Core.
 - base geography is read-only source authority; campaign overrides live only in per-chat state
 - precise coordinates require trusted base/manual/narrative-explicit evidence or deterministic derivation
 - route/travel distance is not straight-line displacement unless explicitly established
-- True North and unit-scale derivation are determined only by an explicit coordinate profile; no profile means no hidden Ternia defaults
+- True North and unit-scale derivation are determined only by an explicit coordinate profile; no profile means no hidden setting-specific defaults
 - `writer_state` and other planning material is never canonical evidence
 - manual spatial edits use the branch journal and are campaign authority
 - no full base-map/spatial scan on normal turns

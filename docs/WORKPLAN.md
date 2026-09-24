@@ -182,9 +182,8 @@ Relevance/injection is moved before evolution. This proves that persistent state
 Deliverables:
 
 - optional sibling `spatial` namespace; Reality Core fact/development schema unchanged
-- canonical schema migration 1 -> 2 with empty Spatial state for legacy campaigns
-- generic Cartesian 2D Spatial Core and generic base-map adapter
-- Ternia v0.9.10 registry adapter/acceptance fixture
+- canonical schema 2 with sibling Spatial state
+- generic Cartesian 2D Spatial Core and one setting-agnostic base-map document contract
 - read-only base geography plus per-chat generated locations and campaign overrides
 - coordinate authority, True North validation and deterministic derivation
 - writer-state narrative evidence sanitizer shared by normal capture and rebuild
@@ -195,7 +194,7 @@ Deliverables:
 - v0.9.0-alpha.1 version synchronization and release documentation
 - v0.9.0-alpha.2 continuity hardening: production base-map host storage, Spatial editor correctness, host identity migration, runtime cancellation/serialization, retrieval/rebuild recovery, and collapsible settings
 - v0.9.0-alpha.3 settings polish: replace the custom collapse shell with SillyTavern's standard inline-drawer structure and host chevron behavior
-- v0.9.0-alpha.4 hardening: deterministic sidecar recovery, ownership epochs/tombstones, historical rename-lineage migration, owner-probed deletion, chat-bound panel actions, bounded host caches, stale Spatial-ID rejection, co-located Ternia anchor preservation, and profileless generic-map handling
+- v0.9.0-alpha.4 hardening: deterministic sidecar recovery, ownership epochs/tombstones, historical rename-lineage migration, owner-probed deletion, chat-bound panel actions, bounded host caches, stale Spatial-ID rejection, co-located base-anchor preservation, and profileless generic-map handling
 - v0.9.0-alpha.5 capture completeness: keep the one-call source-firewalled capture path, but require a whole-exchange sweep for each distinct materially persistent established condition, including ongoing off-screen conditions that continue independently after the PC leaves or ignores them
 - v0.9.0-alpha.6 Background Development Catch-up: meaningful elapsed-time boundaries may fill the existing one-call evolution batch with a bounded indexed sample of stale remote active developments; rebuild from chat recovers narrated persistent developments but never replays hidden evolution
 - v0.9.0-alpha.7 audit hardening: rebuild outcome/structural integrity, recovery prompt quarantine, sanitized chronology evidence, automatic Spatial authority parity, disabled-Spatial preservation, omission-preserving Reality updates, bounded tombstone admission, direct relation grounding, deterministic explicit current-location recovery, and non-blocking provider-backed user-send continuity
@@ -213,16 +212,17 @@ Deliverables:
 - v0.9.0-alpha.19 manual lifecycle host reconciliation: reconcile live lineage before Resolve/Supersede and surface fail-closed/error states instead of silently dropping queued manual actions
 - v0.9.0-alpha.20 live lifecycle/partial-rebuild recovery: reserve lifecycle candidates during live capture, reconcile semantic lineage before partial-prefix proof, preserve the root checkpoint under bounded trimming, and keep prior-scene context retrieval-only
 - v0.9.0-alpha.21 lifecycle identity/history admission: bind automatic non-create mutations to active targets, keep tombstones immutable to provider capture/rebuild, reject unmatched terminal history creates, and dedupe recurrences against active episodes
-- v0.9.0-alpha.22 maintenance cleanup: remove proven-dead helpers/imports and synchronize design-era architecture/data-model/status documentation without removing tested compatibility surfaces
+- v0.9.0-alpha.22 maintenance cleanup: remove proven-dead helpers/imports and synchronize design-era architecture/data-model/status documentation
+- v0.9.0-alpha.23 pre-1.0 simplification: drop schema-1 and old-lineage upgrade compatibility, collapse base-map parsing to one generalized Cartesian contract, remove adapter identity, and keep map/location identity stable across source-version changes
 
 Acceptance:
 
 - existing Reality Core regression suite remains green
 - no Spatial entry enters `records[]`
 - Spatial disabled adds zero Spatial injection and no new automatic provider call
-- schema-1 sidecars/checkpoints migrate without data loss
-- Ternia profile enforces +Y north / +X east, 5 km per unit, bounds and decimal precision
-- generic/no-profile campaigns do not inherit Ternia scale, bounds, or compass assumptions; configured alternate Cartesian axes are honored
+- obsolete pre-current sidecars/checkpoints are rejected explicitly during pre-1.0 development
+- generalized base maps use profile/locations/routes with no setting/version adapter
+- no-profile campaigns inherit no hidden scale, bounds, or compass assumptions; configured alternate Cartesian axes are honored
 - route/travel distance never becomes Cartesian displacement without explicit straight-line evidence
 - writer_state-only plans cannot establish Spatial or Reality evidence
 - campaign overrides never modify base source geography

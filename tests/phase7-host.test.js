@@ -397,6 +397,8 @@ test('host identity/settings lifecycle preserves continuity across rename and di
     'Spatial-only injection must not enter Reality evolution',
   );
   assert.doesNotMatch(source, /baseMapCache\.set\(cacheKey, null\)/, 'transient base-map failures must be retryable');
+  assert.match(source, /settings\.spatialBaseMaps\[sourceKey\] = stored\.pointer;\s*settings\.spatialBaseMaps\[stored\.pointer\.id\] = stored\.pointer;/, 'base-map registry must index both exact digest and stable map id');
+  assert.match(source, /if \(cacheKey && cacheKey !== resolvedCacheKey\) cacheBaseMap\(cacheKey, baseMap\)/, 'stable-id rebind must alias the resolved source under the campaign request key');
   assert.match(
     source,
     /settings\.spatialEnabled && state\.spatial\?\.baseMapRef\?\.id && !baseMap[\s\S]*Rebuild paused because the attached Spatial base map is unavailable/,
@@ -508,12 +510,12 @@ test('host guards the latest captured boundary against passive post-processing r
   assert.match(source, /passiveCaptureRebaseCandidates\.set\(chatKey, \{[\s\S]*messageId,[\s\S]*narrationFingerprint:\s*fingerprintAssistantNarration/);
   assert.match(source, /passiveCaptureRebaseCandidates\.get\(chatKey\)/);
   assert.match(source, /passiveCaptureMessageId:/);
-  assert.match(source, /passiveCaptureNarrationFingerprint:/);
+  assert.doesNotMatch(source, /passiveCaptureNarrationFingerprint:/);
   assert.match(source, /'passive-capture-rebase'/);
   assert.match(source, /'semantic-lineage-rebase'/);
   assert.match(source, /WORLD_STATE_PASSIVE_CAPTURE_REBASE/);
   assert.match(source, /WORLD_STATE_SEMANTIC_LINEAGE_REBASE/);
-  assert.match(source, /result\.lineageMetadataUpgraded/);
+  assert.doesNotMatch(source, /lineageMetadataUpgraded/);
   assert.match(source, /WORLD_STATE_BRANCH_RECONCILED/);
 
   const fastStart = source.indexOf('function extendCurrentBranchFast(chatKey)');

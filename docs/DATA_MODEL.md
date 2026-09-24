@@ -217,7 +217,7 @@ The reducer exposes a non-persisted `indexDelta` with changed record snapshots, 
 
 Phase 8 changed only how ordinary append-only messages are processed: the host verifies the cached lineage tail and computes lineage rows for the newly appended suffix. Exact full-history reconciliation remains the recovery authority for destructive branch changes.
 
-From Alpha.18, each persisted lineage row may additionally carry backward-compatible semantic-proof metadata:
+Each persisted lineage row carries semantic-proof metadata:
 
 ```js
 {
@@ -230,12 +230,7 @@ From Alpha.18, each persisted lineage row may additionally carry backward-compat
 }
 ```
 
-The raw fingerprint/lineage key remain branch identity. The narration fingerprint is not a replacement authority; it is used only to prove that one or more changed assistant-owned raw rows preserve the same sanitized narration after host/Regex/reasoning presentation cleanup. Legacy rows without these optional fields are backfilled only when their raw fingerprint still matches the live chat. If an already-diverged legacy non-user row cannot be proven equivalent, recovery fails closed with canonical state preserved.
-
-### Phase 8 historical versioning note
-
-Phase 8 / 0.8.x used canonical schema version 1. Phase 9 intentionally bumps only the canonical schema to version 2 for durable Spatial state. The sidecar, bundle, and rollback-journal envelope formats remain version 1.
-
+The raw fingerprint/lineage key remain branch identity. The narration fingerprint is not a replacement authority; it is used only to prove that one or more changed assistant-owned raw rows preserve the same sanitized narration after host/Regex/reasoning presentation cleanup. Pre-1.0 sidecars missing this metadata are intentionally unsupported rather than upgraded in place.
 
 ## Phase 9 durable Spatial namespace
 
@@ -263,7 +258,6 @@ Canonical state schema version is now `2`.
       id,
       name,
       version,
-      adapter,
       digest,
       path
     } | null,
@@ -328,19 +322,19 @@ Canonical state schema version is now `2`.
 
 No Spatial entity is stored in `records[]`.
 
-A null profile is a supported state. It carries no implicit Ternia scale/bounds/orientation. A configured profile may also omit `unitKm`; that leaves scale-dependent distance conversion disabled. Exact coordinates may still be stored when explicitly established, but distance-to-coordinate derivation requires a positive configured `unitKm`, and locked cardinal validation requires an explicit profile.
+A null profile is a supported state. It carries no implicit setting-specific scale/bounds/orientation. A configured profile may also omit `unitKm`; that leaves scale-dependent distance conversion disabled. Exact coordinates may still be stored when explicitly established, but distance-to-coordinate derivation requires a positive configured `unitKm`, and locked cardinal validation requires an explicit profile.
 
 ### Base maps are not duplicated into campaign state
 
-A loaded base map is an immutable external/reference projection. Campaign state stores `baseMapRef`, not a copy of every base location. `resolveEffectiveLocations()` overlays campaign entries/overrides on the loaded base map. On foreign import, `baseMapRef.path` is cleared while source identity/digest is retained; the host may rebind the same source by digest or require explicit reattachment.
+A loaded base map is an immutable external/reference projection. Campaign state stores `baseMapRef`, not a copy of every base location. `resolveEffectiveLocations()` overlays campaign entries/overrides on the loaded base map. On foreign import, `baseMapRef.path` is cleared while stable source identity/digest are retained; the host may rebind an exact digest or the locally available revision of the same stable map ID.
 
 ### Authority is coordinate provenance, not location type
 
 `baseRefId` identifies an override source relationship. `coordinate.authority` describes the coordinate itself. A campaign override may therefore contain a later manual coordinate without losing its override identity.
 
-### Migration
+### Pre-1.0 schema policy
 
-`normalizeState(..., { strictSchema: true })` accepts schema version 1 and current schema version 2. Schema-1 payloads receive `createSpatialState()`; Reality records/evidence/links are preserved.
+`normalizeState(..., { strictSchema: true })` accepts only the current canonical schema. Experimental older sidecars/checkpoints are intentionally rejected until the project declares a compatibility floor.
 
 Envelope format versions remain:
 

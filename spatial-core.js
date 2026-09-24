@@ -90,7 +90,11 @@ function axesArePerpendicular(northAxis, eastAxis) {
 
 export function normalizeSpatialProfile(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') return null;
-  const system = boundedText(raw.system, 30) || 'cartesian2d';
+  const declaredSystem = boundedText(raw.system, 30).toLowerCase();
+  if (strict && declaredSystem && declaredSystem !== 'cartesian2d') {
+    throw new Error(`unsupported spatial coordinate system: ${raw.system}`);
+  }
+  const system = 'cartesian2d';
   if (strict && raw.northAxis !== undefined && raw.northAxis !== null && !CARTESIAN_AXES.includes(boundedText(raw.northAxis, 10).toLowerCase())) {
     throw new Error(`invalid spatial north axis: ${raw.northAxis}`);
   }
@@ -148,8 +152,7 @@ export function normalizeBaseMapRef(raw) {
   return {
     id,
     name: boundedText(raw.name, SPATIAL_LIMITS.nameChars) || id,
-    version: boundedText(raw.version, 40) || '1.0.0',
-    adapter: boundedText(raw.adapter, 60) || 'generic_v1',
+    version: boundedText(raw.version, 40),
     digest: boundedText(raw.digest, 80) || '',
     path: boundedText(raw.path, 500) || '',
   };

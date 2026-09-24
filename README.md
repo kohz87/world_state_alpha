@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.22 is a maintenance cleanup release on top of Alpha.21: proven dead helpers and stale host imports were removed, design-era documentation was synchronized with the shipped module graph and schema 2, and all compatibility surfaces that still protect existing chats/provider/Spatial data were deliberately retained. Alpha.21 lifecycle identity/history admission, Alpha.20 rebuild/checkpoint hardening, Alpha.19 manual lifecycle controls, and Alpha.18 durable semantic lineage remain intact. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.23 is a pre-1.0 simplification release: World State now supports only the current canonical schema, removes experimental legacy-lineage upgrade paths, and replaces world/version-specific base-map adapters with one generalized Cartesian base-map contract. Source-map version is metadata, not parser identity, so map revisions do not require World State code changes. Alpha.22 cleanup and Alpha.21 lifecycle hardening remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 
@@ -35,7 +35,7 @@ Spatial Continuity is separate:
 - base maps are read-only source geography
 - campaign-generated places and overrides are per-chat durable Spatial state
 - exact/derived/relative/unknown coordinates remain distinct
-- no profile means no hidden Ternia scale/bounds/compass assumptions; configured Cartesian axes drive derivation
+- no profile means no hidden scale/bounds/compass assumptions; configured Cartesian axes drive derivation
 - `<writer_state>...</writer_state>` planning is never capture evidence
 - Spatial is optional and disabled independently
 

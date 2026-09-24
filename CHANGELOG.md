@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.0-alpha.23 - Pre-1.0 schema and Spatial simplification
+
+### Simplified
+
+- Canonical World State is current-schema-only during pre-1.0 development. Schema-1 sidecars/checkpoints are rejected instead of carrying migration code forward.
+- Removed old lineage metadata backfill and ambiguous-legacy recovery branches. Current lineage rows always own role and sanitized narration fingerprints; current semantic rebase and exact rollback remain.
+- Removed world/version-specific base-map adapters, including the Ternia parser branch, and removed `baseMapRef.adapter`.
+- Spatial base maps now use one setting-agnostic contract: optional Cartesian `profile`, `locations[]`, and optional `routes[]`.
+- Source-map `version` is descriptive metadata only and never selects parser behavior.
+- Derived base-map/location/route identities no longer depend on source version, so ordinary map revisions do not automatically orphan campaign overrides. The normalized content digest still changes with authoritative source content.
+- The host base-map registry indexes each imported source by exact digest and stable map ID. Attached campaigns remain pinned to their path; pathless imported campaigns may rebind by stable ID to the locally available revision.
+- Replaced the Ternia-specific parser fixture/validator with a generalized Cartesian base-map fixture.
+
+### Preserved
+
+- Narration-equivalent semantic lineage rebasing for current data.
+- The bounded O(1) latest-captured-boundary rewrite detector for delayed SillyTavern/Regex normalization.
+- Exact rollback/fail-closed branch recovery, immutable base-map authority, campaign overrides, provider alias repair, host rename/delete ownership safety, and the existing one-provider-call capture cadence.
+
+### Pre-1.0 data note
+
+- Experimental sidecars/checkpoints from earlier schema versions are intentionally outside the compatibility contract. Reset or Full chat rebuild is the recovery path when testing Alpha.23 against older experimental data.
+
 ## 0.9.0-alpha.22 - Legacy cleanup and architecture synchronization
 
 ### Cleaned

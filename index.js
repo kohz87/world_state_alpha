@@ -7,7 +7,7 @@ import {
   saveSettings,
 } from '../../../../script.js';
 
-import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintAssistantNarration, fingerprintMessage, rebaseLineageMetadata, reconcileBranch, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintMessage, rebaseLineageMetadata, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange } from './elapsed.js';
@@ -40,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.22';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.23';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -324,7 +324,9 @@ async function getChatBaseMap(chatKey, state) {
   try {
     const baseMap = await loadBaseMapSource(hostStorage, pointer);
     if (baseMap) {
-      cacheBaseMap(baseMapCacheKey(pointer) || cacheKey, baseMap);
+      const resolvedCacheKey = baseMapCacheKey(pointer) || cacheKey;
+      cacheBaseMap(resolvedCacheKey, baseMap);
+      if (cacheKey && cacheKey !== resolvedCacheKey) cacheBaseMap(cacheKey, baseMap);
       return baseMap;
     }
   } catch (error) {
@@ -1232,8 +1234,7 @@ function extendCurrentBranchFast(chatKey) {
   // freshly captured boundary is eligible for passive rewrite protection,
   // also verify that exact older boundary in O(1) so a delayed host rewrite
   // cannot hide behind an unchanged newer tail.
-  const passiveCapture = passiveCaptureRebaseCandidates.get(chatKey);
-  const passiveCaptureMessageId = passiveCapture?.messageId;
+  const passiveCaptureMessageId = passiveCaptureRebaseCandidates.get(chatKey);
   if (Number.isInteger(passiveCaptureMessageId)) {
     const stored = state.lineage?.[passiveCaptureMessageId];
     const current = chat[passiveCaptureMessageId];
@@ -1260,18 +1261,16 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
   const state = await ensureChatStateLoaded(chatKey);
   if (!state || currentChatKey() !== chatKey) return null;
 
-  const passiveCapture = passiveCaptureRebaseCandidates.get(chatKey);
+  const passiveCaptureMessageId = passiveCaptureRebaseCandidates.get(chatKey);
   const result = reconcileBranch(state, getContext().chat || [], {
-    passiveCaptureMessageId: Number.isInteger(passiveCapture?.messageId) ? passiveCapture.messageId : null,
-    passiveCaptureNarrationFingerprint: String(passiveCapture?.narrationFingerprint || ''),
+    passiveCaptureMessageId: Number.isInteger(passiveCaptureMessageId) ? passiveCaptureMessageId : null,
   });
   const changed = stateChanged(state, result.state);
   const passiveRebase = result.action === 'passive-capture-rebase';
   const semanticRebase = result.action === 'semantic-lineage-rebase';
   const lineageRebase = passiveRebase || semanticRebase;
   const durableRestore = persistRestore
-    && (result.lineageMetadataUpgraded
-      || ['rollback-journal', 'exact-checkpoint', 'fail-closed', 'passive-capture-rebase', 'semantic-lineage-rebase'].includes(result.action));
+    && ['rollback-journal', 'exact-checkpoint', 'fail-closed', 'passive-capture-rebase', 'semantic-lineage-rebase'].includes(result.action);
 
   if (changed && durableRestore) {
     await persistState(chatKey, result.state);
@@ -1455,10 +1454,7 @@ async function handleAssistantMessage(messageId) {
     // this background capture finishes. Remember only this latest captured
     // boundary so an unannounced presentation-only rewrite can rebase lineage
     // metadata instead of being mistaken for a branch rollback.
-    passiveCaptureRebaseCandidates.set(chatKey, {
-      messageId,
-      narrationFingerprint: fingerprintAssistantNarration(liveChat[messageId]),
-    });
+    passiveCaptureRebaseCandidates.set(chatKey, messageId);
     updatePrivateInjection();
     refreshPanel();
   });
@@ -2750,6 +2746,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     const settings = getWorldStateSettings();
     const sourceKey = stored.pointer.digest || baseMapCacheKey(stored.pointer);
     settings.spatialBaseMaps[sourceKey] = stored.pointer;
+    settings.spatialBaseMaps[stored.pointer.id] = stored.pointer;
     persistHostSettings();
     cacheBaseMap(baseMapCacheKey(stored.pointer), stored.baseMap);
 

@@ -23,7 +23,6 @@ export async function storeBaseMapSource(adapter, rawBaseMap) {
     id: parsed.id,
     name: parsed.name,
     version: parsed.version,
-    adapter: parsed.adapter,
     digest,
     path,
   };
