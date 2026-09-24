@@ -424,7 +424,7 @@ const enabledCapture = buildCapturePrompt({
   }],
   loreText: 'Hadrik normally inspects commercial freight.',
   spatialEnabled: true,
-  baseMap: { id: 'ternia', name: 'Ternia' },
+  baseMap: { id: 'sample-realm-cartesian', name: 'Sample Realm' },
 });
 const disabledChars = disabledCapture.systemPrompt.length + disabledCapture.prompt.length;
 const enabledChars = enabledCapture.systemPrompt.length + enabledCapture.prompt.length;
@@ -441,14 +441,14 @@ console.log(JSON.stringify({
 }));
 
 // 2. Base map parsing & indexing benchmark
-const baseMapRaw = fs.readFileSync('tests/fixtures/ternia-sample.json', 'utf8');
+const baseMapRaw = fs.readFileSync('tests/fixtures/cartesian-base-map-sample.json', 'utf8');
 const baseMapParseStart = performance.now();
 const parsedBaseMap = parseBaseMap(baseMapRaw);
 const baseMapParseElapsed = performance.now() - baseMapParseStart;
 
 console.log(JSON.stringify({
   kind: 'phase9-base-map-parsing',
-  adapter: parsedBaseMap.adapter,
+  format: parsedBaseMap.profile?.system || 'profileless',
   locations: parsedBaseMap.locations.length,
   routes: parsedBaseMap.routes.length,
   digest: parsedBaseMap.digest,
