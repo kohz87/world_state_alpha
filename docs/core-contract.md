@@ -110,6 +110,12 @@ Capture may:
 
 Lifecycle reconciliation is part of capture completeness. When the bounded exchange explicitly establishes that a shown active development ended, completed, failed, was eliminated, permanently ceased, or was replaced, capture must use `resolve`/`supersede` rather than leaving stale current truth active. The ending event need not itself be persistent. Silence, off-screen status, temporary absence, escape, interruption, uncertainty, scene departure, or loss of PC relevance alone is never sufficient resolution evidence.
 
+A bounded already-retrieved prior-scene selector may identify an **interpretive lifecycle antecedent** when the current exchange uses an indirect reference such as “the last two” or “it finally ends.” That selector contributes record identity only, never evidence. An indirect automatic mutation may rely on it only when exactly one such active target remains after bounded selection; ambiguous antecedents fail closed. The current exchange must still establish the changed/ended/replaced state.
+
+For provider-driven capture/rebuild, non-create mutations may target only active records. Resolved/superseded tombstones are immutable recurrence context: they may be referenced by an explicit genuinely new `create` through `newEpisodeOfRecordId`, but automatic capture/rebuild does not update, resolve, or supersede them in place.
+
+Automatic capture/rebuild must not create a standalone record already in a terminal lifecycle state merely to preserve an event. A redundant terminal create may be deterministically consolidated into `resolve` for a sufficiently similar visible active episode; otherwise it is rejected. Any create that consolidates into a non-create mutation must pass the source firewall again against the selected active target. An explicit `newEpisodeOfRecordId` may create a new record only when no sufficiently similar recurrence is already active; otherwise it consolidates into that current recurrence. This preserves the current-reality model instead of turning `records[]` into an event log or duplicating Current.
+
 If several independent materially persistent conditions are established in one exchange, capture may represent each once in the same bounded request rather than stopping after the most scene-salient one.
 
 Capture must not run global simulation or fabricate off-screen developments merely to keep the world busy.
@@ -472,7 +478,7 @@ Compaction must preserve exact rollback. Undo data must retain any removed evide
 
 ### C23.4 Version and package reproducibility
 
-For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 through 0.9.0-alpha.18 hardening releases change no envelope/schema format version: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
+For the Phase 8 / 0.8 release, application version was `0.8.0-alpha.1` and all persisted format versions were 1. Phase 9 intentionally bumps only the canonical state schema to version 2 because durable Spatial state is added. The 0.9.0-alpha.7 through 0.9.0-alpha.21 hardening releases change no envelope/schema format version: sidecar, bundle, and rollback-journal envelope formats remain version 1 and canonical schema remains version 2.
 
 `npm run package` must create a deterministic installable extension archive and deterministic release manifest. Unchanged source input must produce byte-identical output across repeated package runs. CI must verify this with output hashes, not merely file names.
 

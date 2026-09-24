@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.0-alpha.21 - Lifecycle identity and history admission hardening
+
+### Fixed
+
+- Live capture and chronological rebuild now carry a bounded **interpretive lifecycle antecedent ID set** separately from evidence. Prior-scene text still never becomes mutation evidence; it may only bind an indirect current reference when exactly one candidate remains.
+- Automatic non-create mutations must now identify the existing active target from current-exchange evidence unless that single bounded antecedent provides the referent. A provider cannot splice ending words from one condition into another visible record.
+- Resolved/superseded tombstones exposed for recurrence checks are immutable to automatic capture/rebuild. A recurrence must use a new `create` with `newEpisodeOfRecordId`.
+- A provider `create` already marked resolved may still be normalized into `resolve` when it clearly duplicates a visible active episode, but an unmatched terminal create is rejected instead of minting one-off event-log history.
+- Duplicate consolidation now prefers a sufficiently similar **active** episode before considering older tombstones, preventing historical wording from blocking closure/update of the current recurrence.
+- Any provider `create` that consolidates into `update`/`resolve` is source-firewalled a second time against the chosen target, so duplicate repair cannot bypass target identity checks.
+- Explicit `newEpisodeOfRecordId` proposals now consolidate into an already-active sufficiently similar recurrence instead of creating another Current record; only a genuinely new active recurrence may create a new record.
+- Live and rebuild relevance use the sanitized capture exchange surface, so planning-only assistant blocks cannot steer lifecycle or Spatial target retrieval.
+- Phase 7/8 version assertions now accept synchronized future 0.9 alpha versions instead of requiring another hand-maintained allowlist edit.
+
+### Preserved
+
+- Current remains active truth only. Recent remains a bounded latest-change feed and may show a just-resolved record; Resolved remains bounded tombstone history.
+- Exact current-exchange excerpts remain the only automatic Reality mutation evidence.
+- One capture provider call, the eight-record visible Reality cap, recurrence/new-episode protections, manual lifecycle controls, branch rollback, and all persisted schema/envelope versions remain unchanged.
+
 ## 0.9.0-alpha.20 - Live lifecycle retention and partial rebuild recovery
 
 ### Fixed

@@ -11,7 +11,7 @@ import { clone, reduceMutations } from './state-core.js';
 
 export const CAPTURE_DEFAULT_INTERVAL = 1;
 export const CAPTURE_RESPONSE_TOKENS = 2200;
-const REALITY_MUTATION_SHAPE = '{"action":"create|update|resolve|supersede","recordId":"existing-id-for-non-create","kind":"fact|development-for-create","summary":"compact current state","status":"active|resolved when creating","trend":"emerging|rising|stable|falling|uncertain when useful","anchors":["concept"],"reason":"grounded reason","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from current exchange"}],"relatedRecordIds":["visible-id"],"newEpisodeOfRecordId":"optional visible resolved/superseded id"}';
+const REALITY_MUTATION_SHAPE = '{"action":"create|update|resolve|supersede","recordId":"existing-id-for-non-create","kind":"fact|development-for-create","summary":"compact current state","status":"active for create","trend":"emerging|rising|stable|falling|uncertain when useful","anchors":["concept"],"reason":"grounded reason","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from current exchange"}],"relatedRecordIds":["visible-id"],"newEpisodeOfRecordId":"optional visible resolved/superseded id"}';
 export const CAPTURE_LIMITS = Object.freeze({
   exchangeMessages: 4,
   exchangeChars: 12000,
@@ -106,6 +106,8 @@ export const CAPTURE_SYSTEM_PROMPT = [
   'Use shown record IDs only for update/resolve/supersede/related links. Never create an ID.',
   'Reality mutation field names are exact: use kind and summary. Never substitute category for kind or description for summary.',
   'Reconcile lifecycle for shown active records addressed by CURRENT EXCHANGE: resolve only when explicitly ended, completed, failed, eliminated, or permanently ceased; supersede only when explicitly replaced; update if it still exists but changed.',
+  'Resolved/superseded records shown for recurrence checks are immutable history: never update, resolve, or supersede them. A genuinely new recurrence must be a create with newEpisodeOfRecordId.',
+  'If an INTERPRETIVE LIFECYCLE ANTECEDENT is shown, it is prior accepted context for resolving an indirect reference only; it is not mutation evidence. CURRENT EXCHANGE must still establish the update/ending/replacement.',
   'An ending may be transient as an event but still retires the prior ongoing record. Silence, off-screen status, temporary absence, escape, interruption, uncertainty, scene departure, or PC irrelevance never proves resolution.',
   'Use resolve/supersede for lifecycle changes; do not smuggle them through update. If no persistent change or proven lifecycle transition exists, return {"mutations":[]}.',
 ].join(' ');
@@ -213,6 +215,7 @@ function renderRecords(records = []) {
 export function buildCapturePrompt({
   exchange = [],
   visibleRecords = [],
+  lifecycleContextRecordIds = [],
   loreText = '',
   operation = 'capture',
   spatialEnabled = false,
@@ -222,6 +225,15 @@ export function buildCapturePrompt({
   const currentExchange = normalizeCaptureExchange(exchange);
   const completenessHints = extractWorldStateCompletenessHints(exchange);
   const records = renderRecords(visibleRecords);
+  const lifecycleContextIdSet = new Set(
+    (Array.isArray(lifecycleContextRecordIds) ? lifecycleContextRecordIds : [])
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .slice(0, CAPTURE_LIMITS.lifecycleVisibleRecords),
+  );
+  const interpretiveLifecycle = records
+    .filter(record => record.status === 'active' && lifecycleContextIdSet.has(record.id))
+    .map(record => ({ id: record.id, kind: record.kind, summary: record.summary, anchors: record.anchors }));
   const lore = clip(loreText, CAPTURE_LIMITS.loreChars);
   const prompt = [
     'CURRENT EXCHANGE (the only automatic mutation evidence source):',
@@ -230,8 +242,14 @@ export function buildCapturePrompt({
     operation === 'rebuild'
       ? 'REBUILD RECOVERY MODE: This is one historical chronological exchange boundary. Recover every materially persistent condition established in this exchange, including conditions that were already off-screen, ignored, or unrelated to the PC objective. Do not infer un-narrated evolution between boundaries; later narrated exchanges must establish later changes.'
       : '',
-    'VISIBLE CURRENT WORLD STATE (current authority; use only these IDs):',
+    'VISIBLE WORLD STATE CONTEXT (active records are current authority; resolved/superseded records are recurrence context only; use only these IDs):',
     JSON.stringify(records),
+    '',
+    interpretiveLifecycle.length ? 'INTERPRETIVE LIFECYCLE ANTECEDENT (prior accepted context, NOT mutation evidence):' : '',
+    interpretiveLifecycle.length ? JSON.stringify(interpretiveLifecycle) : '',
+    interpretiveLifecycle.length
+      ? 'Use this only to bind an indirect reference in CURRENT EXCHANGE to an already-active record. CURRENT EXCHANGE alone must establish any changed/ended/replaced state. Keep enough subject wording from the shown antecedent in the proposed summary for deterministic target validation.'
+      : '',
     '',
     'LIFECYCLE CHECK: If CURRENT EXCHANGE explicitly ends/completes/fails/eliminates a shown active development, resolve it; if explicitly replaces it, supersede it; if it continues but changed, update it. Silence, off-screen status, absence, escape, or uncertainty never proves resolution.',
     operation === 'rebuild'
@@ -284,6 +302,7 @@ export function captureSnapshotToken({
   state,
   exchange,
   visibleRecords = [],
+  lifecycleContextRecordIds = [],
   visibleLocations = [],
   spatialEnabled = false,
   sourceMessageId,
@@ -299,6 +318,10 @@ export function captureSnapshotToken({
       fingerprint: fingerprintMessage({ role: message.role, content: message.content }),
     })),
     visibleRecords: renderRecords(visibleRecords),
+    lifecycleContextRecordIds: (Array.isArray(lifecycleContextRecordIds) ? lifecycleContextRecordIds : [])
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .slice(0, CAPTURE_LIMITS.lifecycleVisibleRecords),
     spatialEnabled: Boolean(spatialEnabled),
     visibleLocations: spatialEnabled
       ? (Array.isArray(visibleLocations) ? visibleLocations : []).slice(0, 8).map(item => ({
@@ -325,6 +348,7 @@ export function processCaptureResponse({
   state,
   exchange,
   visibleRecords = [],
+  lifecycleContextRecordIds = [],
   chatKey,
   sourceMessageId,
   sourceLineageKey,
@@ -351,16 +375,15 @@ export function processCaptureResponse({
   for (let index = 0; index < wire.mutations.length; index += 1) {
     const proposal = wire.mutations[index];
     if (proposal.action === 'noop') continue;
-    const firewalled = applyCaptureSourceFirewall(proposal, { exchange, visibleRecords: boundedRecords, state });
+    const firewalled = applyCaptureSourceFirewall(proposal, {
+      exchange,
+      visibleRecords: boundedRecords,
+      lifecycleContextRecordIds,
+      state,
+    });
     if (!firewalled.ok) {
       rejected.push(rejectedEntry('source-firewall', firewalled.reason, { index }));
       continue;
-    }
-    if (evidenceSourceClass) {
-      firewalled.mutation.evidence = (firewalled.mutation.evidence || []).map(item => ({
-        ...item,
-        sourceClass: evidenceSourceClass,
-      }));
     }
     const consolidated = consolidateCreateCandidate(firewalled.mutation, boundedRecords);
     if (!consolidated.ok) {
@@ -370,7 +393,32 @@ export function processCaptureResponse({
       }));
       continue;
     }
-    accepted.push(consolidated.mutation);
+
+    let admittedMutation = consolidated.mutation;
+    if (firewalled.mutation.action === 'create' && admittedMutation.action !== 'create') {
+      const rebound = applyCaptureSourceFirewall(admittedMutation, {
+        exchange,
+        visibleRecords: boundedRecords,
+        lifecycleContextRecordIds,
+        state,
+      });
+      if (!rebound.ok) {
+        rejected.push(rejectedEntry('source-firewall', rebound.reason, {
+          index,
+          duplicateRecordId: consolidated.duplicate?.record?.id || '',
+        }));
+        continue;
+      }
+      admittedMutation = rebound.mutation;
+    }
+
+    if (evidenceSourceClass) {
+      admittedMutation.evidence = (admittedMutation.evidence || []).map(item => ({
+        ...item,
+        sourceClass: evidenceSourceClass,
+      }));
+    }
+    accepted.push(admittedMutation);
   }
 
   const reduced = reduceMutations(state, {
@@ -446,6 +494,7 @@ export async function runCaptureOperation({
   state,
   exchange,
   visibleRecords = [],
+  lifecycleContextRecordIds = [],
   loreText = '',
   chatKey,
   sourceMessageId,
@@ -476,6 +525,7 @@ export async function runCaptureOperation({
     state,
     exchange,
     visibleRecords,
+    lifecycleContextRecordIds,
     visibleLocations,
     spatialEnabled,
     sourceMessageId,
@@ -494,6 +544,7 @@ export async function runCaptureOperation({
   const options = buildCapturePrompt({
     exchange,
     visibleRecords,
+    lifecycleContextRecordIds,
     loreText,
     operation,
     spatialEnabled,
@@ -570,6 +621,7 @@ export async function runCaptureOperation({
       state,
       exchange,
       visibleRecords,
+      lifecycleContextRecordIds,
       chatKey,
       sourceMessageId,
       sourceLineageKey,

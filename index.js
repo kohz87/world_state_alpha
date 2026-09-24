@@ -40,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.20';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.21';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1364,13 +1364,18 @@ async function handleAssistantMessage(messageId) {
         currentState?.lineage,
       ).filter(row => !currentExchangeIds.has(row?.messageId)),
     ));
-    const lifecycleVisible = selectLifecycleCandidates(before, {
+    const lifecycleSelection = selectLifecycleCandidates(before, {
       index,
       currentText: captureText,
       contextText: lifecycleContext,
       currentMessageId: messageId,
       maxRecords: CAPTURE_LIMITS.lifecycleVisibleRecords,
-    }).selected.map(item => item.record);
+    });
+    const lifecycleVisible = lifecycleSelection.selected.map(item => item.record);
+    const lifecycleContextRecordIds = lifecycleSelection.selected
+      .filter(item => item.lifecycleSource === 'scene-context')
+      .map(item => item.record?.id)
+      .filter(Boolean);
     const activeVisible = selectRelevantRecords(before, {
       index,
       recentText: captureText,
@@ -1410,7 +1415,7 @@ async function handleAssistantMessage(messageId) {
         const spRel = selectRelevantLocations(before.spatial, {
           baseMap,
           index: spIndex,
-          recentText: recentText(exchange),
+          recentText: captureText,
           maxLocations: 6,
         });
         visibleLocations = spRel.selected.map(item => item.location);
@@ -1423,6 +1428,7 @@ async function handleAssistantMessage(messageId) {
       state: before,
       exchange,
       visibleRecords: visible,
+      lifecycleContextRecordIds,
       loreText: '',
       chatKey,
       sourceMessageId: messageId,

@@ -60,6 +60,13 @@ export function consolidateCreateCandidate(
   const records = Array.isArray(visibleRecords) ? visibleRecords : [];
 
   if (mutation.newEpisodeOfRecordId) {
+    if (mutation.status === 'resolved') {
+      return {
+        ok: false,
+        reason: 'a genuinely new episode must be active; an already-finished recurrence is not durable current world state',
+        duplicate: null,
+      };
+    }
     const prior = records.find(record => record.id === mutation.newEpisodeOfRecordId) || null;
     const score = prior ? duplicateSimilarity(mutation, prior) : 0;
     if (!prior || !['resolved', 'superseded'].includes(prior.status) || score < newEpisodeThreshold) {
@@ -69,6 +76,37 @@ export function consolidateCreateCandidate(
         duplicate: prior ? { record: prior, score } : null,
       };
     }
+
+    let activeDuplicate = null;
+    for (const record of records) {
+      if (record.status !== 'active') continue;
+      const activeScore = duplicateSimilarity(mutation, record);
+      if (!activeDuplicate || activeScore > activeDuplicate.score) {
+        activeDuplicate = { record, score: activeScore };
+      }
+    }
+    if (activeDuplicate && activeDuplicate.score >= threshold) {
+      const record = activeDuplicate.record;
+      return {
+        ok: true,
+        duplicate: activeDuplicate,
+        mutation: {
+          action: 'update',
+          recordId: record.id,
+          summary: mutation.summary,
+          status: record.status,
+          trend: mutation.trend,
+          anchors: mergeAnchors(record.anchors, mutation.anchors),
+          reason: mutation.reason,
+          evidence: mutation.evidence,
+          relatedRecordIds: [...new Set([
+            ...(mutation.relatedRecordIds || []).filter(id => id !== record.id),
+            prior.id,
+          ])],
+        },
+      };
+    }
+
     return {
       ok: true,
       duplicate: { record: prior, score },
@@ -79,27 +117,36 @@ export function consolidateCreateCandidate(
     };
   }
 
-  let best = null;
+  const terminalCreate = mutation.status === 'resolved';
+  const rejectUnmatchedTerminalCreate = duplicate => ({
+    ok: false,
+    reason: 'a new already-resolved record cannot be created as history; resolve a sufficiently related visible active record instead',
+    duplicate,
+  });
+
+  let bestActive = null;
+  let bestHistorical = null;
+  let bestOverall = null;
   for (const record of records) {
     const score = duplicateSimilarity(mutation, record);
-    if (!best || score > best.score) best = { record, score };
+    const candidate = { record, score };
+    if (!bestOverall || score > bestOverall.score) bestOverall = candidate;
+    if (record.status === 'active') {
+      if (!bestActive || score > bestActive.score) bestActive = candidate;
+    } else if (!bestHistorical || score > bestHistorical.score) {
+      bestHistorical = candidate;
+    }
   }
 
-  if (!best) return { ok: true, mutation, duplicate: best };
-
-  const record = best.record;
-  if (record.status === 'active' && best.score < threshold) {
-    return { ok: true, mutation, duplicate: best };
-  }
-  if (record.status !== 'active' && best.score < resolvedThreshold) {
-    return { ok: true, mutation, duplicate: best };
-  }
-
-  if (record.status === 'active') {
-    const action = mutation.status === 'resolved' ? 'resolve' : 'update';
+  // Prefer a sufficiently similar current episode over an older tombstone.
+  // This lets a provider's redundant create proposal consolidate into the
+  // actual current record even when historical wording happens to be closer.
+  if (bestActive && bestActive.score >= threshold) {
+    const record = bestActive.record;
+    const action = terminalCreate ? 'resolve' : 'update';
     return {
       ok: true,
-      duplicate: best,
+      duplicate: bestActive,
       mutation: {
         action,
         recordId: record.id,
@@ -116,9 +163,18 @@ export function consolidateCreateCandidate(
     };
   }
 
-  return {
-    ok: false,
-    reason: 'candidate duplicates a resolved/superseded episode; passive baseline/current similarity cannot resurrect it',
-    duplicate: best,
-  };
+  if (terminalCreate) {
+    return rejectUnmatchedTerminalCreate(bestActive || bestHistorical || bestOverall);
+  }
+
+  if (bestHistorical && bestHistorical.score >= resolvedThreshold) {
+    return {
+      ok: false,
+      reason: 'candidate duplicates a resolved/superseded episode; passive baseline/current similarity cannot resurrect it',
+      duplicate: bestHistorical,
+    };
+  }
+
+  return { ok: true, mutation, duplicate: bestOverall };
+
 }

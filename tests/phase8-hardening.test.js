@@ -56,9 +56,9 @@ test('Phase 8 compatibility accepts current Phase 9 application versions while e
   const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
   const index = fs.readFileSync('index.js', 'utf8');
 
-  assert.ok(['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13', '0.9.0-alpha.14', '0.9.0-alpha.15', '0.9.0-alpha.16', '0.9.0-alpha.17', '0.9.0-alpha.18', '0.9.0-alpha.19', '0.9.0-alpha.20'].includes(pkg.version));
-  assert.ok(['0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13', '0.9.0-alpha.14', '0.9.0-alpha.15', '0.9.0-alpha.16', '0.9.0-alpha.17', '0.9.0-alpha.18', '0.9.0-alpha.19', '0.9.0-alpha.20'].includes(manifest.version));
-  assert.match(index, /WORLD_STATE_ALPHA_VERSION\s*=\s*'(0\.8\.0-alpha\.1|0\.9\.0-alpha\.1|0\.9\.0-alpha\.2|0\.9\.0-alpha\.3|0\.9\.0-alpha\.4|0\.9\.0-alpha\.5|0\.9\.0-alpha\.6|0\.9\.0-alpha\.7|0\.9\.0-alpha\.8|0\.9\.0-alpha\.9|0\.9\.0-alpha\.10|0\.9\.0-alpha\.11|0\.9\.0-alpha\.12|0\.9\.0-alpha\.13|0\.9\.0-alpha\.14|0\.9\.0-alpha\.15|0\.9\.0-alpha\.16|0\.9\.0-alpha\.17|0\.9\.0-alpha\.18|0\.9\.0-alpha\.19|0\.9\.0-alpha\.20)'/);
+  assert.match(pkg.version, /^(?:0\.8\.0-alpha\.1|0\.9\.0-alpha\.\d+)$/);
+  assert.equal(manifest.version, pkg.version);
+  assert.ok(index.includes(`WORLD_STATE_ALPHA_VERSION = '${pkg.version}'`));
   assert.ok(inventory.stage === 'phase8-release-hardening' || inventory.stage === 'phase9-spatial-continuity');
 
   assert.ok(SCHEMA_VERSION === 1 || SCHEMA_VERSION === 2);

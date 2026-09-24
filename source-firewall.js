@@ -64,6 +64,33 @@ function lexicalAffinity(left, right, anchors = []) {
     && shared[0].length >= 6;
 }
 
+function targetAffinity(record, text) {
+  if (!record) return false;
+
+  const left = significantTokens(record.summary || '');
+  const right = significantTokens(text);
+  const shared = [...left].filter(token => right.has(token));
+  if (shared.length >= 2) return true;
+  if (shared.length === 1) {
+    const denominator = Math.min(left.size, right.size);
+    if (shared[0].length >= 6 && denominator > 0 && (shared.length / denominator) >= 0.5) return true;
+  }
+
+  const haystack = canonicalText(text);
+  if (!haystack) return false;
+  const anchors = (Array.isArray(record.anchors) ? record.anchors : [])
+    .map(canonicalText)
+    .filter(anchor => anchor.length >= 3);
+  const matched = anchors.filter(anchor => {
+    const hasNonAscii = /[^\x00-\x7F]/u.test(anchor);
+    if (` ${haystack} `.includes(` ${anchor} `)) return true;
+    return hasNonAscii && anchor.length >= 2 && haystack.includes(anchor);
+  });
+  if (matched.some(anchor => anchor.includes(' '))) return true;
+  if (matched.length >= 2) return true;
+  return anchors.length === 1 && matched.length === 1 && matched[0].length >= 5;
+}
+
 export function evidenceClaimGrounded(claim, sourceText) {
   const needle = canonicalText(claim);
   const haystack = canonicalText(sourceText);
@@ -153,6 +180,7 @@ export function captureExchangeIndex(exchange = []) {
 export function applyCaptureSourceFirewall(mutation, {
   exchange = [],
   visibleRecords = [],
+  lifecycleContextRecordIds = [],
   state,
 } = {}) {
   const candidate = clone(mutation);
@@ -161,6 +189,12 @@ export function applyCaptureSourceFirewall(mutation, {
   const exchangeById = captureExchangeIndex(exchange);
   const visibleIds = new Set((Array.isArray(visibleRecords) ? visibleRecords : []).map(record => record?.id).filter(Boolean));
   const stateRecords = new Map((Array.isArray(state?.records) ? state.records : []).map(record => [record.id, record]));
+  const lifecycleContextIds = new Set(
+    (Array.isArray(lifecycleContextRecordIds) ? lifecycleContextRecordIds : [])
+      .map(value => String(value || '').trim())
+      .filter(id => id && visibleIds.has(id))
+      .slice(0, 4),
+  );
 
   if (candidate.action !== 'create') {
     if (!visibleIds.has(candidate.recordId) || !stateRecords.has(candidate.recordId)) {
@@ -209,11 +243,38 @@ export function applyCaptureSourceFirewall(mutation, {
   }
 
   const existing = candidate.recordId ? stateRecords.get(candidate.recordId) : null;
+  if (existing && existing.status !== 'active') {
+    return {
+      ok: false,
+      reason: 'resolved/superseded history is immutable during automatic capture; create a genuinely new episode instead',
+    };
+  }
+
   const assertionText = candidate.summary || existing?.summary || '';
   const affinityAnchors = candidate.anchors ?? existing?.anchors ?? [];
   const supportingEvidence = evidenceSupport.filter(item => lexicalAffinity(assertionText, item.claim, affinityAnchors));
   if (!supportingEvidence.length) {
     return { ok: false, reason: 'mutation summary/current subject is not supported by its cited evidence claims' };
+  }
+
+  if (existing) {
+    const targetEvidence = evidenceSupport.filter(item => targetAffinity(existing, item.claim));
+    const uniqueInterpretiveBinding = lifecycleContextIds.size === 1
+      && lifecycleContextIds.has(existing.id);
+    if (!targetEvidence.length && !uniqueInterpretiveBinding) {
+      return {
+        ok: false,
+        reason: 'current-exchange evidence does not identify the existing target record being mutated',
+      };
+    }
+    if (uniqueInterpretiveBinding
+      && candidate.summary
+      && !targetAffinity(existing, candidate.summary)) {
+      return {
+        ok: false,
+        reason: 'interpretive lifecycle context may bind an indirect reference only when the proposed summary still refers to that existing target',
+      };
+    }
   }
 
   if (candidate.anchors !== undefined) {

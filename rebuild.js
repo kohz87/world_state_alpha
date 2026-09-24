@@ -1,5 +1,5 @@
 import { chatLineage, commitMutationBoundary, reconcileBranch, seedRootCheckpoint } from './branch.js';
-import { CAPTURE_LIMITS, runCaptureOperation } from './capture.js';
+import { CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
@@ -91,9 +91,8 @@ function boundedInt(value, fallback, min, max) {
 }
 
 function exchangeText(exchange) {
-  return (Array.isArray(exchange) ? exchange : [])
-    .filter(message => roleOf(message) !== 'system')
-    .map(messageText)
+  return normalizeCaptureExchange(exchange)
+    .map(message => message.content)
     .filter(Boolean)
     .join('\n');
 }
@@ -225,8 +224,13 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
     return String(left.record?.id || '').localeCompare(String(right.record?.id || ''));
   });
 
+  const selectedLifecycle = lifecycle.slice(0, REBUILD_LIMITS.lifecycleVisibleRecords);
   return {
-    lifecycle: lifecycle.slice(0, REBUILD_LIMITS.lifecycleVisibleRecords).map(item => item.record),
+    lifecycle: selectedLifecycle.map(item => item.record),
+    lifecycleContextRecordIds: selectedLifecycle
+      .filter(item => !item.overlapsExchange)
+      .map(item => item.record?.id)
+      .filter(Boolean),
     historical: historical.slice(0, REBUILD_LIMITS.resolvedVisibleRecords).map(item => item.record),
   };
 }
@@ -255,7 +259,12 @@ function visibleForRebuild(state, exchange, boundaryMessageId) {
     if (byId.size >= REBUILD_LIMITS.maxVisibleRecords) break;
     if (record?.id && !byId.has(record.id)) byId.set(record.id, record);
   }
-  return [...byId.values()].slice(0, CAPTURE_LIMITS.visibleRecords);
+  const records = [...byId.values()].slice(0, CAPTURE_LIMITS.visibleRecords);
+  const recordIds = new Set(records.map(record => record?.id).filter(Boolean));
+  return {
+    records,
+    lifecycleContextRecordIds: reserved.lifecycleContextRecordIds.filter(id => recordIds.has(id)),
+  };
 }
 
 export function rebuildSnapshotToken({ state, chat }) {
@@ -463,7 +472,9 @@ export async function runManualRebuild({
       }
     }
 
-    const visibleRecords = visibleForRebuild(candidate, window.exchange, window.messageId);
+    const visibleSelection = visibleForRebuild(candidate, window.exchange, window.messageId);
+    const visibleRecords = visibleSelection.records;
+    const lifecycleContextRecordIds = visibleSelection.lifecycleContextRecordIds;
     let visibleLocations = [];
     if (spatialEnabled) {
       const spatialRel = selectRelevantLocations(candidate.spatial, {
@@ -480,6 +491,7 @@ export async function runManualRebuild({
       state: beforeStep,
       exchange: window.exchange,
       visibleRecords,
+      lifecycleContextRecordIds,
       loreText,
       chatKey: owner,
       sourceMessageId: window.messageId,

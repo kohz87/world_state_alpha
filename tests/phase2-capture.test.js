@@ -153,6 +153,355 @@ test('capture explicitly reconciles lifecycle endings and direct resolve remains
   assert.equal(result.state.records[0].lastChangedMessage, 0);
 });
 
+test('unique prior-scene lifecycle antecedent permits an indirect ending without becoming evidence', () => {
+  const initial = withLineage([{
+    role: 'assistant',
+    content: 'Two ditch boars remain alive in the orchard.',
+  }]);
+  const state = existingState('capture-indirect-lifecycle', initial, {
+    action: 'create',
+    kind: 'development',
+    summary: 'Two ditch boars remain active in the orchard.',
+    anchors: ['ditch boars', 'orchard'],
+  });
+  const record = state.records[0];
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'The last two collapse in the mud. Nothing stirs afterward.',
+  }]);
+
+  const prompt = buildCapturePrompt({
+    exchange,
+    visibleRecords: [record],
+    lifecycleContextRecordIds: [record.id],
+  });
+  assert.match(prompt.prompt, /INTERPRETIVE LIFECYCLE ANTECEDENT/);
+  assert.match(prompt.prompt, /NOT mutation evidence/);
+
+  const payload = JSON.stringify({
+    mutations: [{
+      action: 'resolve',
+      recordId: record.id,
+      summary: 'The ditch-boar sounder ends after the last two animals collapse.',
+      evidence: [{
+        sourceMessageId: 0,
+        claim: 'The last two collapse in the mud. Nothing stirs afterward.',
+      }],
+    }],
+  });
+
+  const withoutAntecedent = processCaptureResponse({
+    text: payload,
+    state,
+    exchange,
+    visibleRecords: [record],
+    chatKey: 'capture-indirect-lifecycle',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+  assert.equal(withoutAntecedent.state.records[0].status, 'active');
+  assert.equal(withoutAntecedent.rejected[0].stage, 'source-firewall');
+  assert.match(withoutAntecedent.rejected[0].reason, /does not identify the existing target/i);
+
+  const withAntecedent = processCaptureResponse({
+    text: payload,
+    state,
+    exchange,
+    visibleRecords: [record],
+    lifecycleContextRecordIds: [record.id],
+    chatKey: 'capture-indirect-lifecycle',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+  assert.equal(withAntecedent.acceptedCount, 1);
+  assert.equal(withAntecedent.state.records[0].status, 'resolved');
+});
+
+test('interpretive lifecycle binding cannot retarget an unrelated visible record', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'Two ditch boars remain in the orchard while a Southport dock strike also continues.',
+  }]);
+  const state = reduceMutations(createState('capture-target-binding'), {
+    chatKey: 'capture-target-binding',
+    messageId: 0,
+    lineageKey: base[0].lineageKey,
+    mutations: [{
+      action: 'create',
+      kind: 'development',
+      summary: 'Two ditch boars remain active in the orchard.',
+      anchors: ['ditch boars', 'orchard'],
+    }, {
+      action: 'create',
+      kind: 'development',
+      summary: 'The Southport dock strike remains active.',
+      anchors: ['Southport', 'dock strike'],
+    }],
+  }).state;
+  const boars = state.records.find(record => /ditch boars/i.test(record.summary));
+  const dock = state.records.find(record => /dock strike/i.test(record.summary));
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'The last two collapse in the mud. Nothing stirs afterward.',
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'resolve',
+        recordId: dock.id,
+        summary: 'The Southport dock strike ends after the last two collapse.',
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'The last two collapse in the mud. Nothing stirs afterward.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [boars, dock],
+    lifecycleContextRecordIds: [boars.id],
+    chatKey: 'capture-target-binding',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records.find(record => record.id === dock.id).status, 'active');
+  assert.equal(result.rejected[0].stage, 'source-firewall');
+  assert.match(result.rejected[0].reason, /does not identify the existing target/i);
+});
+
+test('terminal create consolidation is re-firewalled against the chosen active target', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'Two ditch boars remain in the orchard while a Southport dock strike also continues.',
+  }]);
+  const state = reduceMutations(createState('capture-consolidated-target-binding'), {
+    chatKey: 'capture-consolidated-target-binding',
+    messageId: 0,
+    lineageKey: base[0].lineageKey,
+    mutations: [{
+      action: 'create',
+      kind: 'development',
+      summary: 'Two ditch boars remain active in the orchard.',
+      anchors: ['ditch boars', 'orchard'],
+    }, {
+      action: 'create',
+      kind: 'development',
+      summary: 'The Southport dock strike remains active.',
+      anchors: ['Southport', 'dock strike'],
+    }],
+  }).state;
+  const boars = state.records.find(record => /ditch boars/i.test(record.summary));
+  const dock = state.records.find(record => /dock strike/i.test(record.summary));
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'The last two collapse in the mud. Nothing stirs afterward.',
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        status: 'resolved',
+        summary: 'The Southport dock strike ends after the last two collapse.',
+        anchors: ['Southport', 'dock strike'],
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'The last two collapse in the mud. Nothing stirs afterward.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [boars, dock],
+    lifecycleContextRecordIds: [boars.id],
+    chatKey: 'capture-consolidated-target-binding',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records.find(record => record.id === dock.id).status, 'active');
+  assert.equal(result.rejected[0].stage, 'source-firewall');
+  assert.equal(result.rejected[0].duplicateRecordId, dock.id);
+  assert.match(result.rejected[0].reason, /does not identify the existing target/i);
+});
+
+test('ambiguous prior-scene lifecycle candidates fail closed for an indirect ending', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'Two ditch boars remain in the orchard while two marsh wolves remain by the ford.',
+  }]);
+  const state = reduceMutations(createState('capture-ambiguous-lifecycle'), {
+    chatKey: 'capture-ambiguous-lifecycle',
+    messageId: 0,
+    lineageKey: base[0].lineageKey,
+    mutations: [{
+      action: 'create',
+      kind: 'development',
+      summary: 'Two ditch boars remain active in the orchard.',
+      anchors: ['ditch boars', 'orchard'],
+    }, {
+      action: 'create',
+      kind: 'development',
+      summary: 'Two marsh wolves remain active by the ford.',
+      anchors: ['marsh wolves', 'ford'],
+    }],
+  }).state;
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'The last two collapse in the mud. Nothing stirs afterward.',
+  }]);
+  const target = state.records[0];
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'resolve',
+        recordId: target.id,
+        summary: 'The ditch-boar sounder ends after the last two animals collapse.',
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'The last two collapse in the mud. Nothing stirs afterward.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: state.records,
+    lifecycleContextRecordIds: state.records.map(record => record.id),
+    chatKey: 'capture-ambiguous-lifecycle',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records[0].status, 'active');
+  assert.equal(result.rejected[0].stage, 'source-firewall');
+  assert.match(result.rejected[0].reason, /does not identify the existing target/i);
+});
+
+test('automatic capture cannot mutate a resolved tombstone in place', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'The Southport dock strike ended after an agreement.',
+  }]);
+  const state = existingState('capture-history-immutable', base, {
+    action: 'create',
+    kind: 'development',
+    status: 'resolved',
+    summary: 'The Southport dock strike is resolved.',
+    anchors: ['Southport', 'dock strike'],
+  });
+  const record = state.records[0];
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'The Southport dock strike remains resolved after the agreement.',
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'update',
+        recordId: record.id,
+        summary: 'The Southport dock strike remains resolved after the agreement.',
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'The Southport dock strike remains resolved after the agreement.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [record],
+    chatKey: 'capture-history-immutable',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records[0].summary, 'The Southport dock strike is resolved.');
+  assert.equal(result.rejected[0].stage, 'source-firewall');
+  assert.match(result.rejected[0].reason, /history is immutable/i);
+});
+
+test('unmatched already-resolved create cannot mint a one-off history record', () => {
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'The brief duel ends when both combatants lower their blades and leave.',
+  }]);
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        status: 'resolved',
+        summary: 'The brief duel is resolved after both combatants leave.',
+        anchors: ['brief duel'],
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'The brief duel ends when both combatants lower their blades and leave.',
+        }],
+      }],
+    }),
+    state: createState('capture-terminal-create'),
+    exchange,
+    visibleRecords: [],
+    chatKey: 'capture-terminal-create',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records.length, 0);
+  assert.equal(result.rejected[0].stage, 'duplicate-gate');
+  assert.match(result.rejected[0].reason, /cannot be created as history/i);
+});
+
+test('already-finished explicit recurrence cannot bypass terminal history admission', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'The first Southport dock strike ended after an agreement.',
+  }]);
+  const state = existingState('capture-terminal-new-episode', base, {
+    action: 'create',
+    kind: 'development',
+    status: 'resolved',
+    summary: 'The first Southport dock strike is resolved.',
+    anchors: ['Southport', 'dock strike'],
+  });
+  const prior = state.records[0];
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'A second Southport dock strike begins and ends the same day after a separate agreement.',
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        status: 'resolved',
+        summary: 'A second Southport dock strike begins and ends the same day.',
+        anchors: ['Southport', 'dock strike'],
+        newEpisodeOfRecordId: prior.id,
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'A second Southport dock strike begins and ends the same day after a separate agreement.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [prior],
+    chatKey: 'capture-terminal-new-episode',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records.length, 1);
+  assert.equal(result.rejected[0].stage, 'duplicate-gate');
+  assert.match(result.rejected[0].reason, /new episode must be active/i);
+});
+
 test('spatial capture prompt keeps the exact Reality mutation schema and provider aliases repair deterministically', () => {
   const prompt = buildCapturePrompt({
     exchange: withLineage([
@@ -396,6 +745,89 @@ test('source firewall rejects unrelated summaries and drops unsupported anchors 
   });
   assert.equal(grounded.acceptedCount, 1);
   assert.deepEqual(grounded.state.records[0].anchors, ['bridge']);
+});
+
+test('existing canonical anchors can bind a non-create mutation even when the stored summary wording changed', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'Freight movement through the pass is suspended.',
+  }]);
+  const state = existingState('anchor-target-binding', base, {
+    action: 'create',
+    kind: 'development',
+    summary: 'Freight movement is suspended.',
+    anchors: ['Kesselpass'],
+  });
+  const record = state.records[0];
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'Kesselpass caravans begin moving again under escort.',
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'update',
+        recordId: record.id,
+        summary: 'Freight movement resumes through Kesselpass under escort.',
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'Kesselpass caravans begin moving again under escort.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [record],
+    chatKey: 'anchor-target-binding',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.acceptedCount, 1);
+  assert.match(result.state.records[0].summary, /resumes through Kesselpass/i);
+});
+
+test('a broad shared place anchor alone cannot retarget an unrelated active condition', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'The Southport dock strike remains active.',
+  }]);
+  const state = existingState('broad-anchor-target-reject', base, {
+    action: 'create',
+    kind: 'development',
+    summary: 'The Southport dock strike remains active.',
+    anchors: ['Southport', 'dock strike'],
+  });
+  const record = state.records[0];
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'Southport rain stops before dusk.',
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'resolve',
+        recordId: record.id,
+        summary: 'The Southport dock strike ends as the rain stops.',
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'Southport rain stops before dusk.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [record],
+    chatKey: 'broad-anchor-target-reject',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records[0].status, 'active');
+  assert.equal(result.rejected[0].stage, 'source-firewall');
+  assert.match(result.rejected[0].reason, /does not identify the existing target/i);
 });
 
 test('unrelated objective evidence cannot wash a quoted rumor into objective reality', () => {
@@ -813,6 +1245,62 @@ test('duplicate create that establishes resolution resolves the existing active 
   assert.equal(result.state.records[0].status, 'resolved');
 });
 
+test('terminal duplicate create prefers the current active episode over a closer old tombstone', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'An old Southport dock strike was resolved; a renewed Southport dock strike is now active.',
+  }]);
+  const state = reduceMutations(createState('dup-active-over-history'), {
+    chatKey: 'dup-active-over-history',
+    messageId: 0,
+    lineageKey: base[0].lineageKey,
+    mutations: [{
+      action: 'create',
+      kind: 'development',
+      status: 'resolved',
+      summary: 'The renewed Southport dock strike is resolved.',
+      anchors: ['Southport', 'dock strike'],
+    }, {
+      action: 'create',
+      kind: 'development',
+      summary: 'The renewed Southport dock strike is active.',
+      anchors: ['Southport', 'dock strike'],
+    }],
+  }).state;
+  const historical = state.records.find(record => record.status === 'resolved');
+  const active = state.records.find(record => record.status === 'active');
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'The renewed Southport dock strike ends after an agreement.',
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        status: 'resolved',
+        summary: 'The renewed Southport dock strike is resolved.',
+        anchors: ['Southport', 'dock strike'],
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'The renewed Southport dock strike ends after an agreement.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [historical, active],
+    chatKey: 'dup-active-over-history',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records.find(record => record.id === historical.id).status, 'resolved');
+  assert.equal(result.state.records.find(record => record.id === active.id).status, 'resolved');
+  assert.equal(result.applied[0].recordId, active.id);
+});
+
 test('capture cannot mutate a record outside the bounded visible context even if caller passes more records', () => {
   const chat = withLineage([{ role: 'assistant', content: 'Nine independent conditions are established.' }]);
   const state = reduceMutations(createState('bounded-visible'), {
@@ -922,6 +1410,62 @@ test('explicit new episode may create a new record while preserving resolved pre
   assert.equal(result.state.records.length, 2);
   assert.equal(result.state.records.find(record => record.id === prior.id).status, 'resolved');
   assert.ok(result.state.records.some(record => record.id !== prior.id && record.status === 'active'));
+});
+
+test('explicit new-episode proposals consolidate into an already-active recurrence instead of duplicating Current', () => {
+  const base = withLineage([{
+    role: 'assistant',
+    content: 'The first dock strike ended after an agreement, while a later dock strike is now active.',
+  }]);
+  const state = reduceMutations(createState('new-episode-active-dedupe'), {
+    chatKey: 'new-episode-active-dedupe',
+    messageId: 0,
+    lineageKey: base[0].lineageKey,
+    mutations: [{
+      action: 'create',
+      kind: 'development',
+      status: 'resolved',
+      summary: 'The first dock strike is resolved.',
+      anchors: ['dock strike', 'harbor wages'],
+    }, {
+      action: 'create',
+      kind: 'development',
+      summary: 'A new dock strike is active.',
+      anchors: ['dock strike', 'harbor wages'],
+    }],
+  }).state;
+  const prior = state.records.find(record => record.status === 'resolved');
+  const active = state.records.find(record => record.status === 'active');
+  const exchange = withLineage([{
+    role: 'assistant',
+    content: 'The new dock strike remains active as talks stall.',
+  }]);
+
+  const result = processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        summary: 'The new dock strike remains active as talks stall.',
+        anchors: ['dock strike', 'harbor wages'],
+        newEpisodeOfRecordId: prior.id,
+        evidence: [{
+          sourceMessageId: 0,
+          claim: 'The new dock strike remains active as talks stall.',
+        }],
+      }],
+    }),
+    state,
+    exchange,
+    visibleRecords: [prior, active],
+    chatKey: 'new-episode-active-dedupe',
+    sourceMessageId: 0,
+    sourceLineageKey: exchange[0].lineageKey,
+  });
+
+  assert.equal(result.state.records.length, 2);
+  assert.equal(result.applied[0].recordId, active.id);
+  assert.match(result.state.records.find(record => record.id === active.id).summary, /talks stall/i);
 });
 
 test('malformed provider JSON causes no mutation and no correction retry', async () => {

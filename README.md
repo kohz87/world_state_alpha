@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.20 hardens live lifecycle retention and partial rebuild recovery: live capture reserves lifecycle-relevant developments using bounded retrieval-only scene context, partial rebuild reconciles semantic lineage before prefix proof, and root checkpoints survive bounded trimming. Alpha.19 manual lifecycle controls and Alpha.18 durable semantic lineage hardening remain intact. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.21 hardens lifecycle identity and history admission on top of Alpha.20: prior-scene lifecycle context carries only bounded record identity for indirect references, automatic mutations must bind to the active target, tombstones are immutable to provider capture/rebuild, unmatched terminal creates cannot mint event-log history, and duplicate consolidation prefers a sufficiently similar current episode over older tombstones. Alpha.20 rebuild/checkpoint hardening, Alpha.19 manual lifecycle controls, and Alpha.18 durable semantic lineage remain intact. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

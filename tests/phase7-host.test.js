@@ -267,7 +267,7 @@ test('Phase 7 manifest and runtime inventory expose one isolated Alpha host entr
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
   assert.equal(manifest.display_name, 'World State Alpha');
-  assert.equal(['0.7.0-alpha.1', '0.8.0-alpha.1', '0.9.0-alpha.1', '0.9.0-alpha.2', '0.9.0-alpha.3', '0.9.0-alpha.4', '0.9.0-alpha.5', '0.9.0-alpha.6', '0.9.0-alpha.7', '0.9.0-alpha.8', '0.9.0-alpha.9', '0.9.0-alpha.10', '0.9.0-alpha.11', '0.9.0-alpha.12', '0.9.0-alpha.13', '0.9.0-alpha.14', '0.9.0-alpha.15', '0.9.0-alpha.16', '0.9.0-alpha.17', '0.9.0-alpha.18', '0.9.0-alpha.19', '0.9.0-alpha.20'].includes(manifest.version), true);
+  assert.match(manifest.version, /^(?:0\.7\.0-alpha\.1|0\.8\.0-alpha\.1|0\.9\.0-alpha\.\d+)$/);
   assert.equal(manifest.js, 'bootstrap.js');
   assert.equal(manifest.css, 'ui.css');
   assert.equal(manifest.loading_order, 120);
@@ -336,7 +336,9 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
 
   assert.equal((source.match(/runCaptureOperation\s*\(\s*\{/g) || []).length, 1);
   assert.match(source, /selectLifecycleCandidates\([\s\S]*contextText:\s*lifecycleContext[\s\S]*maxRecords:\s*CAPTURE_LIMITS\.lifecycleVisibleRecords/);
+  assert.match(source, /lifecycleSelection\.selected[\s\S]*lifecycleSource === 'scene-context'[\s\S]*\.map\(item => item\.record\?\.id\)/);
   assert.match(source, /boundedExchange\([\s\S]*CAPTURE_LIMITS\.lifecycleContextMessages[\s\S]*\.filter\(row => !currentExchangeIds\.has/);
+  assert.match(source, /runCaptureOperation\(\{[\s\S]*visibleRecords:\s*visible,[\s\S]*lifecycleContextRecordIds,/);
   assert.match(source, /selectRelevantRecords\([\s\S]*maxRecords:\s*CAPTURE_LIMITS\.visibleRecords/);
   assert.match(source, /const visibleById = new Map\(\)[\s\S]*lifecycleVisible[\s\S]*tombstones[\s\S]*activeVisible/);
   assert.match(source, /prepareWorldStateContinuity\(\{[\s\S]*affectingEvidence:\s*\[\]/);

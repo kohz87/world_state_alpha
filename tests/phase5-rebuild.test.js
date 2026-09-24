@@ -167,6 +167,8 @@ test('rebuild reserves recent active developments so later implicit endings can 
 
       const active = visible.find(record => record.status === 'active' && /ditch boars/i.test(record.summary || ''));
       assert.ok(active, 'recent active development must remain visible for implicit lifecycle closure');
+      assert.match(options.prompt, /INTERPRETIVE LIFECYCLE ANTECEDENT/);
+      assert.match(options.prompt, /prior accepted context, NOT mutation evidence/i);
       assert.match(options.prompt, /REBUILD: Later historical boundaries may close earlier active threads/);
       return {
         text: JSON.stringify({
