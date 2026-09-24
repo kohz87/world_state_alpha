@@ -440,7 +440,14 @@ test('host manual history actions stay queued, auditable, and hidden-ID safe', (
 
   assert.match(source, /applyManualMutation,/);
   assert.match(source, /async function applyRecordAction\(actionId, payload = \{\}, expectedChatKey = currentChatKey\(\)\)/);
-  assert.match(source, /return queueChatWork\(chatKey, \(\) => applyRecordActionNow\(actionId, payload, chatKey\)\)/);
+  assert.match(source, /return queueChatWork\(chatKey, async \(\) => \{/);
+  assert.match(source, /manual lifecycle action failed safely/);
+  assert.match(source, /extendCurrentBranchFast\(chatKey\)[\s\S]*reconcileCurrentBranch\(chatKey, \{ persistRestore: true \}\)/);
+  assert.match(source, /branch\?\.failClosed[\s\S]*Rebuild from chat before changing history/);
+  assert.ok(
+    source.indexOf('extendCurrentBranchFast(chatKey)', source.indexOf('async function applyRecordActionNow'))
+      < source.indexOf('const state = stateCache.get(chatKey)', source.indexOf('async function applyRecordActionNow')),
+  );
   assert.match(source, /\^row-\(\\d\+\)\$/);
   assert.match(source, /record\.status !== 'active'/);
   assert.match(source, /publicRecord\?\.summary !== projectedSummary/);

@@ -40,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.18';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.19';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -2267,12 +2267,36 @@ async function applyRecordAction(actionId, payload = {}, expectedChatKey = curre
   const chatKey = String(expectedChatKey || '');
   if (!chatKey || chatKey === 'no-chat' || currentChatKey() !== chatKey) return;
   if (!['resolve', 'supersede'].includes(actionId)) return;
-  return queueChatWork(chatKey, () => applyRecordActionNow(actionId, payload, chatKey));
+  return queueChatWork(chatKey, async () => {
+    try {
+      return await applyRecordActionNow(actionId, payload, chatKey);
+    } catch (error) {
+      console.error('[World State Alpha] manual lifecycle action failed safely', error);
+      if (currentChatKey() === chatKey) {
+        notify('error', 'Manual lifecycle correction failed: ' + String(error?.message || 'unexpected error'));
+        refreshPanel();
+      }
+      return null;
+    }
+  });
 }
 
 async function applyRecordActionNow(actionId, payload, chatKey) {
   await ensureChatStateLoaded(chatKey);
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
+
+  const branch = extendCurrentBranchFast(chatKey)
+    || await reconcileCurrentBranch(chatKey, { persistRestore: true });
+  if (currentChatKey() !== chatKey) return;
+  if (branch?.failClosed) {
+    notify(
+      'warning',
+      'Manual lifecycle correction was blocked because World State cannot prove the current chat branch. Rebuild from chat before changing history.',
+    );
+    updatePrivateInjection();
+    refreshPanel();
+    return;
+  }
 
   const state = stateCache.get(chatKey);
   const publicRecord = payload?.record && typeof payload.record === 'object' ? payload.record : null;

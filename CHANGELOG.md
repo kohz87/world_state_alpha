@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0-alpha.19 - Manual lifecycle branch reconciliation
+
+### Fixed
+
+- Manual **Mark resolved** and **Mark superseded** actions now reconcile the live chat lineage before resolving their opaque UI row target, so narration-equivalent SillyTavern/Regex presentation rewrites no longer cause a silent manual branch-mismatch failure.
+- Genuine fail-closed branch uncertainty blocks the manual lifecycle change with a visible recovery message instead of attempting to mutate ambiguous history.
+- Unexpected manual lifecycle or persistence errors are caught at the queued host boundary and surfaced to the operator instead of escaping as an unhandled UI promise.
+
+### Preserved
+
+- Manual lifecycle changes still require an operator note, exact current-branch ownership, the ordinary reducer, rollback journaling, and durable sidecar persistence.
+- Record IDs remain hidden from the panel, automatic capture cadence is unchanged, and no provider call is added.
+
 ## 0.9.0-alpha.18 - Durable semantic lineage hardening
 
 ### Fixed
