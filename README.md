@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.23 is a pre-1.0 simplification release: World State now supports only the current canonical schema, removes experimental legacy-lineage upgrade paths, and replaces world/version-specific base-map adapters with one generalized Cartesian base-map contract. Source-map version is metadata, not parser identity, so map revisions do not require World State code changes. Alpha.22 cleanup and Alpha.21 lifecycle hardening remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.24 adds an operator-facing Spatial Coordinate Profile: manual campaigns can configure Cartesian axis orientation, scale, bounds, precision, and True North behavior; attached base-map profiles are authoritative/read-only; and math-changing profile edits atomically clear stale derived coordinates while preserving manual/base coordinates. Alpha.23 generalized base-map/schema simplification and earlier lifecycle/rebuild hardening remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

@@ -322,7 +322,9 @@ Canonical state schema version is now `2`.
 
 No Spatial entity is stored in `records[]`.
 
-A null profile is a supported state. It carries no implicit setting-specific scale/bounds/orientation. A configured profile may also omit `unitKm`; that leaves scale-dependent distance conversion disabled. Exact coordinates may still be stored when explicitly established, but distance-to-coordinate derivation requires a positive configured `unitKm`, and locked cardinal validation requires an explicit profile.
+A null profile is a supported state. It carries no implicit setting-specific scale/bounds/orientation.
+
+Effective profile authority is not ambiguous: an attached/loaded base map's `profile` overrides the stored campaign profile while attached. The stored profile is operator-editable only without a base map. Detach snapshots the currently authoritative base-map profile into the manual campaign profile. Math-changing manual edits may clear only coordinates with `authority: "derived"` after confirmation; explicit/manual/base coordinates retain their values. A configured profile may also omit `unitKm`; that leaves scale-dependent distance conversion disabled. Exact coordinates may still be stored when explicitly established, but distance-to-coordinate derivation requires a positive configured `unitKm`, and locked cardinal validation requires an explicit profile.
 
 ### Base maps are not duplicated into campaign state
 

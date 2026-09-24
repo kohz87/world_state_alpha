@@ -1,6 +1,7 @@
 import { selectRelevantLocations } from './spatial-relevance.js';
 import { estimateInjectionTokens } from './injection.js';
 import { SPATIAL_LIMITS } from './constants.js';
+import { resolveSpatialProfile } from './spatial-core.js';
 
 export const WORLD_STATE_SPATIAL_HEADER = [
   '[WORLD STATE ALPHA | SPATIAL CONTINUITY]',
@@ -143,7 +144,7 @@ export function buildSpatialInjection(spatialState, {
     candidateCap,
   });
 
-  const activeProfile = spatialState?.profile || baseMap?.profile || null;
+  const activeProfile = resolveSpatialProfile(spatialState, baseMap);
   const trueNorthLocked = activeProfile?.trueNorthLocked === true;
 
   const rendered = renderSpatialInjection(

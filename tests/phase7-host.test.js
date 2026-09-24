@@ -405,6 +405,17 @@ test('host identity/settings lifecycle preserves continuity across rename and di
   );
 });
 
+test('host Coordinate Profile actions enforce base-map authority and derived-coordinate safety', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  assert.match(source, /actionId === 'save_profile'/);
+  assert.match(source, /actionId === 'reset_profile'/);
+  assert.match(source, /state\.spatial\?\.baseMapRef\?\.id[\s\S]*Detach it before editing the profile/);
+  assert.match(source, /clearDerivedCoordinates[\s\S]*derived coordinate/);
+  assert.match(source, /spatialProfile:\s*resolveSpatialProfile\(before\.spatial, baseMap\)/);
+  assert.match(source, /spatialProfile:\s*resolveSpatialProfile\(state\.spatial, baseMap\)/);
+  assert.match(source, /Preserved detached base-map Coordinate Profile as manual profile/);
+});
+
 test('host hydration repairs crash-window pointers and rejects stale ownership completion', () => {
   const source = fs.readFileSync('index.js', 'utf8');
 

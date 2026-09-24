@@ -110,15 +110,40 @@ export function normalizeSpatialProfile(raw, { strict = false } = {}) {
     eastAxis = defaultEastAxisForNorth(northAxis);
   }
 
-  // Unit scale is optional. Deterministic distance-to-coordinate derivation
-  // requires an explicitly configured positive scale.
+  if (strict && raw.unitKm !== undefined && raw.unitKm !== null
+    && (!Number.isFinite(raw.unitKm) || raw.unitKm <= 0)) {
+    throw new Error('spatial profile unitKm must be a positive number or null');
+  }
   const unitKm = Number.isFinite(raw.unitKm) && raw.unitKm > 0 ? raw.unitKm : null;
+
+  if (strict && raw.decimalStep !== undefined && raw.decimalStep !== null
+    && (!Number.isFinite(raw.decimalStep) || raw.decimalStep <= 0)) {
+    throw new Error('spatial profile decimalStep must be a positive number');
+  }
   const decimalStep = Number.isFinite(raw.decimalStep) && raw.decimalStep > 0
     ? raw.decimalStep
     : SPATIAL_LIMITS.defaultDecimalStep;
+
+  if (strict && raw.trueNorthLocked !== undefined && raw.trueNorthLocked !== null
+    && typeof raw.trueNorthLocked !== 'boolean') {
+    throw new Error('spatial profile trueNorthLocked must be boolean');
+  }
   const trueNorthLocked = raw.trueNorthLocked !== false;
 
-  const rawBounds = raw.bounds && typeof raw.bounds === 'object' ? raw.bounds : null;
+  const hasBounds = raw.bounds !== undefined && raw.bounds !== null;
+  if (strict && hasBounds && (typeof raw.bounds !== 'object' || Array.isArray(raw.bounds))) {
+    throw new Error('spatial profile bounds must be an object or null');
+  }
+  const rawBounds = hasBounds && typeof raw.bounds === 'object' ? raw.bounds : null;
+  if (strict && rawBounds) {
+    const complete = Number.isFinite(rawBounds.xMin)
+      && Number.isFinite(rawBounds.xMax)
+      && Number.isFinite(rawBounds.yMin)
+      && Number.isFinite(rawBounds.yMax);
+    if (!complete || rawBounds.xMin > rawBounds.xMax || rawBounds.yMin > rawBounds.yMax) {
+      throw new Error('spatial profile bounds require finite xMin/xMax/yMin/yMax with min <= max');
+    }
+  }
   const bounds = rawBounds
     && Number.isFinite(rawBounds.xMin)
     && Number.isFinite(rawBounds.xMax)
@@ -143,6 +168,11 @@ export function normalizeSpatialProfile(raw, { strict = false } = {}) {
     decimalStep,
     trueNorthLocked,
   };
+}
+
+export function resolveSpatialProfile(spatialState, baseMap = null) {
+  if (baseMap) return baseMap.profile ? normalizeSpatialProfile(baseMap.profile, { strict: true }) : null;
+  return normalizeSpatialProfile(spatialState?.profile);
 }
 
 export function normalizeBaseMapRef(raw) {
@@ -801,8 +831,24 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     const action = proposal.action || 'upsert_location';
 
     if (action === 'set_profile') {
-      spatial.profile = normalizeSpatialProfile(proposal.profile);
-      applied.push({ action: 'set_profile' });
+      spatial.profile = normalizeSpatialProfile(proposal.profile, { strict: true });
+      let clearedDerivedCoordinates = 0;
+      if (proposal.clearDerivedCoordinates === true) {
+        for (const location of spatial.locations) {
+          if (location?.coordinate?.authority !== 'derived') continue;
+          if (!Number.isFinite(location.coordinate.x) || !Number.isFinite(location.coordinate.y)) continue;
+          location.coordinate = normalizeCoordinate({
+            x: null,
+            y: null,
+            authority: 'unknown',
+            locked: false,
+          });
+          location.lastChangedMessage = context.messageId;
+          clearedDerivedCoordinates += 1;
+          applied.push({ action: 'clear_derived_coordinate', locationId: location.id });
+        }
+      }
+      applied.push({ action: 'set_profile', clearedDerivedCoordinates });
       continue;
     }
 
@@ -1076,7 +1122,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       }
 
       const direction = proposal.direction ? canonicalSpatialDirection(proposal.direction) : null;
-      const profile = spatial.profile;
+      const profile = resolveSpatialProfile(spatial, baseMap);
       const fromCoord = effectiveCoordinateFor(fromId, effectiveById, spatial);
       const toCoord = effectiveCoordinateFor(toId, effectiveById, spatial);
       if (direction

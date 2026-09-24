@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.0-alpha.24 - Spatial Coordinate Profile controls
+
+### Added
+
+- Spatial Places now includes a collapsible **Coordinate Profile** editor for campaigns without an attached base map.
+- Manual profiles can configure Cartesian North/East axes, kilometers per coordinate unit, optional X/Y bounds, coordinate precision, and True North lock.
+- The mathematical system remains explicitly **Cartesian 2D**; unsupported systems still fail closed instead of pretending to use Cartesian math.
+
+### Authority and safety
+
+- An attached base map is the authoritative Coordinate Profile source. Its profile is displayed read-only and overrides any older stored campaign profile for capture, injection, relation validation, and UI projection.
+- Detaching a loaded base map snapshots its currently authoritative profile into the campaign's manual profile so orientation/scale do not jump backward.
+- Attaching a map with different profile math or manually changing orientation/scale/bounds/precision requires confirmation when derived coordinates exist.
+- Confirmed math-changing profile edits atomically clear only `derived` coordinates to unknown; manual, narrative-explicit, campaign-override, and base-canonical coordinates are preserved.
+- Profile edits use the existing journaled `set_profile` mutation and therefore participate in branch rollback/checkpoints.
+
+### Validation
+
+- Strict profile validation now rejects invalid axes, non-positive scale/precision, partial/invalid bounds, non-boolean True North lock values, and unsupported coordinate systems.
+
 ## 0.9.0-alpha.23 - Pre-1.0 schema and Spatial simplification
 
 ### Simplified

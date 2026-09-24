@@ -2,6 +2,8 @@
 
 | Risk | Failure mode | Primary mitigation | Acceptance evidence |
 | --- | --- | --- | --- |
+| Coordinate-profile authority drift | attached base map displays one orientation/scale while capture or relation validation still uses an older stored campaign profile | one effective-profile resolver with base-map precedence across capture/injection/reducer/UI; base-map profile is read-only while attached | profile authority + host/UI regression tests |
+| Stale derived geometry after profile edit | operator changes axes/scale/bounds/precision but previously derived X/Y remain canonical under old math | detect math-changing profile edits, require confirmation, atomically clear derived coordinates to unknown, preserve higher-authority coordinates | derived invalidation reducer/UI/host regressions |
 | Hallucinated world movement | Model invents off-screen changes | mutation proposal + source firewall + causal evidence + conservative evolution | lore-trap/no-change/provider tests |
 | Hearsay promotion | quoted rumor/report is stored as if the underlying event were verified objective reality | allow persistent information-state capture only with explicit reported/rumored/believed framing; quoted-only evidence is rejected when the summary drops that epistemic status | Cairnwatch tavern-rumor admission/promotion regression |
 | Persistent off-screen under-capture | extractor stops after the most PC-salient change and drops an explicitly established ongoing condition that continues after the PC leaves | one-call persistence completeness sweep; PC proximity/objective are not admission criteria; source firewall remains mandatory | Brackenford-style multi-condition capture regression |
@@ -71,7 +73,7 @@
 | Rebuild cancel starvation | Cancel is queued behind the provider-backed rebuild and cannot stop it | cancellation is control-plane only and bypasses the per-chat writer queue; canonical mutation/persistence remains serialized | provider prefix-cancel + host ordering fixtures |
 | Record detail invisibility | flatter list removes access to anchors/evidence/history | native disclosure row opens bounded anchors, timeline, evidence and relations inline; selected projection remains escaped/bounded | Phase 6 disclosure/XSS fixtures |
 | Status-banner navigation displacement | rebuild status consumes a grid row and pushes tabs/content out of reach | absolute dismissible rebuild toast anchored over content, not layout flow; mobile toast sits above bottom navigation | responsive renderer/CSS fixtures |
-| Storage schema version drift | Application maintenance release accidentally changes durable format versions | decouple app version (currently 0.9.0-alpha.23) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Storage schema version drift | Application maintenance release accidentally changes durable format versions | decouple app version (currently 0.9.0-alpha.24) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
 | Passive rewrite mass rollback | an older or multi-message host/Regex/reasoning cleanup is discovered late and exact reconciliation replays every later undo, emptying Current | durable role + sanitized narration fingerprints on lineage rows; narration-equivalent non-user rewrites rebase together; legacy unprovable non-user divergence fails closed with canonical records preserved | multi-message semantic rebase + legacy fail-closed branch fixtures |
 
 

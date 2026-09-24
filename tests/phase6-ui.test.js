@@ -440,6 +440,76 @@ test('Phase 6 CSS has desktop, tablet, and mobile adaptive boundaries', () => {
   assert.match(css, /focus-visible/);
 });
 
+test('Spatial Coordinate Profile UI distinguishes manual and base-map authority', () => {
+  const state = fixtureState();
+  state.spatial.profile = {
+    system: 'cartesian2d',
+    northAxis: '+y',
+    eastAxis: '+x',
+    unitKm: 5,
+    bounds: { xMin: -100, xMax: 100, yMin: -200, yMax: 200 },
+    decimalStep: 0.1,
+    trueNorthLocked: true,
+  };
+  state.spatial.locations = [{
+    id: 'wsloc_derived_ui',
+    name: 'Derived Watch',
+    type: 'watchtower',
+    status: 'active',
+    baseRefId: null,
+    coordinate: { x: 5, y: 6, authority: 'derived', locked: false },
+    context: '',
+    routeRefs: [],
+    notes: '',
+    createdAtMessage: 1,
+    lastChangedMessage: 1,
+    evidenceIds: [],
+  }];
+
+  const manual = buildWorldStateUiModel(state);
+  assert.equal(manual.spatial.profileSource, 'manual');
+  assert.equal(manual.spatial.profileEditable, true);
+  assert.equal(manual.spatial.derivedCoordinateCount, 1);
+  const manualHtml = renderWorldStatePanel(manual, { activeTab: 'spatial' });
+  assert.match(manualHtml, /Coordinate Profile/);
+  assert.match(manualHtml, /data-wsa-spatial-action="save_profile"/);
+  assert.match(manualHtml, /data-wsa-spatial-action="reset_profile"/);
+  assert.match(manualHtml, /will clear 1 derived coordinate/);
+
+  const baseMap = {
+    id: 'base-profile-test',
+    name: 'Base Profile Test',
+    version: '2',
+    profile: {
+      system: 'cartesian2d',
+      northAxis: '+x',
+      eastAxis: '-y',
+      unitKm: 2,
+      bounds: null,
+      decimalStep: 0.5,
+      trueNorthLocked: true,
+    },
+    locations: [],
+    routes: [],
+  };
+  state.spatial.baseMapRef = {
+    id: baseMap.id,
+    name: baseMap.name,
+    version: baseMap.version,
+    digest: 'digest',
+    path: '/base.json',
+  };
+  const locked = buildWorldStateUiModel(state, { baseMap });
+  assert.equal(locked.spatial.profileSource, 'base_map');
+  assert.equal(locked.spatial.profileEditable, false);
+  assert.equal(locked.spatial.profile.northAxis, '+x');
+  assert.equal(locked.spatial.profile.unitKm, 2);
+  const lockedHtml = renderWorldStatePanel(locked, { activeTab: 'spatial' });
+  assert.match(lockedHtml, /Defined by the attached base map/);
+  assert.doesNotMatch(lockedHtml, /data-wsa-spatial-action="save_profile"/);
+  assert.match(lockedHtml, /Base Profile Test/);
+});
+
 test('responsive renderer exposes Operations, Places, mobile navigation, atomic rebuild sheet, and danger zone', () => {
   const idleModel = buildWorldStateUiModel(fixtureState(), {
     runtimeInfo: {

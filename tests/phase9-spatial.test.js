@@ -25,6 +25,7 @@ import {
   normalizeSpatialState,
   reduceSpatialMutations,
   resolveEffectiveLocations,
+  resolveSpatialProfile,
   roundDecimal,
   straightLineDistance,
   unitsToKm,
@@ -239,6 +240,99 @@ test('Unconfigured Spatial profile never inherits hidden scale or True North imp
   });
   assert.ok(injection.text.includes('The Split Antler'));
   assert.equal(injection.text.includes('True North is locked'), false);
+});
+
+test('Coordinate Profile strict validation and base-map authority are deterministic', () => {
+  assert.throws(
+    () => normalizeSpatialProfile({ unitKm: 0 }, { strict: true }),
+    /unitKm must be a positive number or null/,
+  );
+  assert.throws(
+    () => normalizeSpatialProfile({ decimalStep: -0.1 }, { strict: true }),
+    /decimalStep must be a positive number/,
+  );
+  assert.throws(
+    () => normalizeSpatialProfile({ bounds: { xMin: 0, xMax: 10, yMin: 0, yMax: null } }, { strict: true }),
+    /bounds require finite/,
+  );
+
+  const spatial = createSpatialState();
+  spatial.profile = normalizeSpatialProfile({
+    northAxis: '+y',
+    eastAxis: '+x',
+    unitKm: 5,
+    decimalStep: 0.1,
+  }, { strict: true });
+  const baseMap = {
+    profile: normalizeSpatialProfile({
+      northAxis: '+x',
+      eastAxis: '-y',
+      unitKm: 2,
+      decimalStep: 0.5,
+    }, { strict: true }),
+  };
+
+  assert.equal(resolveSpatialProfile(spatial, null).northAxis, '+y');
+  assert.equal(resolveSpatialProfile(spatial, baseMap).northAxis, '+x');
+  assert.equal(resolveSpatialProfile(spatial, baseMap).unitKm, 2);
+});
+
+test('manual profile math change can atomically invalidate stale derived coordinates', () => {
+  const spatial = createSpatialState();
+  spatial.profile = normalizeSpatialProfile({
+    northAxis: '+y',
+    eastAxis: '+x',
+    unitKm: 5,
+    decimalStep: 0.1,
+  }, { strict: true });
+  spatial.locations.push(
+    normalizeSpatialLocation({
+      id: 'wsloc_derived',
+      name: 'Derived Camp',
+      coordinate: { x: 10, y: 20, authority: 'derived', locked: false },
+      status: 'active',
+    }),
+    normalizeSpatialLocation({
+      id: 'wsloc_manual',
+      name: 'Surveyed Keep',
+      coordinate: { x: 30, y: 40, authority: 'manual', locked: true },
+      status: 'active',
+    }),
+  );
+
+  const result = reduceSpatialMutations(spatial, {
+    chatKey: 'chat:test:profile-change',
+    messageId: 9,
+    lineageKey: 'ln9',
+    operation: 'manual',
+    mutations: [{
+      action: 'set_profile',
+      profile: {
+        system: 'cartesian2d',
+        northAxis: '+x',
+        eastAxis: '-y',
+        unitKm: 2,
+        decimalStep: 0.5,
+        bounds: null,
+        trueNorthLocked: true,
+      },
+      clearDerivedCoordinates: true,
+    }],
+  });
+
+  assert.equal(result.spatial.profile.northAxis, '+x');
+  const derived = result.spatial.locations.find(item => item.id === 'wsloc_derived');
+  const manual = result.spatial.locations.find(item => item.id === 'wsloc_manual');
+  assert.equal(derived.coordinate.x, null);
+  assert.equal(derived.coordinate.y, null);
+  assert.equal(derived.coordinate.authority, 'unknown');
+  assert.equal(derived.lastChangedMessage, 9);
+  assert.deepEqual(
+    { x: manual.coordinate.x, y: manual.coordinate.y, authority: manual.coordinate.authority, locked: manual.coordinate.locked },
+    { x: 30, y: 40, authority: 'manual', locked: true },
+  );
+  assert.equal(result.applied.some(item => item.action === 'clear_derived_coordinate'), true);
+  assert.equal(result.indexDelta.changedLocationIds.includes('wsloc_derived'), true);
 });
 
 test('Configured profile without unit scale cannot derive distance coordinates', () => {

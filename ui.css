@@ -387,6 +387,66 @@
   font-size: 12px;
 }
 
+.wsa-spatial-profile-card {
+  margin: 0 0 10px;
+  border: 1px solid var(--wsa-line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.wsa-spatial-profile-card > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.wsa-spatial-profile-card > summary span {
+  color: var(--wsa-muted);
+  text-align: right;
+}
+
+.wsa-spatial-profile-form {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--wsa-line);
+}
+
+.wsa-spatial-profile-form .wsa-form-grid select,
+.wsa-spatial-profile-form .wsa-form-grid input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--wsa-line);
+  border-radius: 8px;
+  background: var(--wsa-bg);
+  color: var(--wsa-text);
+  font: inherit;
+}
+
+.wsa-spatial-profile-form select:disabled,
+.wsa-spatial-profile-form input:disabled {
+  opacity: 0.72;
+}
+
+.wsa-profile-warning {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(241, 199, 121, 0.5);
+  border-radius: 8px;
+  background: rgba(241, 199, 121, 0.08);
+  font-size: 12px;
+}
+
+.wsa-profile-check {
+  align-content: center;
+}
+
+.wsa-profile-check input {
+  width: auto !important;
+  justify-self: start;
+}
+
 .wsa-spatial-toolbar {
   display: flex;
   align-items: flex-end;

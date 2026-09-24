@@ -35,12 +35,12 @@ import { buildRelevanceIndex, selectLifecycleCandidates, selectRelevantRecords, 
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
-import { resolveEffectiveLocations } from './spatial-core.js';
+import { normalizeSpatialProfile, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.23';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.24';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1439,7 +1439,7 @@ async function handleAssistantMessage(messageId) {
       spatialEnabled: spatialCaptureEnabled,
       visibleLocations,
       baseMap,
-      spatialProfile: before.spatial?.profile,
+      spatialProfile: resolveSpatialProfile(before.spatial, baseMap),
     });
 
     if (!isCurrent() || result.outcome === 'stale' || result.outcome === 'skipped') return;
@@ -2042,7 +2042,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         includeHiddenMessages,
         spatialEnabled: Boolean(settings.spatialEnabled),
         baseMap,
-        spatialProfile: state.spatial?.profile,
+        spatialProfile: resolveSpatialProfile(state.spatial, baseMap),
         onProgress: progress => {
           const previous = rebuildStatuses.get(chatKey) || {};
           rebuildStatuses.set(chatKey, {
@@ -2472,6 +2472,92 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     return effectiveLocations(currentState).find(loc => loc.name.toLowerCase() === needle) || null;
   };
 
+  const derivedCoordinateLocations = currentState =>
+    (currentState?.spatial?.locations || []).filter(location =>
+      location?.coordinate?.authority === 'derived'
+        && Number.isFinite(location.coordinate.x)
+        && Number.isFinite(location.coordinate.y)
+    );
+
+  const profileMathSignature = profile => stableStringify(profile ? {
+    system: profile.system || 'cartesian2d',
+    northAxis: profile.northAxis || '+y',
+    eastAxis: profile.eastAxis || '+x',
+    unitKm: Number.isFinite(profile.unitKm) ? profile.unitKm : null,
+    bounds: profile.bounds || null,
+    decimalStep: Number.isFinite(profile.decimalStep) ? profile.decimalStep : 0.1,
+  } : null);
+
+  const applyManualProfile = async (profile, label) => {
+    if (state.spatial?.baseMapRef?.id) {
+      notify('warning', 'Coordinate Profile is defined by the attached base map. Detach it before editing the profile.');
+      return;
+    }
+
+    const currentProfile = resolveSpatialProfile(state.spatial, null);
+    const mathChanged = profileMathSignature(currentProfile) !== profileMathSignature(profile);
+    const derived = derivedCoordinateLocations(state);
+    const clearDerivedCoordinates = mathChanged && derived.length > 0;
+    if (clearDerivedCoordinates) {
+      const confirmed = window.confirm(
+        'Changing this Coordinate Profile invalidates ' + derived.length + ' derived coordinate' +
+        (derived.length === 1 ? '' : 's') +
+        '. Continue? Those derived coordinates will be cleared to unknown so they can be rebuilt safely.',
+      );
+      if (!confirmed) return;
+    }
+
+    const res = applySpatialManualMutation({
+      state,
+      chat,
+      chatKey,
+      messageId,
+      mutation: {
+        action: 'set_profile',
+        profile,
+        clearDerivedCoordinates,
+      },
+      note: label,
+      baseMap: null,
+    });
+    if (res.outcome === 'applied') {
+      await persistSpatialState(
+        res.state,
+        clearDerivedCoordinates
+          ? label + ' and cleared ' + derived.length + ' stale derived coordinate' + (derived.length === 1 ? '' : 's')
+          : label,
+      );
+    } else {
+      notify('error', 'Coordinate Profile update was rejected: ' + (res.rejected?.[0]?.reason || 'invalid profile'));
+    }
+  };
+
+  if (actionId === 'save_profile') {
+    let profile;
+    try {
+      profile = normalizeSpatialProfile(payload.profileData, { strict: true });
+    } catch (error) {
+      notify('error', 'Invalid Coordinate Profile: ' + String(error?.message || error));
+      return;
+    }
+    await applyManualProfile(profile, 'Saved manual Coordinate Profile');
+    return;
+  }
+
+  if (actionId === 'reset_profile') {
+    const reset = normalizeSpatialProfile({
+      system: 'cartesian2d',
+      northAxis: '+y',
+      eastAxis: '+x',
+      unitKm: null,
+      bounds: null,
+      decimalStep: 0.1,
+      trueNorthLocked: true,
+    }, { strict: true });
+    await applyManualProfile(reset, 'Reset manual Coordinate Profile');
+    return;
+  }
+
   if (actionId === 'add_location_modal') {
     const name = window.prompt('Location name:');
     if (!name?.trim()) return;
@@ -2750,10 +2836,24 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     persistHostSettings();
     cacheBaseMap(baseMapCacheKey(stored.pointer), stored.baseMap);
 
+    const priorProfile = resolveSpatialProfile(state.spatial, null);
+    const nextProfile = stored.baseMap.profile ? normalizeSpatialProfile(stored.baseMap.profile, { strict: true }) : null;
+    const profileMathChanged = profileMathSignature(priorProfile) !== profileMathSignature(nextProfile);
+    const derived = derivedCoordinateLocations(state);
+    const clearDerivedCoordinates = profileMathChanged && derived.length > 0;
+    if (clearDerivedCoordinates && !window.confirm(
+      'This base map uses a different Coordinate Profile. Attaching it will clear ' + derived.length +
+      ' derived coordinate' + (derived.length === 1 ? '' : 's') + ' so stale geometry cannot survive. Continue?',
+    )) return;
+
     const steps = [
       {
-        mutation: { action: 'set_profile', profile: stored.baseMap.profile },
-        note: 'Adopted base-map spatial profile',
+        mutation: {
+          action: 'set_profile',
+          profile: nextProfile,
+          clearDerivedCoordinates,
+        },
+        note: 'Adopted base-map Coordinate Profile',
       },
       {
         mutation: { action: 'set_base_map_ref', baseMapRef: stored.pointer },
@@ -2768,18 +2868,22 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
   }
 
   if (actionId === 'detach_base_map') {
-    if (!window.confirm('Detach base map from this campaign? Campaign locations will be preserved.')) return;
-    const res = applySpatialManualMutation({
-      state,
-      chat,
-      chatKey,
-      messageId,
+    if (!window.confirm('Detach base map from this campaign? Campaign locations will be preserved and the current base-map Coordinate Profile will become the manual profile.')) return;
+    const steps = [];
+    if (baseMap) {
+      steps.push({
+        mutation: { action: 'set_profile', profile: resolveSpatialProfile(state.spatial, baseMap) },
+        note: 'Preserved detached base-map Coordinate Profile as manual profile',
+      });
+    }
+    steps.push({
       mutation: { action: 'set_base_map_ref', baseMapRef: null },
       note: 'Detached base map',
     });
+    const res = applySequence(state, steps);
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state);
-      notify('info', 'Base map detached.');
+      notify('info', 'Base map detached. Coordinate Profile is now manual.');
     }
   }
 }

@@ -1,7 +1,7 @@
 import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { clone, normalizeState } from './state-core.js';
-import { resolveEffectiveLocations } from './spatial-core.js';
+import { resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 
 export const WORLD_STATE_UI_NAMESPACE = 'world_state_alpha_ui';
 
@@ -382,6 +382,22 @@ export function buildWorldStateUiModel(state, {
 
   // Spatial Projection
   const effectiveLocations = resolveEffectiveLocations(normalized.spatial, baseMap);
+  const hasBaseMap = Boolean(baseMap || normalized.spatial.baseMapRef);
+  const activeSpatialProfile = resolveSpatialProfile(normalized.spatial, baseMap);
+  const displaySpatialProfile = activeSpatialProfile || {
+    system: 'cartesian2d',
+    northAxis: '+y',
+    eastAxis: '+x',
+    unitKm: null,
+    bounds: null,
+    decimalStep: 0.1,
+    trueNorthLocked: true,
+  };
+  const derivedCoordinateCount = normalized.spatial.locations.filter(location =>
+    location?.coordinate?.authority === 'derived'
+      && Number.isFinite(location.coordinate.x)
+      && Number.isFinite(location.coordinate.y)
+  ).length;
   const spatialKeyByLocId = new Map(effectiveLocations.map((loc, index) => [loc.id, 'sloc-' + index]));
   const locBySpatialKey = new Map(effectiveLocations.map((loc, index) => ['sloc-' + index, loc]));
 
@@ -428,8 +444,12 @@ export function buildWorldStateUiModel(state, {
       detail: spatialDetail,
       baseMapName: baseMap?.name || normalized.spatial.baseMapRef?.name || 'None',
       baseMapVersion: baseMap?.version || normalized.spatial.baseMapRef?.version || '',
-      hasBaseMap: Boolean(baseMap || normalized.spatial.baseMapRef),
-      profile: normalized.spatial.profile,
+      hasBaseMap,
+      profile: displaySpatialProfile,
+      profileConfigured: Boolean(activeSpatialProfile),
+      profileSource: hasBaseMap ? 'base_map' : 'manual',
+      profileEditable: !hasBaseMap,
+      derivedCoordinateCount,
     },
     truncation: {
       current: Math.max(0, currentAll.length - current.length),
@@ -709,6 +729,60 @@ function mobileBackButton(label = 'Back') {
   return '<button type="button" class="wsa-mobile-back" data-wsa-back-list>‹ ' + escapeHtml(label) + '</button>';
 }
 
+function coordinateAxisLabel(value) {
+  return String(value || '').toUpperCase();
+}
+
+function coordinateProfileHtml(sp) {
+  const profile = sp.profile || {};
+  const bounds = profile.bounds || {};
+  const disabled = sp.profileEditable ? '' : ' disabled';
+  const checked = profile.trueNorthLocked !== false ? ' checked' : '';
+  const axisChoices = ['+x', '-x', '+y', '-y'];
+  const axisOptions = selected => axisChoices.map(value =>
+    '<option value="' + value + '"' + (selected === value ? ' selected' : '') + '>' +
+    escapeHtml(coordinateAxisLabel(value)) + '</option>'
+  ).join('');
+  const sourceLabel = sp.profileSource === 'base_map' ? 'Base Map' : 'Manual';
+  const configured = sp.profileConfigured ? 'Configured' : 'Not configured';
+  const scale = Number.isFinite(profile.unitKm) ? profile.unitKm + ' km/unit' : 'no scale';
+  const warning = sp.derivedCoordinateCount > 0 && sp.profileEditable
+    ? '<p class="wsa-profile-warning">Changing orientation, scale, bounds, or precision will clear ' +
+      sp.derivedCoordinateCount + ' derived coordinate' + (sp.derivedCoordinateCount === 1 ? '' : 's') +
+      ' so stale geometry cannot survive the profile change.</p>'
+    : '';
+  const lockNote = sp.profileEditable
+    ? '<p class="wsa-muted">Manual campaign profile. Cartesian 2D is the only supported math system in this release.</p>'
+    : '<p class="wsa-muted">🔒 Defined by the attached base map. Detach the map before changing this profile.</p>';
+  const actions = sp.profileEditable
+    ? '<div class="wsa-form-actions"><button type="button" class="wsa-btn wsa-btn-primary" data-wsa-spatial-action="save_profile">Save profile</button>' +
+      '<button type="button" class="wsa-btn" data-wsa-spatial-action="reset_profile">Reset profile</button></div>'
+    : '';
+
+  return '<details class="wsa-spatial-profile-card">' +
+    '<summary><strong>Coordinate Profile</strong><span>' + escapeHtml(sourceLabel) + ' · ' +
+    escapeHtml(configured) + ' · ' + escapeHtml(coordinateAxisLabel(profile.northAxis)) + ' North / ' +
+    escapeHtml(coordinateAxisLabel(profile.eastAxis)) + ' East · ' + escapeHtml(scale) + '</span></summary>' +
+    '<form class="wsa-spatial-profile-form" onsubmit="return false;">' +
+    lockNote + warning +
+    '<div class="wsa-form-grid">' +
+    '<label><span>System</span><select data-wsa-profile-field="system" disabled><option value="cartesian2d" selected>Cartesian 2D</option></select></label>' +
+    '<label><span>Profile source</span><input type="text" value="' + escapeHtml(sourceLabel) + '" readonly></label>' +
+    '<label><span>North axis</span><select data-wsa-profile-field="northAxis"' + disabled + '>' + axisOptions(profile.northAxis) + '</select></label>' +
+    '<label><span>East axis</span><select data-wsa-profile-field="eastAxis"' + disabled + '>' + axisOptions(profile.eastAxis) + '</select></label>' +
+    '<label><span>km per coordinate unit</span><input type="number" min="0" step="any" data-wsa-profile-field="unitKm" value="' +
+      escapeHtml(Number.isFinite(profile.unitKm) ? profile.unitKm : '') + '"' + disabled + '></label>' +
+    '<label><span>Coordinate precision</span><input type="number" min="0" step="any" data-wsa-profile-field="decimalStep" value="' +
+      escapeHtml(Number.isFinite(profile.decimalStep) ? profile.decimalStep : 0.1) + '"' + disabled + '></label>' +
+    '<label><span>X min</span><input type="number" step="any" data-wsa-profile-field="xMin" value="' + escapeHtml(Number.isFinite(bounds.xMin) ? bounds.xMin : '') + '"' + disabled + '></label>' +
+    '<label><span>X max</span><input type="number" step="any" data-wsa-profile-field="xMax" value="' + escapeHtml(Number.isFinite(bounds.xMax) ? bounds.xMax : '') + '"' + disabled + '></label>' +
+    '<label><span>Y min</span><input type="number" step="any" data-wsa-profile-field="yMin" value="' + escapeHtml(Number.isFinite(bounds.yMin) ? bounds.yMin : '') + '"' + disabled + '></label>' +
+    '<label><span>Y max</span><input type="number" step="any" data-wsa-profile-field="yMax" value="' + escapeHtml(Number.isFinite(bounds.yMax) ? bounds.yMax : '') + '"' + disabled + '></label>' +
+    '<label class="wsa-profile-check"><span>Lock True North</span><input type="checkbox" data-wsa-profile-field="trueNorthLocked"' + checked + disabled + '></label>' +
+    '</div>' + actions +
+    '</form></details>';
+}
+
 function spatialViewHtml(model, { detailOpen = false } = {}) {
   const sp = model.spatial;
   const listRows = sp.locations.length
@@ -719,13 +793,15 @@ function spatialViewHtml(model, { detailOpen = false } = {}) {
     ? '<p class="wsa-list-note">' + model.truncation.spatial + ' additional locations hidden. Narrow search to view.</p>'
     : '';
 
+  const baseMapVersion = sp.baseMapVersion ? ' (v' + escapeHtml(sp.baseMapVersion) + ')' : '';
   const baseMapStatus = sp.hasBaseMap
-    ? '<div class="wsa-spatial-banner"><span>Base map: <strong>' + escapeHtml(sp.baseMapName) + '</strong> (v' + escapeHtml(sp.baseMapVersion) + ')</span>' +
+    ? '<div class="wsa-spatial-banner"><span>Base map: <strong>' + escapeHtml(sp.baseMapName) + '</strong>' + baseMapVersion + '</span>' +
       '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-spatial-action="detach_base_map">Detach</button></div>'
     : '<div class="wsa-spatial-banner"><span>No base map attached.</span><button type="button" class="wsa-btn wsa-btn-sm wsa-btn-accent" data-wsa-spatial-action="import_base_map">Import Base Map</button></div>';
 
   return '<section class="wsa-view" aria-label="Places">' +
     baseMapStatus +
+    coordinateProfileHtml(sp) +
     '<div class="wsa-spatial-toolbar">' +
     '<label class="wsa-search"><span>Search places</span><input type="search" data-wsa-spatial-search value="' +
     escapeHtml(sp.search) + '" autocomplete="off" spellcheck="false" placeholder="e.g. Brackenford, Halmere"></label>' +
@@ -1341,6 +1417,39 @@ export function createWorldStateUiController({
     if (spatialAction && typeof onSpatialAction === 'function') {
       const action = clean(spatialAction.dataset?.wsaSpatialAction, 40);
       const currentModel = model();
+
+      if (action === 'save_profile' || action === 'reset_profile') {
+        const profileForm = root.querySelector?.('.wsa-spatial-profile-form');
+        const profileValue = field => profileForm?.querySelector?.('[data-wsa-profile-field="' + field + '"]')?.value;
+        const optionalNumber = field => {
+          const raw = profileValue(field);
+          if (raw === undefined || raw === '') return null;
+          return Number(raw);
+        };
+        const trueNorthInput = profileForm?.querySelector?.('[data-wsa-profile-field="trueNorthLocked"]');
+        const xMin = optionalNumber('xMin');
+        const xMax = optionalNumber('xMax');
+        const yMin = optionalNumber('yMin');
+        const yMax = optionalNumber('yMax');
+        const anyBounds = [xMin, xMax, yMin, yMax].some(value => value !== null);
+        const profileData = action === 'save_profile' ? {
+          system: 'cartesian2d',
+          northAxis: profileValue('northAxis') || '+y',
+          eastAxis: profileValue('eastAxis') || '+x',
+          unitKm: optionalNumber('unitKm'),
+          decimalStep: optionalNumber('decimalStep'),
+          bounds: anyBounds ? { xMin, xMax, yMin, yMax } : null,
+          trueNorthLocked: Boolean(trueNorthInput?.checked),
+        } : null;
+
+        await onSpatialAction(action, {
+          profileData,
+          spatialModel: currentModel.spatial,
+        });
+        refresh();
+        return;
+      }
+
       const currentLoc = currentModel.spatial.detail;
       const form = root.querySelector?.('.wsa-spatial-form');
       const getVal = field => form?.querySelector?.('[data-wsa-field="' + field + '"]')?.value;
@@ -1397,6 +1506,24 @@ export function createWorldStateUiController({
     if (spatialSearch) {
       ui.spatialSearch = clean(spatialSearch.value, 120);
       refresh({ restoreSpatialFocus: true });
+      return;
+    }
+
+    const northAxis = closest(event.target, '[data-wsa-profile-field="northAxis"]');
+    if (northAxis) {
+      const eastAxis = root.querySelector?.('[data-wsa-profile-field="eastAxis"]');
+      if (eastAxis) {
+        const perpendicular = {
+          '+y': new Set(['+x', '-x']),
+          '-y': new Set(['+x', '-x']),
+          '+x': new Set(['+y', '-y']),
+          '-x': new Set(['+y', '-y']),
+        };
+        const fallback = { '+y': '+x', '-y': '-x', '+x': '-y', '-x': '+y' };
+        if (!perpendicular[northAxis.value]?.has(eastAxis.value)) {
+          eastAxis.value = fallback[northAxis.value] || '+x';
+        }
+      }
       return;
     }
 

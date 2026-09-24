@@ -655,7 +655,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.23`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
+Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.24`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 
@@ -750,7 +750,9 @@ Spatial profile is setting-agnostic Cartesian 2D:
 
 Coordinates support exact known X/Y or unresolved X/Y. Authority and lock are separate.
 
-The absence of a profile is meaningful: Spatial may still remember named places, explicit X/Y, and relative relations, but it does not assume any setting-specific scale, bounds, or compass transform. A profile may also omit unit scale; in that case scale-dependent derivation remains disabled. A configured profile may orient north/east along any perpendicular signed Cartesian axes.
+The absence of a profile is meaningful: Spatial may still remember named places, explicit X/Y, and relative relations, but it does not assume any setting-specific scale, bounds, or compass transform.
+
+The effective Coordinate Profile has one authority rule: a loaded/attached base map wins; otherwise the campaign's manual profile is used. The Places UI exposes manual profile editing only when no base map is attached. Profile changes flow through the ordinary journaled Spatial mutation boundary. If profile math changes, derived campaign coordinates are invalidated atomically after operator confirmation; higher-authority coordinates survive unchanged. A profile may also omit unit scale; in that case scale-dependent derivation remains disabled. A configured profile may orient north/east along any perpendicular signed Cartesian axes.
 
 Deterministic coordinate derivation accepts only established anchor coordinate + grounded direction + grounded straight-line distance under an explicit profile. Diagonals use normalized vector math projected through the profile's declared north/east axes. Route/travel distances remain relational metadata only.
 

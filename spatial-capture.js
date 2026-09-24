@@ -4,6 +4,7 @@ import {
   directionFromDelta,
   normalizeCoordinate,
   reduceSpatialMutations,
+  resolveSpatialProfile,
   validateBounds,
 } from './spatial-core.js';
 import { validateSpatialEnvelope } from './spatial-wire.js';
@@ -456,7 +457,7 @@ export function processSpatialCapture({
   ];
   const accepted = [];
   const visibleById = new Map((Array.isArray(visibleLocations) ? visibleLocations : []).map(item => [item.id, item]));
-  const activeProfile = profile || spatial?.profile || baseMap?.profile || null;
+  const activeProfile = baseMap ? resolveSpatialProfile(spatial, baseMap) : (profile || resolveSpatialProfile(spatial));
 
   for (let index = 0; index < supplemented.mutations.length; index += 1) {
     const proposal = structuredClone(supplemented.mutations[index]);

@@ -514,7 +514,11 @@ Reality Core and Spatial Continuity may share per-chat ownership, sidecar envelo
 
 Spatial Continuity is disabled independently by default and is setting-agnostic. The durable profile is generic Cartesian 2D metadata: north/east axes, unit scale, optional bounds, decimal precision, and True North lock.
 
+Coordinate Profile authority is explicit. If a base map is attached, its profile is authoritative and operator editing is disabled until detach. Without a base map, the campaign profile is manual/operator-editable. The runtime must use the same effective profile for capture, injection, relation validation, deterministic derivation, and UI projection.
+
 A campaign with Spatial enabled but no configured profile may still retain named places, explicit coordinates, and relative-only relations. It must not inherit a hidden unit scale, bounds, or True North transform. Scale-based coordinate derivation requires an explicit profile with a positive unit scale; locked direction validation requires an explicit profile. The declared north/east axes are part of the math rather than decorative metadata.
+
+Changing manual profile math (orientation, unit scale, bounds, or decimal precision) invalidates coordinates whose authority is `derived`. After explicit operator confirmation those coordinates are cleared atomically to unknown in the same journaled profile mutation. Manual, narrative-explicit, campaign-override, and base-canonical coordinates are never cleared merely because profile math changed.
 
 Route, road, river, and sea-lane geometry may curve. Route/travel length is not Cartesian displacement unless accepted evidence explicitly establishes straight-line/direct displacement.
 
