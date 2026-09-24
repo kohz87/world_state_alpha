@@ -1,6 +1,5 @@
 import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.js';
 import {
-  authorityRank,
   deriveCoordinate,
   directionFromDelta,
   normalizeCoordinate,

@@ -19,42 +19,67 @@ This is the main simplification relative to the initial three-class candidate.
 
 ## 2. Runtime ownership
 
-Suggested modules once implementation is authorized:
+The shipped runtime is intentionally split by semantic ownership:
 
 ```text
-bootstrap.js
-runtime.js                 event wiring / orchestration only
-state-core.js              normalization + canonical mutation reducer
-capture.js                 compact prompt builder + result validation
-evolution.js               targeted catch-up prompt + result validation
-relevance.js               local retrieval/ranking
-injection.js               compact private continuity rendering
-branch.js                  lineage + mutation journal + exact rollback
-storage.js                 sidecar durability + export/import
+bootstrap.js               SillyTavern load shim
+index.js                   host orchestration/event wiring only
+state-core.js              canonical Reality normalization + reducer
+branch.js                  lineage, journal, exact rollback/rebase
+storage.js                 sidecar envelope/revision contract
+host-storage.js            SillyTavern file adapter
+transfer.js                bundle export/import envelope
+capture-wire.js            provider response shape normalization
+source-firewall.js         Reality evidence/authority admission
+duplicate.js               current/history duplicate admission
+capture.js                 bounded capture prompt + admission pipeline
+relevance.js               local Reality retrieval/ranking
+injection.js               private Reality continuity rendering
+elapsed.js                 bounded elapsed-time recognition
+evolution-wire.js          evolution provider response validation
+evolution.js               targeted/background bounded catch-up
+manual.js                  host-neutral Reality manual/rebuild services
+rebuild.js                 chronological atomic reconstruction
+spatial-*.js               optional sibling Spatial Continuity services
+host-base-map.js           immutable base-map host storage
 provider-routing.js        one request dispatcher
-diagnostics.js             bounded receipts
-ui.js                      projections/search/evidence inspection
-commands.js                optional /worldstate manual controls
+diagnostics.js             bounded operator receipts
+ui.js / ui.css             projection-only operator workspace
 ```
 
-Keep modules small and semantic. Do not repeat Delta's eventual monolithic file scale.
+Keep modules small and semantic. Host orchestration stays in `index.js`; there is no separate generic `runtime.js` or slash-command owner.
 
 ## 3. Canonical state
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "chatKey": "",
   "records": [],
   "evidence": {},
   "links": [],
   "lineage": [],
-  "rollback": {},
-  "metrics": {},
-  "lastCaptureMessage": null
+  "rollbackJournalVersion": 1,
+  "rollbackJournalSequence": 0,
+  "rollbackJournalFloorMessageId": -1,
+  "rollbackJournal": [],
+  "rollbackHead": null,
+  "checkpoints": [],
+  "lastCaptureMessage": null,
+  "recoveryRequired": null,
+  "spatial": {
+    "profile": null,
+    "baseMapRef": null,
+    "locations": [],
+    "relations": [],
+    "routes": [],
+    "evidence": {},
+    "lastCaptureMessage": null
+  }
 }
 ```
 
-Only `records` and bounded causal links are current domain state. Evidence, lineage, rollback, and metrics are support layers.
+Reality `records`/links and the separate `spatial` namespace are canonical domain state. Evidence, lineage, rollback/checkpoints, recovery state, and capture cursors are support layers.
 
 ## 4. Record semantics
 
@@ -632,7 +657,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Phase 8 used application version `0.8.0-alpha.1`. Phase 9 was introduced in `0.9.0-alpha.1`; continuity hardening landed in `0.9.0-alpha.2`; the settings drawer was standardized in `0.9.0-alpha.3`; host-identity/spatial hardening landed in `0.9.0-alpha.4`; persistent-capture completeness landed in `0.9.0-alpha.5`; Background Development Catch-up landed in `0.9.0-alpha.6`; recovery/evidence/Spatial hardening landed in `0.9.0-alpha.7`; live rebuild interoperability/observability landed in `0.9.0-alpha.8`; fenced-response interoperability landed in `0.9.0-alpha.9`; structured completeness-checklist hardening landed in `0.9.0-alpha.10`; responsive Operations/rebuild UX landed in `0.9.0-alpha.11`; the flat disclosure workspace landed in `0.9.0-alpha.12`; passive-lineage rewrite hardening landed in `0.9.0-alpha.13`; virtual hidden-message rebuild landed in `0.9.0-alpha.14`; integrity hardening landed in `0.9.0-alpha.15`; lifecycle-reconciliation recovery landed in `0.9.0-alpha.16`; manual history controls landed in `0.9.0-alpha.17`; and the current durable-semantic-lineage hardening candidate is `0.9.0-alpha.18`. Canonical schema is version 2 while sidecar/bundle/rollback-journal envelope formats remain 1.
+Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.22`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

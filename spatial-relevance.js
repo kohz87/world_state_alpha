@@ -14,10 +14,6 @@ function tokens(value) {
   return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];
 }
 
-function tokenSet(value) {
-  return new Set(tokens(value));
-}
-
 function boundedInt(value, fallback, min, max) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;

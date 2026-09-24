@@ -122,16 +122,29 @@ Phase 6 and the Alpha.11 responsive/Operations revision change no persisted sche
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "chatKey": "",
   "records": [],
   "evidence": {},
   "links": [],
   "lineage": [],
   "rollbackJournalVersion": 1,
+  "rollbackJournalSequence": 0,
+  "rollbackJournalFloorMessageId": -1,
   "rollbackJournal": [],
   "rollbackHead": null,
   "checkpoints": [],
-  "lastCaptureMessage": null
+  "lastCaptureMessage": null,
+  "recoveryRequired": null,
+  "spatial": {
+    "profile": null,
+    "baseMapRef": null,
+    "locations": [],
+    "relations": [],
+    "routes": [],
+    "evidence": {},
+    "lastCaptureMessage": null
+  }
 }
 ```
 

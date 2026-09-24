@@ -1,7 +1,7 @@
 import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { clone, normalizeState } from './state-core.js';
-import { resolveEffectiveLocations, resolveEffectiveRoutes } from './spatial-core.js';
+import { resolveEffectiveLocations } from './spatial-core.js';
 
 export const WORLD_STATE_UI_NAMESPACE = 'world_state_alpha_ui';
 
@@ -598,11 +598,6 @@ function recordExpandedHtml(detail) {
     lifecycleActions +
     (detail.changeReason ? '<p class="wsa-change-reason wsa-record-expanded-wide">' + escapeHtml(detail.changeReason) + '</p>' : '') +
     '</div>';
-}
-
-function detailHtml(detail) {
-  if (!detail) return emptyState('No record selected', 'Choose a record to inspect its current state and evidence.');
-  return '<article class="wsa-detail-card">' + recordExpandedHtml(detail) + '</article>';
 }
 
 function spatialDetailHtml(detail) {

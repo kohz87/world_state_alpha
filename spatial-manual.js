@@ -5,7 +5,6 @@ import {
   normalizeCoordinate,
   reduceSpatialMutations,
   resolveEffectiveLocations,
-  resolveEffectiveRoutes,
 } from './spatial-core.js';
 
 function clean(value, max = 500) {

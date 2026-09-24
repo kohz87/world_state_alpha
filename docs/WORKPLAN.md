@@ -210,6 +210,10 @@ Deliverables:
 - v0.9.0-alpha.16 lifecycle reconciliation recovery: explicitly retire grounded completed/replaced developments and reserve up to two bounded lifecycle candidates during chronological rebuild so later narrated endings close earlier reconstructed threads without evolution replay or provider fanout
 - v0.9.0-alpha.17 manual history controls: expanded active Reality rows expose explicit resolve/supersede intents, require operator evidence, validate stale opaque row snapshots before canonical targeting, and persist through the existing current-head manual reducer/journal path
 - v0.9.0-alpha.18 durable semantic lineage hardening: persist assistant narration-equivalence metadata, rebase one or many presentation-only rewrites without undo replay, durably backfill clean Alpha.17 lineages, and fail closed with canonical records preserved when legacy semantic proof is unavailable
+- v0.9.0-alpha.19 manual lifecycle host reconciliation: reconcile live lineage before Resolve/Supersede and surface fail-closed/error states instead of silently dropping queued manual actions
+- v0.9.0-alpha.20 live lifecycle/partial-rebuild recovery: reserve lifecycle candidates during live capture, reconcile semantic lineage before partial-prefix proof, preserve the root checkpoint under bounded trimming, and keep prior-scene context retrieval-only
+- v0.9.0-alpha.21 lifecycle identity/history admission: bind automatic non-create mutations to active targets, keep tombstones immutable to provider capture/rebuild, reject unmatched terminal history creates, and dedupe recurrences against active episodes
+- v0.9.0-alpha.22 maintenance cleanup: remove proven-dead helpers/imports and synchronize design-era architecture/data-model/status documentation without removing tested compatibility surfaces
 
 Acceptance:
 

@@ -34,13 +34,13 @@ import { planChronologicalRebuild, REBUILD_LIMITS, runManualRebuild } from './re
 import { buildRelevanceIndex, selectLifecycleCandidates, selectRelevantRecords, selectRelevantTombstones, updateRelevanceIndex } from './relevance.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
 import { buildSpatialInjection } from './spatial-injection.js';
-import { applySpatialManualMutation, inspectSpatialLocation, querySpatialLocations } from './spatial-manual.js';
+import { applySpatialManualMutation } from './spatial-manual.js';
 import { resolveEffectiveLocations } from './spatial-core.js';
 import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.21';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.22';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';

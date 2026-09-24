@@ -13,13 +13,6 @@ export const REBUILD_LIMITS = Object.freeze({
   lifecycleRecentMessages: 12,
 });
 
-function messageText(message) {
-  if (typeof message?.content === 'string') return message.content;
-  if (typeof message?.mes === 'string') return message.mes;
-  if (typeof message?.text === 'string') return message.text;
-  return '';
-}
-
 function roleOf(message) {
   if (message?.role === 'user' || message?.is_user === true) return 'user';
   if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';

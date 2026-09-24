@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0-alpha.22 - Legacy cleanup and architecture synchronization
+
+### Cleaned
+
+- Removed three proven-dead local helpers left behind by earlier refactors: the old rebuild message-text extractor, an unused Spatial relevance token-set wrapper, and the obsolete Reality detail-card wrapper superseded by inline disclosure rows.
+- Removed stale named imports from the host shell, Spatial capture/core/manual modules, and UI. The underlying host-neutral Spatial service exports remain available where tests/other modules still exercise them.
+- Synchronized architecture/data-model/status documentation with the shipped schema 2 state, actual module graph, and Alpha.22 release lineage.
+
+### Deliberately retained compatibility
+
+- Schema-1 -> schema-2 state/checkpoint migration remains supported for existing pre-Spatial campaigns.
+- Legacy lineage metadata backfill and ambiguous-legacy fail-closed handling remain because old Alpha sidecars can still be loaded.
+- Provider field-alias repair remains because live Gemini-compatible output can still emit unambiguous `category`/`description` drift.
+- Character/chat rename migration, sidecar tombstones, `generic_v1`, and `ternia_v0_9_10` base-map adapters remain active compatibility contracts.
+- No canonical schema, sidecar, bundle, rollback-journal, capture cadence, provider-call count, or lifecycle semantics changed.
+
 ## 0.9.0-alpha.21 - Lifecycle identity and history admission hardening
 
 ### Fixed
