@@ -17,6 +17,8 @@ export const CAPTURE_LIMITS = Object.freeze({
   exchangeChars: 12000,
   perMessageChars: 7000,
   visibleRecords: 8,
+  lifecycleVisibleRecords: 2,
+  lifecycleContextMessages: 4,
   loreChars: 3500,
   completenessHints: 10,
   completenessHintChars: 320,

@@ -378,7 +378,7 @@ export async function runManualRebuild({
         failedBoundary: plan.metrics.startMessageId,
         receipts: [],
         errorCode: 'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE',
-        errorMessage: 'Partial rebuild requires exact canonical history before the selected start message. Use Full chat after a reset.',
+        errorMessage: 'Partial rebuild requires exact canonical history before the selected start message. Stored lineage does not match the live prefix; reconcile the branch or use Full chat.',
       };
     }
     const restored = reconcileBranch(original, prefix);

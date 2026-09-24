@@ -335,7 +335,10 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
   ]) assert.match(source, new RegExp(event));
 
   assert.equal((source.match(/runCaptureOperation\s*\(\s*\{/g) || []).length, 1);
+  assert.match(source, /selectLifecycleCandidates\([\s\S]*contextText:\s*lifecycleContext[\s\S]*maxRecords:\s*CAPTURE_LIMITS\.lifecycleVisibleRecords/);
+  assert.match(source, /boundedExchange\([\s\S]*CAPTURE_LIMITS\.lifecycleContextMessages/);
   assert.match(source, /selectRelevantRecords\([\s\S]*maxRecords:\s*CAPTURE_LIMITS\.visibleRecords/);
+  assert.match(source, /const visibleById = new Map\(\)[\s\S]*lifecycleVisible[\s\S]*tombstones[\s\S]*activeVisible/);
   assert.match(source, /prepareWorldStateContinuity\(\{[\s\S]*affectingEvidence:\s*\[\]/);
   assert.match(source, /detectElapsedHintFromExchange\(exchange\)/);
   assert.match(source, /cancelWorldStateRequests\(\{\s*chatKey\s*\}\)/);
@@ -428,6 +431,8 @@ test('rebuild cancellation bypasses the per-chat writer queue while rebuild muta
   assert.match(source, /planChronologicalRebuild\(chat, \{[\s\S]*maxBoundaries,[\s\S]*startMessageId,[\s\S]*includeHiddenMessages,[\s\S]*\}\)/);
   assert.match(source, /includeHiddenMessages = rebuildRequest\.includeHiddenMessages !== false/);
   assert.match(source, /includeHiddenMessages,/);
+  assert.match(source, /startMessageId > 0[\s\S]*extendCurrentBranchFast\(chatKey\)[\s\S]*reconcileCurrentBranch\(chatKey, \{ persistRestore: true \}\)/);
+  assert.match(source, /Partial rebuild cannot prove the current chat lineage safely/);
   assert.match(source, /signal: rebuildController\.signal/);
   assert.match(source, /phase: 'committing'/);
   assert.match(source, /getRuntimeInfo: \(\) => \{/);

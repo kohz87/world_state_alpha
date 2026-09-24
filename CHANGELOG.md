@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0-alpha.20 - Live lifecycle retention and partial rebuild recovery
+
+### Fixed
+
+- Live capture now reserves up to two relevant active **development** records for lifecycle reconciliation before filling the ordinary eight-record capture context. Selection may use a bounded prior-scene retrieval window so indirect endings such as “the last two collapse” can still surface the development that must be resolved.
+- The wider lifecycle window is retrieval-only. Mutation evidence remains restricted to the exact current exchange and still passes the existing source firewall, so prior narration cannot itself resolve or update state.
+- Capture relevance now uses the same sanitized narrative surface sent to the extractor instead of allowing private planning blocks to influence record retrieval.
+- Partial rebuild now reconciles/extends the live branch before testing a nonzero start range. Narration-equivalent SillyTavern/Regex rewrites therefore rebase first instead of producing a premature `WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE`.
+- Checkpoint trimming now preserves the root checkpoint inside the existing bounded checkpoint cap, avoiding the ~48 assistant-boundary cliff where the root previously aged out.
+
+### Preserved
+
+- Current remains canonical state; Recent remains a bounded recent-change feed and may legitimately include a record immediately after it is resolved or superseded.
+- Automatic capture still uses one provider request per eligible assistant boundary, a maximum of eight visible Reality records, exact-current-exchange mutation evidence, and the existing reducer/source firewall.
+- A genuine reset or genuinely unavailable historical prefix still fails partial rebuild closed and requires Full chat recovery.
+
 ## 0.9.0-alpha.19 - Manual lifecycle branch reconciliation
 
 ### Fixed

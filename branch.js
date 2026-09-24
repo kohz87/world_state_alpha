@@ -168,7 +168,18 @@ function trimJournal(state, maxEntries) {
 
 function trimCheckpoints(state, maxCheckpoints) {
   const cap = Math.max(1, Number(maxCheckpoints) || LIMITS.checkpoints);
-  if (state.checkpoints.length > cap) state.checkpoints = state.checkpoints.slice(-cap);
+  if (state.checkpoints.length <= cap) return;
+
+  const root = state.checkpoints.find(item => item?.messageId === -1 && item?.lineageKey === 'root') || null;
+  if (!root) {
+    state.checkpoints = state.checkpoints.slice(-cap);
+    return;
+  }
+
+  const nonRoot = state.checkpoints.filter(item => item !== root);
+  state.checkpoints = cap === 1
+    ? [root]
+    : [root, ...nonRoot.slice(-(cap - 1))];
 }
 
 export function commitMutationBoundary(beforeState, afterState, chat, messageId, reason = 'mutation', options = {}) {

@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.19 hardens the Alpha.17 manual history controls so Resolve/Supersede reconciles live lineage before mutation and surfaces genuine branch-safety failures instead of silently dropping the action. Alpha.18 durable semantic lineage hardening remains intact. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.20 hardens live lifecycle retention and partial rebuild recovery: live capture reserves lifecycle-relevant developments using bounded retrieval-only scene context, partial rebuild reconciles semantic lineage before prefix proof, and root checkpoints survive bounded trimming. Alpha.19 manual lifecycle controls and Alpha.18 durable semantic lineage hardening remain intact. Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

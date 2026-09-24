@@ -631,6 +631,69 @@ export function selectRelevantTombstones(index, {
   };
 }
 
+export function selectLifecycleCandidates(state, {
+  index = null,
+  currentText = '',
+  contextText = '',
+  currentMessageId = null,
+  maxRecords = 2,
+  minScore = 0.7,
+  candidateCap = 128,
+} = {}) {
+  const limit = boundedInt(maxRecords, 2, 1, 4);
+  const rankedDevelopments = (text, lifecycleSource) => {
+    if (!String(text || '').trim()) return [];
+    return selectRelevantRecords(state, {
+      index,
+      recentText: text,
+      currentMessageId,
+      maxRecords: 16,
+      minScore,
+      candidateCap,
+    }).selected
+      .filter(item => item?.record?.kind === 'development' && item.record.status === 'active')
+      .map(item => ({ ...item, lifecycleSource }));
+  };
+
+  const current = rankedDevelopments(currentText, 'current-exchange');
+  const context = String(contextText || '').trim() === String(currentText || '').trim()
+    ? []
+    : rankedDevelopments(contextText, 'scene-context');
+
+  // Reserve the strongest exact match first, then one distinct wider-context
+  // antecedent before filling remaining slots. This prevents several newly
+  // mentioned developments from crowding out the older thread that an
+  // anaphoric ending ("the last two", "it finally ends") is closing.
+  const selected = [];
+  const seen = new Set();
+  const add = item => {
+    const id = item?.record?.id;
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    selected.push(item);
+    return true;
+  };
+
+  if (current[0]) add(current[0]);
+  const currentIds = new Set(current.map(item => item?.record?.id).filter(Boolean));
+  for (const item of context) {
+    if (currentIds.has(item?.record?.id)) continue;
+    if (add(item)) break;
+  }
+  for (const item of current.slice(1)) add(item);
+  for (const item of context) add(item);
+
+  return {
+    selected: selected.slice(0, limit),
+    metrics: {
+      selectedRecords: Math.min(selected.length, limit),
+      candidateRecords: selected.length,
+      currentExchangeMatches: current.length,
+      sceneContextMatches: context.length,
+    },
+  };
+}
+
 export function normalizeAnchor(value) {
   return normalizeText(value);
 }

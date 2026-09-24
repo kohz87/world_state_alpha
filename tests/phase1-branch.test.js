@@ -98,6 +98,35 @@ test('same-message coalescing keeps one boundary undo even when only capture met
   assert.equal(reconciled.state.lastCaptureMessage, 0);
 });
 
+test('checkpoint trimming preserves the root checkpoint inside the bounded cap', () => {
+  let state = seedRootCheckpoint(createState('root-retention'));
+  let chat = [];
+  let id = null;
+
+  for (let i = 0; i < 8; i += 1) {
+    chat = [...chat, { role: 'assistant', content: 'turn-' + i }];
+    if (i === 0) {
+      state = apply(state, chat, {
+        action: 'create',
+        kind: 'development',
+        summary: 'Condition 0.',
+      }, { maxCheckpoints: 3 });
+      id = state.records[0].id;
+    } else {
+      state = apply(state, chat, {
+        action: 'update',
+        recordId: id,
+        summary: 'Condition ' + i + '.',
+      }, { maxCheckpoints: 3 });
+    }
+  }
+
+  assert.equal(state.checkpoints.length, 3);
+  assert.equal(state.checkpoints[0].messageId, -1);
+  assert.equal(state.checkpoints[0].lineageKey, 'root');
+  assert.deepEqual(state.checkpoints.slice(1).map(item => item.messageId), [6, 7]);
+});
+
 test('deep destructive history change fails closed when exact boundary aged out', () => {
   let state = seedRootCheckpoint(createState('deep'));
   let chat = [];

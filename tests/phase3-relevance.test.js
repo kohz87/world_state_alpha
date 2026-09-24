@@ -5,6 +5,7 @@ import {
   extractContextTerms,
   normalizeAnchor,
   scoreRecordRelevance,
+  selectLifecycleCandidates,
   selectRelevantRecords,
 } from '../relevance.js';
 
@@ -54,6 +55,45 @@ test('single-word anchors respect token boundaries while non-space scripts still
   });
   assert.equal(latin.selected.length, 0);
   assert.equal(nonSpace.selected[0].record.id, 'east-dorm');
+});
+
+test('lifecycle retrieval can use prior scene context without making it mutation evidence', () => {
+  const target = record('boar-sounder', 'Two ditch boars remain active in the orchard.', {
+    kind: 'development',
+    anchors: ['ditch boars', 'orchard'],
+    lastChangedMessage: 40,
+  });
+  const other = Array.from({ length: 10 }, (_, index) => record(
+    'other-' + index,
+    'Unrelated persistent condition ' + index + ' remains active.',
+    {
+      kind: 'development',
+      anchors: ['unrelated-' + index],
+      lastChangedMessage: 45 + index,
+    },
+  ));
+  const dock = record('dock-strike', 'The Southport dock strike remains active.', {
+    kind: 'development',
+    anchors: ['Southport', 'dock strike'],
+    lastChangedMessage: 58,
+  });
+  const plague = record('plague', 'The harbor plague remains active.', {
+    kind: 'development',
+    anchors: ['harbor plague'],
+    lastChangedMessage: 59,
+  });
+  const result = selectLifecycleCandidates(state([...other, target, dock, plague]), {
+    currentText: 'The last two collapse in the mud. The Southport dock strike and harbor plague are also discussed.',
+    contextText: 'Two ditch boars remain active in the orchard. The hunter closes in on them. The Southport dock strike and harbor plague are also discussed.',
+    currentMessageId: 60,
+    maxRecords: 2,
+  });
+
+  assert.equal(result.selected.some(item => item.record.id === 'boar-sounder'), true);
+  assert.equal(
+    result.selected.find(item => item.record.id === 'boar-sounder')?.lifecycleSource,
+    'scene-context',
+  );
 });
 
 test('exact recent anchor match strongly selects the relevant fact', () => {

@@ -8,7 +8,7 @@ import {
 } from '../../../../script.js';
 
 import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintAssistantNarration, fingerprintMessage, rebaseLineageMetadata, reconcileBranch, seedRootCheckpoint } from './branch.js';
-import { assistantBoundaryExchange, CAPTURE_LIMITS, runCaptureOperation } from './capture.js';
+import { assistantBoundaryExchange, CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
@@ -31,7 +31,7 @@ import {
 } from './manual.js';
 import { cancelWorldStateRequests, worldStateProfileOptions } from './provider-routing.js';
 import { planChronologicalRebuild, REBUILD_LIMITS, runManualRebuild } from './rebuild.js';
-import { buildRelevanceIndex, selectRelevantRecords, selectRelevantTombstones, updateRelevanceIndex } from './relevance.js';
+import { buildRelevanceIndex, selectLifecycleCandidates, selectRelevantRecords, selectRelevantTombstones, updateRelevanceIndex } from './relevance.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation, inspectSpatialLocation, querySpatialLocations } from './spatial-manual.js';
@@ -40,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.19';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.20';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1354,7 +1354,20 @@ async function handleAssistantMessage(messageId) {
 
     const before = stateCache.get(chatKey);
     const index = getRelevanceIndex(chatKey, before);
-    const captureText = recentText(exchange);
+    const captureText = recentText(normalizeCaptureExchange(exchange));
+    const lifecycleContext = recentText(normalizeCaptureExchange(boundedExchange(
+      liveChat,
+      messageId,
+      CAPTURE_LIMITS.lifecycleContextMessages,
+      currentState?.lineage,
+    )));
+    const lifecycleVisible = selectLifecycleCandidates(before, {
+      index,
+      currentText: captureText,
+      contextText: lifecycleContext,
+      currentMessageId: messageId,
+      maxRecords: CAPTURE_LIMITS.lifecycleVisibleRecords,
+    }).selected.map(item => item.record);
     const activeVisible = selectRelevantRecords(before, {
       index,
       recentText: captureText,
@@ -1367,8 +1380,20 @@ async function handleAssistantMessage(messageId) {
       maxRecords: 2,
       candidateCap: 32,
     }).selected.map(item => item.record);
-    const activeSlots = Math.max(0, CAPTURE_LIMITS.visibleRecords - tombstones.length);
-    const visible = [...activeVisible.slice(0, activeSlots), ...tombstones];
+
+    const visibleById = new Map();
+    for (const record of lifecycleVisible) {
+      if (record?.id && !visibleById.has(record.id)) visibleById.set(record.id, record);
+    }
+    for (const record of tombstones) {
+      if (visibleById.size >= CAPTURE_LIMITS.visibleRecords) break;
+      if (record?.id && !visibleById.has(record.id)) visibleById.set(record.id, record);
+    }
+    for (const record of activeVisible) {
+      if (visibleById.size >= CAPTURE_LIMITS.visibleRecords) break;
+      if (record?.id && !visibleById.has(record.id)) visibleById.set(record.id, record);
+    }
+    const visible = [...visibleById.values()].slice(0, CAPTURE_LIMITS.visibleRecords);
 
     let visibleLocations = [];
     let baseMap = null;
@@ -1834,7 +1859,7 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
 async function applyMaintenanceActionNow(actionId, payload, chatKey) {
   await ensureChatStateLoaded(chatKey);
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
-  const state = stateCache.get(chatKey);
+  let state = stateCache.get(chatKey);
 
   if (actionId === 'export') {
     const prepared = prepareWorldStateExport(state);
@@ -1904,6 +1929,22 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       : mode === 'from'
         ? requestedStart
         : 0;
+
+    if (startMessageId > 0) {
+      const branch = extendCurrentBranchFast(chatKey)
+        || await reconcileCurrentBranch(chatKey, { persistRestore: true });
+      if (currentChatKey() !== chatKey) return;
+      if (branch?.failClosed) {
+        notify(
+          'error',
+          'Partial rebuild cannot prove the current chat lineage safely. Use Full chat to recover the canonical base.',
+        );
+        updatePrivateInjection();
+        refreshPanel();
+        return;
+      }
+      state = stateCache.get(chatKey);
+    }
 
     let rebuildPlan;
     try {
