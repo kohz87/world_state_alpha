@@ -287,6 +287,8 @@ Phase 7 maps the logical `world_state_alpha/<hash>.json` sidecar to a SillyTaver
 
 Hydration is fail-closed. A sidecar that is temporarily or permanently unavailable must not be mistaken for ordinary fresh continuity. An established chat with no reachable sidecar enters explicit baseline-recovery mode: automatic capture/injection and normal writes pause until Full chat rebuild, import, or explicit reset succeeds. Same-backend sessions may rediscover `/user/files` deterministically; different SillyTavern backends are not assumed to share that store.
 
+Alpha.27 extends that rule to already-hydrated sessions. The server sidecar remains canonical after initial load; the browser's `stateCache` is a revision-bound disposable working copy, not a freshness guarantee. Chat activation, user/assistant boundaries, provider commit boundaries, panel/manual/Spatial work, branch changes, and browser resume perform bounded server freshness checks. If the durable revision changed, the host rehydrates the sidecar and rebuilds derived relevance indexes. Writes use the revision owned by the hydrated working copy, so a stale cache cannot borrow a newer extension-settings pointer. `WORLD_STATE_REVISION_CONFLICT` rejects the stale writer and triggers rehydration. If the local SillyTavern history is a strict prefix of the newer durable sidecar lineage, injection/mutation fail closed until the host chat catches up instead of rolling durable continuity backward. There is no permanent polling or device-local canonical store.
+
 Keep only the tiny settings pointer in extension settings; canonical bulk state lives in the sidecar.
 
 ## 14. UI
@@ -655,7 +657,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.26`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
+Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.27`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

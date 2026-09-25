@@ -638,6 +638,7 @@ test('MESSAGE_SENT prepares from committed state without awaiting provider-backe
     'messageText',
     'currentChatKey',
     'ensureChatStateLoaded',
+    'refreshChatStateFromServer',
     'hydrationErrors',
     'bootstrapRequiredChats',
     'notifyBootstrapRequiredOnce',
@@ -656,6 +657,7 @@ test('MESSAGE_SENT prepares from committed state without awaiting provider-backe
     message => message.content,
     () => 'chat:test',
     async () => {},
+    async () => ({ outcome: 'current', changed: false }),
     new Set(),
     new Set(),
     () => {},
@@ -686,9 +688,12 @@ test('stale in-flight mutation writes are compensated before publication', async
   const end = source.indexOf('function setPrivatePrompt(', start);
   const body = source.slice(start, end).trim();
 
-  assert.match(body, /const committed = await persistState\(chatKey, candidateState\)/);
+  assert.match(body, /committed = await persistState\(chatKey, candidateState, \{ expectedPointer: basePointer \}\)/);
+  assert.match(body, /const basePointer = hydratedPointerFor\(chatKey\) \|\| pointerFor\(chatKey\)/);
+  assert.match(body, /await persistState\(chatKey, recoveryState, \{ expectedPointer: committed \}\)/);
+  assert.match(body, /handleServerRevisionConflict\(chatKey, error, \{ label, sourceMessageId \}\)/);
   assert.match(body, /if \(guard\(\)\) return \{ stale: false, committed \}/);
-  assert.match(body, /await persistState\(chatKey, recoveryState\)/);
+  assert.match(body, /await persistState\(chatKey, recoveryState, \{ expectedPointer: committed \}\)/);
   assert.match(body, /WORLD_STATE_STALE_WRITE_RESTORE_FAILURE/);
   assert.match(body, /WORLD_STATE_STALE_WRITE_COMPENSATED/);
 
@@ -698,6 +703,9 @@ test('stale in-flight mutation writes are compensated before publication', async
   const diagnostics = [];
   const factory = new Function(
     'persistState',
+    'handleServerRevisionConflict',
+    'hydratedPointerFor',
+    'pointerFor',
     'hydrationErrors',
     'clearPrivatePrompt',
     'diagnosticStore',
@@ -710,6 +718,9 @@ test('stale in-flight mutation writes are compensated before publication', async
       if (state.value === 'candidate') current = false;
       return { revision: writes.length };
     },
+    async () => false,
+    () => ({ path: '/user/files/world-state-alpha-test.json', revision: 1, checksum: 'a' }),
+    () => ({ path: '/user/files/world-state-alpha-test.json', revision: 1, checksum: 'a' }),
     new Map(),
     () => {},
     { record(_chatKey, row) { diagnostics.push(row); } },
@@ -742,6 +753,75 @@ test('stale in-flight mutation writes are compensated before publication', async
   assert.equal(beforeWrite.stale, true);
   assert.equal(beforeWrite.phase, 'before');
   assert.deepEqual(writes, []);
+});
+
+test('server-authoritative freshness rechecks hydrated state at same-backend device/session boundaries', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+
+  assert.match(source, /const hydratedPointers = new Map\(\)/);
+  assert.match(source, /const observedServerPointers = new Map\(\)/);
+  assert.match(source, /async function refreshChatStateFromServer\(chatKey = currentChatKey\(\), \{/);
+  assert.match(source, /recoverExistingSidecarPointer\(chatKey, preferredPointer, \{[\s\S]*retryDeterministicMiss/);
+  assert.match(source, /sameSidecarPointer\(hydratedPointer, remotePointer\)/);
+  assert.match(source, /setCachedState\(chatKey, recoveredState, \{ sourcePointer: remotePointer \}\)/);
+  assert.match(source, /WORLD_STATE_SERVER_STATE_REFRESHED/);
+  assert.match(source, /WORLD_STATE_HOST_CHAT_BEHIND_SIDECAR/);
+
+  for (const reason of [
+    'chat-activation',
+    'user-boundary',
+    'assistant-boundary',
+    'continuity-boundary',
+    'panel-open',
+    'manual-lifecycle',
+  ]) {
+    assert.equal(source.includes("reason: '" + reason + "'"), true, 'missing freshness boundary ' + reason);
+  }
+
+  assert.match(source, /visibilitychange[\s\S]*visibility-resume/);
+  assert.match(source, /pageshow[\s\S]*scheduleServerFreshnessRefresh\('pageshow'\)/);
+  assert.match(source, /addEventListener\?\.\('focus'[\s\S]*window-focus/);
+  assert.doesNotMatch(source, /setInterval\([^)]*refreshChatStateFromServer/);
+});
+
+test('cross-session revision conflict rejects stale writer and rehydrates durable server authority', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const conflictStart = source.indexOf('async function handleServerRevisionConflict(');
+  const conflictEnd = source.indexOf('function scheduleServerFreshnessRefresh', conflictStart);
+  const conflictBody = source.slice(conflictStart, conflictEnd);
+
+  assert.match(conflictBody, /WORLD_STATE_REVISION_CONFLICT/);
+  assert.match(conflictBody, /refreshChatStateFromServer\(chatKey, \{[\s\S]*reason: 'write-conflict'/);
+  assert.match(conflictBody, /stale-writer-rejected/);
+
+  const persistStart = source.indexOf('async function persistGuardedMutation({');
+  const persistEnd = source.indexOf('function setPrivatePrompt(', persistStart);
+  const persistBody = source.slice(persistStart, persistEnd);
+  assert.match(persistBody, /catch \(error\) \{[\s\S]*handleServerRevisionConflict\(chatKey, error/);
+  assert.match(persistBody, /return \{ stale: true, phase: 'conflict', conflict: true \}/);
+});
+
+test('newer server continuation never rolls backward to a stale local SillyTavern chat', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const reconcileStart = source.indexOf('async function reconcileCurrentBranch(');
+  const reconcileEnd = source.indexOf('async function handleAssistantMessage(', reconcileStart);
+  const body = source.slice(reconcileStart, reconcileEnd);
+
+  assert.match(body, /storedLineage\.length > currentLineage\.length && lineageIsPrefix\(currentLineage, storedLineage\)/);
+  assert.match(body, /branchDirtyChats\.add\(chatKey\)/);
+  assert.match(body, /action: 'host-chat-behind'/);
+  assert.match(body, /failClosed: true/);
+  const behindAt = body.indexOf("action: 'host-chat-behind'");
+  const reducerAt = body.indexOf('reconcileBranch(');
+  assert.ok(behindAt >= 0 && reducerAt > behindAt, 'strict newer server continuation must fail closed before branch rollback');
+});
+
+test('debug status exposes hydrated and observed server revisions without making cache authoritative', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  assert.match(source, /hydratedRevision: Number\(hydratedPointerFor\(key\)\?\.revision \|\| 0\)/);
+  assert.match(source, /observedServerRevision: Number\(observedServerPointerFor\(key\)\?\.revision \|\| 0\)/);
+  assert.match(source, /loadedChats\.has\(chatKey\)[\s\S]*return stateCache\.get\(chatKey\)/);
+  assert.match(source, /refreshChatStateFromServer/);
 });
 
 test('host rebuild never persists or reports success before completed outcome gate', () => {
@@ -777,8 +857,9 @@ test('host rebuild commit rechecks currentness around durable persistence and co
   assert.ok(body.lastIndexOf('if (!isCurrent())', persistAt) > 0, 'currentness is checked immediately before persistence');
   const staleAfterPersistAt = body.indexOf('if (!isCurrent())', persistAt);
   assert.ok(staleAfterPersistAt > persistAt, 'currentness is rechecked after persistence');
-  const compensateAt = body.indexOf('await persistState(chatKey, state, { allowBootstrapRecovery: true })', staleAfterPersistAt);
-  assert.ok(compensateAt > staleAfterPersistAt, 'stale durable candidate is compensated with the prior canonical state');
+  const compensateAt = body.indexOf('expectedPointer: rebuildCommitted', staleAfterPersistAt);
+  assert.ok(compensateAt > staleAfterPersistAt, 'stale durable candidate is compensated with the prior canonical state using the candidate revision token');
+  assert.match(body, /rebuildCommitted = await persistState\(chatKey, result\.state/);
   assert.match(body, /WORLD_STATE_REBUILD_STALE_RESTORE_FAILURE/);
   assert.match(
     body,
@@ -816,11 +897,15 @@ test('host publishes mutated canonical state only after durable sidecar success'
     const publishAt = source.indexOf('setCachedState(chatKey, committed', staleAt);
     assert.ok(commitAt >= 0 && persistAt > commitAt && staleAt > persistAt && publishAt > staleAt, reason + ' must durably guard and reject stale persistence before cache publication');
   }
-  assert.equal(
-    (source.match(/await persistState\(chatKey, next, \{ allowBootstrapRecovery: true \}\);\s*setCachedState\(chatKey, next\);/g) || []).length,
-    2,
-    'import and reset must persist before cache publication',
-  );
+  for (const label of ['import', 'reset']) {
+    const actionAt = source.indexOf("if (actionId === '" + label + "')");
+    const nextActionAt = source.indexOf("if (actionId === '", actionAt + 1);
+    const actionBody = source.slice(actionAt, nextActionAt > actionAt ? nextActionAt : undefined);
+    const persistAt = actionBody.indexOf('await persistState(chatKey, next, { allowBootstrapRecovery: true })');
+    const publishAt = actionBody.indexOf('setCachedState(chatKey, next)');
+    assert.ok(persistAt >= 0 && publishAt > persistAt, label + ' must persist before cache publication');
+    assert.match(actionBody, /handleServerRevisionConflict\(chatKey, error/);
+  }
   assert.match(
     source,
     /if \(changed && durableRestore\) \{[\s\S]*persistGuardedMutation\(\{[\s\S]*candidateState: result\.state,[\s\S]*recoveryState: state,[\s\S]*label: 'branch reconciliation'[\s\S]*\}\);[\s\S]*if \(persisted\.stale\)[\s\S]*return \{[\s\S]*stalePersistence: true[\s\S]*\};[\s\S]*setCachedState\(chatKey, result\.state,/,

@@ -139,6 +139,13 @@ No fixture may require schema code specific to its setting.
 - same chat filename under two character owners -> different Alpha chat keys and sidecars
 - same chat filename under group vs character -> different Alpha chat keys and sidecars
 - server-side sidecar revision differs from pointer -> conflict before upload
+- desktop hydrates revision N, mobile advances the same-backend sidecar to N+1, desktop resumes -> desktop rehydrates N+1 before using World State as authority
+- desktop hydrates N, another session advances through N+1/N+2/N+3 -> one freshness boundary may hydrate directly to N+3
+- hydrated revision equals durable revision -> freshness check preserves the working copy and does not rebuild canonical state unnecessarily
+- settings pointer advances independently while the working copy still owns revision N -> write still uses hydrated revision N and conflicts rather than borrowing the newer pointer
+- provider/manual/Spatial result starts from N, another session commits N+1 before its write -> stale writer is rejected and server N+1 is rehydrated
+- local SillyTavern chat is a strict prefix of a newer server-side lineage -> preserve the newer sidecar, suppress continuity, and fail closed until host history catches up
+- visibility resume, pageshow, and window focus -> bounded freshness refresh without permanent polling
 - server upload returns a non-logical path -> pointer stores returned path, not guessed filename
 - existing sidecar pointer GET/parse fails -> no empty replacement write
 - missing/stale settings pointer with intact deterministic sidecar -> recover exact owned state and repair revision/checksum pointer

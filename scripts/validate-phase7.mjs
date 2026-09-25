@@ -143,8 +143,8 @@ if (!/selectRelevantRecords\([\s\S]*maxRecords:\s*CAPTURE_LIMITS\.visibleRecords
 if (!hostStorage.includes('withWriterLock') || !hostStorage.includes('navigator?.locks')) {
   throw new Error('Phase 7 host sidecar writes are not serialized');
 }
-if (!/async function persistGuardedMutation\(\{[\s\S]*await persistState\(chatKey, candidateState\)[\s\S]*if \(guard\(\)\) return \{ stale: false, committed \}[\s\S]*await persistState\(chatKey, recoveryState\)[\s\S]*WORLD_STATE_STALE_WRITE_COMPENSATED/.test(index)) {
-  throw new Error('Phase 7 stale in-flight writes are not compensated before publication');
+if (!/async function persistGuardedMutation\(\{[\s\S]*const basePointer = hydratedPointerFor\(chatKey\) \|\| pointerFor\(chatKey\)[\s\S]*await persistState\(chatKey, candidateState, \{ expectedPointer: basePointer \}\)[\s\S]*if \(guard\(\)\) return \{ stale: false, committed \}[\s\S]*await persistState\(chatKey, recoveryState, \{ expectedPointer: committed \}\)[\s\S]*WORLD_STATE_STALE_WRITE_COMPENSATED/.test(index)) {
+  throw new Error('Phase 7 stale in-flight writes are not revision-bound or compensated before publication');
 }
 if (!/async function handleBranchChange\(reason = 'branch'\)[\s\S]*branchDirtyChats\.add\(chatKey\);[\s\S]*passiveCaptureRebaseCandidates\.delete\(chatKey\);[\s\S]*stateEpochs\.set\(chatKey, epoch\(chatKey\) \+ 1\)/.test(index)) {
   throw new Error('Phase 7 explicit branch events do not synchronously invalidate passive capture ownership');
@@ -161,8 +161,16 @@ for (const [reason, stateExpr] of [['capture', 'result.state'], ['evolution', 'p
     throw new Error('Phase 7 ' + reason + ' must guarded-persist and reject stale writes before publishing canonical cache');
   }
 }
-if ((index.match(/await persistState\(chatKey, next, \{ allowBootstrapRecovery: true \}\);\s*setCachedState\(chatKey, next\);/g) || []).length !== 2) {
-  throw new Error('Phase 7 import/reset must persist before publishing canonical cache');
+for (const label of ['import', 'reset']) {
+  const actionAt = index.indexOf("if (actionId === '" + label + "')");
+  const nextActionAt = index.indexOf("if (actionId === '", actionAt + 1);
+  const actionBody = index.slice(actionAt, nextActionAt > actionAt ? nextActionAt : undefined);
+  const persistAt = actionBody.indexOf('await persistState(chatKey, next, { allowBootstrapRecovery: true })');
+  const conflictAt = actionBody.indexOf('handleServerRevisionConflict(chatKey, error');
+  const publishAt = actionBody.indexOf('setCachedState(chatKey, next)');
+  if (!(persistAt >= 0 && conflictAt > persistAt && publishAt > conflictAt)) {
+    throw new Error('Phase 7 ' + label + ' must conflict-guard durable persistence before publishing canonical cache');
+  }
 }
 if (!/if \(!hostHydrationReady\)[\s\S]*WORLD_STATE_HOST_NOT_READY/.test(index)) {
   throw new Error('Phase 7 canonical hydration is not gated on SillyTavern host readiness');

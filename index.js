@@ -40,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.26';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.27';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -69,6 +69,8 @@ const loadedChats = new Set();
 const hydrationErrors = new Map();
 const loadingChats = new Map();
 const hydrationSources = new Map();
+const hydratedPointers = new Map();
+const observedServerPointers = new Map();
 const provisionalFreshChats = new Set();
 const bootstrapRequiredChats = new Set();
 const bootstrapWarnings = new Set();
@@ -90,6 +92,7 @@ const BASE_MAP_CACHE_LIMIT = 8;
 const CHARACTER_RENAME_CONTEXT_LIMIT = 8;
 const DELETE_OWNERSHIP_RETRY_MS = 1000;
 const STARTUP_SIDECAR_RETRY_DELAYS_MS = Object.freeze([120, 240]);
+const SERVER_FRESHNESS_RESUME_DEBOUNCE_MS = 150;
 let cacheTouchSequence = 0;
 
 let activeChatKey = 'no-chat';
@@ -103,6 +106,7 @@ let eventsRegistered = false;
 let eventRegistrationRetryTimer = null;
 let eventRegistrationRetryAttempts = 0;
 let settingsMountTimer = null;
+let serverFreshnessResumeTimer = null;
 let panelController = null;
 let panelRoot = null;
 let panelChatKey = 'no-chat';
@@ -261,6 +265,8 @@ function forgetCachedChat(chatKey) {
   spatialRelevanceIndices.delete(key);
   loadedChats.delete(key);
   hydrationErrors.delete(key);
+  hydratedPointers.delete(key);
+  observedServerPointers.delete(key);
   branchDirtyChats.delete(key);
   passiveCaptureRebaseCandidates.delete(key);
   chatCacheTouches.delete(key);
@@ -373,9 +379,17 @@ function invalidateChatOperations(chatKey = currentChatKey()) {
   cancelWorldStateRequests({ chatKey });
 }
 
-function setCachedState(chatKey, state, { indexMode = 'rebuild', indexDelta = null, spatialIndexDelta = null } = {}) {
+function setCachedState(chatKey, state, {
+  indexMode = 'rebuild',
+  indexDelta = null,
+  spatialIndexDelta = null,
+  sourcePointer = undefined,
+} = {}) {
   const normalized = normalizeState(clone(state), { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
+  const hydratedPointer = sourcePointer === undefined ? pointerFor(chatKey) : sourcePointer;
+  if (hydratedPointer?.path) hydratedPointers.set(chatKey, structuredClone(hydratedPointer));
+  else hydratedPointers.delete(chatKey);
   touchChatCache(chatKey);
   stateEpochs.set(chatKey, epoch(chatKey) + 1);
 
@@ -493,7 +507,10 @@ async function neutralizeRetiredSidecar(chatKey, pointer) {
   });
 }
 
-async function persistState(chatKey, state = stateCache.get(chatKey), { allowBootstrapRecovery = false } = {}) {
+async function persistState(chatKey, state = stateCache.get(chatKey), {
+  allowBootstrapRecovery = false,
+  expectedPointer = undefined,
+} = {}) {
   if (!chatKey || chatKey === 'no-chat') return null;
   if (bootstrapRequiredChats.has(chatKey) && !allowBootstrapRecovery) {
     const error = new Error('World State Alpha found established chat history without a durable sidecar. Run Full chat rebuild, import, or explicit reset before writing new continuity.');
@@ -512,7 +529,10 @@ async function persistState(chatKey, state = stateCache.get(chatKey), { allowBoo
   const existingSettingsPointer = pointerFor(chatKey);
   const tombstone = tombstoneFor(chatKey);
   const baselineRecoveryWrite = allowBootstrapRecovery && bootstrapRequiredChats.has(chatKey);
-  let pointer = existingSettingsPointer;
+  const hydratedPointer = hydratedPointerFor(chatKey);
+  let pointer = expectedPointer === undefined
+    ? (hydratedPointer?.path ? hydratedPointer : existingSettingsPointer)
+    : expectedPointer;
 
   if (baselineRecoveryWrite) {
     const deterministicPath = hostStorage.deterministicPath?.(makeSidecarPath(chatKey)) || '';
@@ -548,6 +568,7 @@ async function persistState(chatKey, state = stateCache.get(chatKey), { allowBoo
   assertOwnershipEpoch(chatKey, ownerEpoch);
 
   settings.dataFiles[chatKey] = committed;
+  observedServerPointers.set(chatKey, structuredClone(committed));
   if (settings.sidecarTombstones?.[chatKey]) delete settings.sidecarTombstones[chatKey];
   provisionalFreshChats.delete(chatKey);
   bootstrapRequiredChats.delete(chatKey);
@@ -616,6 +637,8 @@ function clearChatRuntimeState(chatKey) {
   hydrationErrors.delete(chatKey);
   loadingChats.delete(chatKey);
   hydrationSources.delete(chatKey);
+  hydratedPointers.delete(chatKey);
+  observedServerPointers.delete(chatKey);
   provisionalFreshChats.delete(chatKey);
   bootstrapRequiredChats.delete(chatKey);
   bootstrapWarnings.delete(chatKey);
@@ -1127,7 +1150,9 @@ async function ensureChatStateLoaded(chatKey = currentChatKey()) {
         assertOwnershipEpoch(chatKey, ownerEpoch);
       }
 
-      setCachedState(chatKey, loaded.state);
+      setCachedState(chatKey, loaded.state, { sourcePointer: loaded.pointer });
+      if (loaded.pointer?.path) observedServerPointers.set(chatKey, structuredClone(loaded.pointer));
+      else observedServerPointers.delete(chatKey);
       hydrationSources.set(chatKey, loaded.source || 'unknown');
       if (loaded.source === 'fresh' || loaded.source === 'missing-sidecar') {
         provisionalFreshChats.add(chatKey);
@@ -1218,7 +1243,8 @@ async function recheckProvisionalFreshHydration(chatKey = currentChatKey()) {
     assertOwnershipEpoch(chatKey, ownerEpoch);
 
     const recoveredState = normalizeState(recovered.payload.state, { strictSchema: true, chatKey });
-    setCachedState(chatKey, recoveredState);
+    setCachedState(chatKey, recoveredState, { sourcePointer: recovered.pointer });
+    observedServerPointers.set(chatKey, structuredClone(recovered.pointer));
     loadedChats.add(chatKey);
     hydrationErrors.delete(chatKey);
     provisionalFreshChats.delete(chatKey);
@@ -1242,6 +1268,252 @@ async function recheckProvisionalFreshHydration(chatKey = currentChatKey()) {
     loadedChats.delete(chatKey);
     throw error;
   }
+}
+
+
+function sidecarPointerToken(pointer) {
+  if (!pointer?.path) return '';
+  return [
+    String(pointer.path),
+    Math.max(0, Math.trunc(Number(pointer.revision) || 0)),
+    String(pointer.checksum || ''),
+  ].join('|');
+}
+
+function sameSidecarPointer(left, right) {
+  return sidecarPointerToken(left) === sidecarPointerToken(right);
+}
+
+function hydratedPointerFor(chatKey) {
+  const pointer = hydratedPointers.get(String(chatKey || ''));
+  return pointer?.path ? structuredClone(pointer) : null;
+}
+
+function observedServerPointerFor(chatKey) {
+  const pointer = observedServerPointers.get(String(chatKey || ''));
+  return pointer?.path ? structuredClone(pointer) : null;
+}
+
+function lineageIsPrefix(prefix = [], full = []) {
+  const left = Array.isArray(prefix) ? prefix : [];
+  const right = Array.isArray(full) ? full : [];
+  if (left.length > right.length) return false;
+  return left.every((entry, index) => entry?.lineageKey === right[index]?.lineageKey);
+}
+
+function localChatIsBehindState(state, chat = getContext().chat || []) {
+  const localLineage = chatLineage(chat);
+  const storedLineage = Array.isArray(state?.lineage) ? state.lineage : [];
+  return storedLineage.length > localLineage.length && lineageIsPrefix(localLineage, storedLineage);
+}
+
+async function refreshChatStateFromServer(chatKey = currentChatKey(), {
+  reason = 'boundary',
+  retryDeterministicMiss = true,
+} = {}) {
+  if (!chatKey || chatKey === 'no-chat' || !hostHydrationReady) {
+    return { outcome: 'skipped', changed: false };
+  }
+
+  await ensureChatStateLoaded(chatKey);
+  if (hydrationErrors.has(chatKey)) {
+    return { outcome: 'blocked', changed: false };
+  }
+
+  const ownerEpoch = ownershipEpoch(chatKey);
+  const startStateEpoch = epoch(chatKey);
+  const startSettingsPointer = pointerFor(chatKey);
+  const startHydratedPointer = hydratedPointerFor(chatKey);
+  const preferredPointer = startSettingsPointer?.path ? startSettingsPointer : startHydratedPointer;
+  const startSettingsToken = sidecarPointerToken(startSettingsPointer);
+
+  const recovered = await recoverExistingSidecarPointer(chatKey, preferredPointer, {
+    retryDeterministicMiss,
+  });
+  assertOwnershipEpoch(chatKey, ownerEpoch);
+
+  if (epoch(chatKey) !== startStateEpoch
+    || sidecarPointerToken(pointerFor(chatKey)) !== startSettingsToken) {
+    return { outcome: 'raced', changed: false };
+  }
+
+  if (!recovered?.payload?.state) {
+    observedServerPointers.delete(chatKey);
+    if (preferredPointer?.path) {
+      bootstrapRequiredChats.add(chatKey);
+      branchDirtyChats.add(chatKey);
+      hydrationSources.set(chatKey, 'server-missing:' + reason);
+      if (currentChatKey() === chatKey) {
+        clearPrivatePrompt();
+        notifyBootstrapRequiredOnce(chatKey);
+      }
+      diagnosticStore.record(chatKey, {
+        operationId: 'freshness:missing:' + reason + ':' + Date.now(),
+        label: 'hydration',
+        sourceMessageId: null,
+        outcome: 'server-missing',
+        code: 'WORLD_STATE_SERVER_SIDECAR_MISSING',
+        detail: 'The previously hydrated server sidecar was not reachable during a ' + reason + ' freshness check. Cached state was preserved but cannot be used for new writes until durable authority is recovered.',
+        providerCalls: 0,
+      });
+      return { outcome: 'missing', changed: false };
+    }
+    return { outcome: 'no-sidecar', changed: false };
+  }
+
+  const remotePointer = recovered.pointer;
+  observedServerPointers.set(chatKey, structuredClone(remotePointer));
+  const hydratedPointer = hydratedPointerFor(chatKey);
+
+  if (hydratedPointer?.path
+    && remotePointer?.path === hydratedPointer.path
+    && Number(remotePointer.revision || 0) < Number(hydratedPointer.revision || 0)) {
+    diagnosticStore.record(chatKey, {
+      operationId: 'freshness:older-read:' + reason + ':' + Date.now(),
+      label: 'hydration',
+      sourceMessageId: null,
+      outcome: 'stale-read',
+      code: 'WORLD_STATE_SERVER_REVISION_REGRESSION_IGNORED',
+      detail: 'Ignored a server freshness read that reported an older revision than the hydrated working copy.',
+      providerCalls: 0,
+    });
+    return { outcome: 'raced', changed: false };
+  }
+
+  const settings = getWorldStateSettings();
+  const settingsPointer = pointerFor(chatKey);
+  const pointerNeedsRepair = !sameSidecarPointer(settingsPointer, remotePointer);
+  if (pointerNeedsRepair) {
+    settings.dataFiles[chatKey] = structuredClone(remotePointer);
+    persistHostSettings();
+  }
+
+  if (sameSidecarPointer(hydratedPointer, remotePointer)) {
+    provisionalFreshChats.delete(chatKey);
+    bootstrapRequiredChats.delete(chatKey);
+    bootstrapWarnings.delete(chatKey);
+    hydrationSources.set(chatKey, 'server-current:' + reason);
+    touchChatCache(chatKey);
+    return {
+      outcome: 'current',
+      changed: false,
+      revision: Number(remotePointer.revision || 0),
+    };
+  }
+
+  const previousRevision = Number(hydratedPointer?.revision || 0);
+  const recoveredState = normalizeState(recovered.payload.state, { strictSchema: true, chatKey });
+  cancelWorldStateRequests({ chatKey });
+  setCachedState(chatKey, recoveredState, { sourcePointer: remotePointer });
+  loadedChats.add(chatKey);
+  hydrationErrors.delete(chatKey);
+  provisionalFreshChats.delete(chatKey);
+  bootstrapRequiredChats.delete(chatKey);
+  bootstrapWarnings.delete(chatKey);
+  hydrationSources.set(chatKey, 'server-refresh:' + reason);
+  touchChatCache(chatKey);
+
+  const hostChatBehind = currentChatKey() === chatKey && localChatIsBehindState(recoveredState);
+  if (hostChatBehind) {
+    branchDirtyChats.add(chatKey);
+    clearPrivatePrompt();
+  }
+
+  diagnosticStore.record(chatKey, {
+    operationId: 'freshness:refresh:' + reason + ':' + Date.now(),
+    label: 'hydration',
+    sourceMessageId: null,
+    outcome: hostChatBehind ? 'server-refreshed-chat-behind' : 'server-refreshed',
+    code: hostChatBehind
+      ? 'WORLD_STATE_HOST_CHAT_BEHIND_SIDECAR'
+      : 'WORLD_STATE_SERVER_STATE_REFRESHED',
+    detail: 'Refreshed the working copy from server revision '
+      + previousRevision + ' to ' + Number(remotePointer.revision || 0)
+      + (hostChatBehind
+        ? '; the local SillyTavern chat is behind that durable state, so continuity remains fail-closed until the chat catches up.'
+        : '.'),
+    providerCalls: 0,
+  });
+
+  return {
+    outcome: hostChatBehind ? 'chat-behind' : 'refreshed',
+    changed: true,
+    revision: Number(remotePointer.revision || 0),
+    chatBehind: hostChatBehind,
+  };
+}
+
+async function handleServerRevisionConflict(chatKey, error, {
+  label = 'mutation',
+  sourceMessageId = null,
+} = {}) {
+  if (error?.code !== 'WORLD_STATE_REVISION_CONFLICT') return false;
+  let refreshOutcome = 'unknown';
+  try {
+    const refreshed = await refreshChatStateFromServer(chatKey, {
+      reason: 'write-conflict',
+      retryDeterministicMiss: true,
+    });
+    refreshOutcome = refreshed?.outcome || 'unknown';
+  } catch (refreshError) {
+    const blocked = new Error(
+      'World State Alpha detected a newer server writer during ' + label
+      + ' but could not safely hydrate that durable state: '
+      + String(refreshError?.message || refreshError || 'unknown refresh failure').slice(0, 240),
+    );
+    blocked.code = 'WORLD_STATE_CONFLICT_REHYDRATION_FAILURE';
+    hydrationErrors.set(chatKey, blocked);
+    clearPrivatePrompt();
+    throw blocked;
+  }
+
+  diagnosticStore.record(chatKey, {
+    operationId: 'revision-conflict:' + label + ':' + Date.now(),
+    label: 'persistence',
+    sourceMessageId: Number.isInteger(sourceMessageId) ? sourceMessageId : null,
+    outcome: 'stale-writer-rejected',
+    code: 'WORLD_STATE_REVISION_CONFLICT',
+    detail: 'Rejected a stale ' + label + ' write because another session advanced the server sidecar. Freshness result: ' + refreshOutcome + '.',
+    providerCalls: 0,
+  });
+  if (currentChatKey() === chatKey) {
+    updatePrivateInjection();
+    refreshPanel();
+  }
+  return true;
+}
+
+function scheduleServerFreshnessRefresh(reason = 'resume') {
+  if (!hostHydrationReady || !globalThis.setTimeout) return;
+  if (serverFreshnessResumeTimer !== null) clearTimeout(serverFreshnessResumeTimer);
+  serverFreshnessResumeTimer = setTimeout(() => {
+    serverFreshnessResumeTimer = null;
+    const chatKey = currentChatKey();
+    if (!chatKey || chatKey === 'no-chat') return;
+    void queueChatWork(chatKey, async () => {
+      try {
+        await ensureChatStateLoaded(chatKey);
+        if (currentChatKey() !== chatKey) return;
+        await refreshChatStateFromServer(chatKey, { reason });
+        if (currentChatKey() !== chatKey) return;
+        if (bootstrapRequiredChats.has(chatKey)) {
+          notifyBootstrapRequiredOnce(chatKey);
+          clearPrivatePrompt();
+          refreshPanel();
+          return;
+        }
+        await reconcileCurrentBranch(chatKey, { persistRestore: true });
+        if (currentChatKey() !== chatKey) return;
+        updatePrivateInjection();
+        refreshPanel();
+      } catch (error) {
+        if (currentChatKey() !== chatKey) return;
+        clearPrivatePrompt();
+        console.error('[World State Alpha] server freshness refresh failed safely (' + reason + ')', error);
+        refreshPanel();
+      }
+    });
+  }, SERVER_FRESHNESS_RESUME_DEBOUNCE_MS);
 }
 
 function notifyBootstrapRequiredOnce(chatKey = currentChatKey()) {
@@ -1343,12 +1615,21 @@ async function persistGuardedMutation({
   const guard = typeof isCurrent === 'function' ? isCurrent : () => true;
   if (!guard()) return { stale: true, phase: 'before' };
 
-  const committed = await persistState(chatKey, candidateState);
+  const basePointer = hydratedPointerFor(chatKey) || pointerFor(chatKey);
+  let committed;
+  try {
+    committed = await persistState(chatKey, candidateState, { expectedPointer: basePointer });
+  } catch (error) {
+    if (await handleServerRevisionConflict(chatKey, error, { label, sourceMessageId })) {
+      return { stale: true, phase: 'conflict', conflict: true };
+    }
+    throw error;
+  }
   if (guard()) return { stale: false, committed };
 
   try {
     if (!recoveryState) throw new Error('No authoritative recovery state was available.');
-    await persistState(chatKey, recoveryState);
+    await persistState(chatKey, recoveryState, { expectedPointer: committed });
   } catch (restoreError) {
     const detail = String(restoreError?.message || restoreError || 'stale write compensation failed').slice(0, 320);
     const blocked = new Error('World State Alpha blocked this chat after a stale ' + label + ' write could not be compensated: ' + detail);
@@ -1482,6 +1763,33 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
   const state = await ensureChatStateLoaded(chatKey);
   if (!state || currentChatKey() !== chatKey) return null;
 
+  const currentLineage = chatLineage(getContext().chat || []);
+  const storedLineage = Array.isArray(state.lineage) ? state.lineage : [];
+  if (storedLineage.length > currentLineage.length && lineageIsPrefix(currentLineage, storedLineage)) {
+    const wasDirty = branchDirtyChats.has(chatKey);
+    branchDirtyChats.add(chatKey);
+    clearPrivatePrompt();
+    if (!wasDirty) {
+      diagnosticStore.record(chatKey, {
+        operationId: 'branch:host-chat-behind:' + Date.now(),
+        label: 'branch',
+        sourceMessageId: currentLineage.length ? currentLineage.length - 1 : null,
+        outcome: 'fail-closed',
+        code: 'WORLD_STATE_HOST_CHAT_BEHIND_SIDECAR',
+        detail: 'The durable server sidecar contains a strict continuation of the currently loaded SillyTavern chat. World State will not roll that newer server state backward; reopen/reload the chat so the host history catches up.',
+        providerCalls: 0,
+      });
+    }
+    return {
+      state,
+      divergence: currentLineage.length,
+      action: 'host-chat-behind',
+      exactRestored: false,
+      failClosed: true,
+      hostChatBehind: true,
+    };
+  }
+
   const passiveCaptureMessageId = passiveCaptureRebaseCandidates.get(chatKey);
   const result = reconcileBranch(state, getContext().chat || [], {
     passiveCaptureMessageId: Number.isInteger(passiveCaptureMessageId) ? passiveCaptureMessageId : null,
@@ -1570,6 +1878,8 @@ async function handleAssistantMessage(messageId) {
 
   await queueChatWork(chatKey, async () => {
     await ensureChatStateLoaded(chatKey);
+    if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+    await refreshChatStateFromServer(chatKey, { reason: 'assistant-boundary' });
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
     if (bootstrapRequiredChats.has(chatKey)) {
       notifyBootstrapRequiredOnce(chatKey);
@@ -1737,6 +2047,8 @@ async function handleUserMessage(messageId) {
   // but completes in the background for later injections.
   await ensureChatStateLoaded(chatKey);
   if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+  await refreshChatStateFromServer(chatKey, { reason: 'user-boundary' });
+  if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
   if (bootstrapRequiredChats.has(chatKey)) {
     notifyBootstrapRequiredOnce(chatKey);
     clearPrivatePrompt();
@@ -1748,6 +2060,8 @@ async function handleUserMessage(messageId) {
 
   void queueChatWork(chatKey, async () => {
     await ensureChatStateLoaded(chatKey);
+    if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+    await refreshChatStateFromServer(chatKey, { reason: 'continuity-boundary' });
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
     if (!getWorldStateSettings().enabled) {
       clearPrivatePrompt();
@@ -1841,6 +2155,8 @@ async function handleBranchChange(reason = 'branch') {
     try {
       await ensureChatStateLoaded(chatKey);
       if (currentChatKey() !== chatKey) return;
+      await refreshChatStateFromServer(chatKey, { reason: 'branch-change' });
+      if (currentChatKey() !== chatKey) return;
       if (bootstrapRequiredChats.has(chatKey)) {
         notifyBootstrapRequiredOnce(chatKey);
         clearPrivatePrompt();
@@ -1880,6 +2196,8 @@ async function activateCurrentChat() {
       if (currentChatKey() !== chatKey) return;
     }
     await ensureChatStateLoaded(chatKey);
+    if (currentChatKey() !== chatKey) return;
+    await refreshChatStateFromServer(chatKey, { reason: 'chat-activation' });
     if (currentChatKey() !== chatKey) return;
     if (bootstrapRequiredChats.has(chatKey)) {
       notifyBootstrapRequiredOnce(chatKey);
@@ -2075,6 +2393,12 @@ function bindSettingsEvents() {
   document.addEventListener('click', event => {
     if (event.target?.id === 'world_state_alpha_open') void openWorldStatePanel();
   });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') scheduleServerFreshnessRefresh('visibility-resume');
+  });
+  globalThis.addEventListener?.('pageshow', () => scheduleServerFreshnessRefresh('pageshow'));
+  globalThis.addEventListener?.('focus', () => scheduleServerFreshnessRefresh('window-focus'));
 }
 
 function closeWorldStatePanel() {
@@ -2159,6 +2483,8 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
 async function applyMaintenanceActionNow(actionId, payload, chatKey) {
   await ensureChatStateLoaded(chatKey);
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
+  await refreshChatStateFromServer(chatKey, { reason: 'maintenance-' + actionId });
+  if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
   if (bootstrapRequiredChats.has(chatKey) && !['import', 'reset', 'rebuild'].includes(actionId)) {
     notifyBootstrapRequiredOnce(chatKey);
     return;
@@ -2180,7 +2506,15 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const preview = previewWorldStateImport(text, { targetChatKey: chatKey });
     if (!window.confirm('Import this World State bundle into the current chat? Existing World State records will be replaced after confirmation.')) return;
     const next = seedRootCheckpoint(applyWorldStateImport(preview, { confirmed: true }));
-    await persistState(chatKey, next, { allowBootstrapRecovery: true });
+    try {
+      await persistState(chatKey, next, { allowBootstrapRecovery: true });
+    } catch (error) {
+      if (await handleServerRevisionConflict(chatKey, error, { label: 'import' })) {
+        notify('info', 'World State import was cancelled because another session updated the server state first.');
+        return;
+      }
+      throw error;
+    }
     setCachedState(chatKey, next);
     passiveCaptureRebaseCandidates.delete(chatKey);
     if (next.spatial?.baseMapRef?.id) {
@@ -2199,7 +2533,15 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     if (!window.confirm('Reset World State Alpha for this chat? This replaces the current World State after confirmation.')) return;
     const next = seedRootCheckpoint(applyWorldStateReset(preview, { confirmed: true }));
     rebuildStatuses.delete(chatKey);
-    await persistState(chatKey, next, { allowBootstrapRecovery: true });
+    try {
+      await persistState(chatKey, next, { allowBootstrapRecovery: true });
+    } catch (error) {
+      if (await handleServerRevisionConflict(chatKey, error, { label: 'reset' })) {
+        notify('info', 'World State reset was cancelled because another session updated the server state first.');
+        return;
+      }
+      throw error;
+    }
     setCachedState(chatKey, next);
     passiveCaptureRebaseCandidates.delete(chatKey);
     updatePrivateInjection();
@@ -2472,11 +2814,46 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       return;
     }
 
+    let rebuildCommitted = null;
     try {
-      await persistState(chatKey, result.state, {
+      rebuildCommitted = await persistState(chatKey, result.state, {
         allowBootstrapRecovery: bootstrapRecoveryAtStart && mode === 'full',
       });
     } catch (error) {
+      if (await handleServerRevisionConflict(chatKey, error, {
+        label: 'rebuild',
+        sourceMessageId,
+      })) {
+        const detail = 'Rebuild candidate was rejected because another session advanced the server state; the latest durable state was rehydrated.';
+        rebuildStatuses.set(chatKey, {
+          ...(rebuildStatuses.get(chatKey) || {}),
+          phase: 'cancelled',
+          detail,
+          processedBoundaries: result.processedBoundaries || 0,
+          totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+          providerCalls: result.providerCalls || 0,
+          applied,
+          rejected,
+          completedAt: Date.now(),
+        });
+        diagnosticStore.record(chatKey, {
+          operationId,
+          label: 'rebuild',
+          sourceMessageId,
+          outcome: 'rebuild-cancelled',
+          code: 'WORLD_STATE_REVISION_CONFLICT',
+          detail,
+          providerCalls: result.providerCalls || 0,
+          applied,
+          rejected,
+          aliasRepairs,
+          processedBoundaries: result.processedBoundaries || 0,
+          totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+        });
+        refreshPanel();
+        notify('info', detail);
+        return;
+      }
       const detail = String(error?.message || error || 'persistence failure').slice(0, 320);
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
@@ -2560,7 +2937,10 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       }
 
       try {
-        await persistState(chatKey, state, { allowBootstrapRecovery: true });
+        await persistState(chatKey, state, {
+          allowBootstrapRecovery: true,
+          expectedPointer: rebuildCommitted,
+        });
       } catch (restoreError) {
         const detail = String(restoreError?.message || restoreError || 'stale rebuild compensation failed').slice(0, 320);
         const blocked = new Error('World State Alpha blocked this chat after a stale rebuild write could not be compensated: ' + detail);
@@ -2686,6 +3066,8 @@ async function applyRecordAction(actionId, payload = {}, expectedChatKey = curre
 async function applyRecordActionNow(actionId, payload, chatKey) {
   await ensureChatStateLoaded(chatKey);
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
+  await refreshChatStateFromServer(chatKey, { reason: 'manual-lifecycle' });
+  if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
   if (bootstrapRequiredChats.has(chatKey)) {
     notifyBootstrapRequiredOnce(chatKey);
     return;
@@ -2800,6 +3182,8 @@ async function applySpatialAction(actionId, payload = {}, expectedChatKey = curr
 
 async function applySpatialActionNow(actionId, payload, chatKey) {
   await ensureChatStateLoaded(chatKey);
+  if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
+  await refreshChatStateFromServer(chatKey, { reason: 'spatial-' + actionId });
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
   if (bootstrapRequiredChats.has(chatKey)) {
     notifyBootstrapRequiredOnce(chatKey);
@@ -3298,6 +3682,7 @@ export async function openWorldStatePanel() {
   }
   try {
     await ensureChatStateLoaded(chatKey);
+    await refreshChatStateFromServer(chatKey, { reason: 'panel-open' });
   } catch {
     if (currentChatKey() === chatKey) {
       notify('error', 'World State Alpha cannot open this chat until its durable state can be loaded safely.');
@@ -3507,6 +3892,8 @@ globalThis.WorldStateAlpha = Object.freeze({
       chatReady: key !== 'no-chat' && loadedChats.has(key) && !hydrationErrors.has(key),
       hydrationError: hydrationErrors.get(key)?.message || null,
       hydrationSource: hydrationSources.get(key) || '',
+      hydratedRevision: Number(hydratedPointerFor(key)?.revision || 0),
+      observedServerRevision: Number(observedServerPointerFor(key)?.revision || 0),
       provisionalFresh: provisionalFreshChats.has(key),
       bootstrapRequired: bootstrapRequiredChats.has(key),
       panelOpen: Boolean(panelRoot?.isConnected),

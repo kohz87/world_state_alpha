@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.0-alpha.27 - Server-authoritative multi-session freshness
+
+### Fixed
+
+- The per-browser World State cache is no longer treated as fresh merely because a chat was hydrated earlier in the same session.
+- Meaningful boundaries now recheck the same-backend server sidecar and rehydrate when another desktop/mobile/tab session has advanced its revision.
+- Chat activation, user/assistant boundaries, background continuity, panel open, maintenance/manual/Spatial actions, branch changes, and browser resume (`visibilitychange`, `pageshow`, window focus) all participate without permanent polling.
+- If a newer durable sidecar is a strict continuation of the currently loaded SillyTavern chat, World State preserves the newer server state and fails continuity closed until the host chat catches up instead of rolling the server sidecar backward.
+- A cross-session `WORLD_STATE_REVISION_CONFLICT` now rejects the stale writer, refreshes from durable server state, records bounded diagnostics, and prevents the obsolete candidate from being published in memory.
+- Runtime status now exposes the hydrated revision and latest observed server revision for debugging.
+
+### Architecture
+
+- The SillyTavern `/user/files/world-state-alpha-*` sidecar is explicitly the canonical authority. In-memory state and relevance/spatial indexes remain disposable performance caches.
+- No localStorage/IndexedDB canonical store, device-to-device sync layer, peer transport, or background polling was added.
+- Different SillyTavern backends remain independent by design.
+
+### Validation
+
+- Added host regressions for server-authoritative freshness boundaries, revision-aware hydration metadata, resume refresh, stale-writer conflict recovery, and the fail-closed host-chat-behind condition.
+- Canonical schema remains version 2; sidecar, bundle, and rollback-journal envelope versions remain 1.
+
+
 ## 0.9.0-alpha.26 - Rapid branch-write race hardening
 
 ### Fixed
