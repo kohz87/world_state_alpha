@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.25 hardens session/device hydration: startup waits for SillyTavern host readiness, deterministic sidecar discovery is retried and rechecked after extension settings load, and an established chat with no reachable durable sidecar enters explicit recovery mode instead of silently starting from scratch. Full-chat rebuild, import, or explicit reset can establish a new baseline; ordinary capture/injection/writes remain paused until then. Alpha.24 Coordinate Profile controls and Alpha.23 generalized base-map/schema simplification remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.26 hardens rapid edit/delete/swipe/regenerate races: canonical writes are now guarded across the sidecar I/O boundary, a write that becomes stale in flight is compensatingly restored before cache publication, and explicit branch events synchronously revoke passive-rewrite eligibility before queued reconciliation. Earlier established World State therefore survives a quick delete-and-regenerate while only the abandoned suffix is rolled back. Alpha.25 session/device hydration recovery, Alpha.24 Coordinate Profile controls, and Alpha.23 generalized base-map/schema simplification remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

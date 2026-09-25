@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.0-alpha.26 - Rapid branch-write race hardening
+
+### Fixed
+
+- Rapid edit/delete/swipe/regenerate sequences can no longer let a capture or evolution result that started on the abandoned branch publish after the branch event.
+- Canonical capture, evolution, exact branch restore, manual lifecycle, and Spatial writes now guard current chat/state lineage across the sidecar I/O boundary. If the operation becomes stale while the file write is in flight, the previously authoritative state is immediately persisted back before any candidate is published in memory.
+- Failed stale-write compensation blocks the chat fail-closed with `WORLD_STATE_STALE_WRITE_RESTORE_FAILURE` instead of leaving an uncertain durable candidate behind.
+- Explicit `MESSAGE_EDITED`, `MESSAGE_DELETED`, `MESSAGE_SWIPED`, and `MESSAGE_SWIPE_DELETED` events now synchronously revoke the latest passive-capture rebase candidate before incrementing the state epoch and queueing exact reconciliation. Passive host/Regex cleanup remains supported when no explicit branch event was observed.
+- Manual lifecycle and Spatial edits use the same chat-head transaction guard, so an operator action cannot land on a branch that changed while a prompt/base-map/persistence wait was in progress.
+
+### Delete/regenerate behavior
+
+- Deleting the latest captured assistant message and immediately regenerating a replacement at the same slot rolls back only the abandoned suffix. Earlier facts/developments remain intact.
+- A regenerated `MESSAGE_RECEIVED` waits behind the per-chat branch reconciliation queue when the explicit branch event arrived first; if event delivery is reordered, lineage mismatch still forces reconciliation before capture.
+- A stale capture that was already inside sidecar persistence is compensatingly restored and returns before `setCachedState()` or `passiveCaptureRebaseCandidates.set()`.
+
+### Validation
+
+- Added an executable stale-write transaction regression that invalidates currentness during the candidate sidecar write and proves the durable write sequence is candidate -> prior authoritative state.
+- Added a branch-core regression for established earlier facts/developments followed by delete + immediate regenerated assistant at the same message slot.
+- Full suite: 322 tests. Phase 1-9 validation includes stale-write compensation and explicit branch-race invalidation.
+
 ## 0.9.0-alpha.25 - Session and device hydration hardening
 
 ### Fixed

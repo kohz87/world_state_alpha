@@ -59,6 +59,66 @@ test('swipe/branch replacement removes ghost state from the abandoned suffix', (
   assert.equal(reconciled.state.records[0].summary, 'King Aldren rules Valenne.');
 });
 
+test('rapid delete then regenerate at the same assistant slot preserves earlier world state', () => {
+  let state = seedRootCheckpoint(createState('delete-regenerate'));
+  let chat = [{ role: 'assistant', content: 'The north gate is closed.' }];
+  state = apply(state, chat, {
+    action: 'create',
+    kind: 'fact',
+    summary: 'The north gate is closed.',
+    anchors: ['north gate'],
+  });
+  const gateId = state.records[0].id;
+
+  chat = [
+    ...chat,
+    { role: 'user', content: 'I head toward the market.' },
+    { role: 'assistant', content: 'Haulers begin extorting inbound farmers at the market.' },
+  ];
+  state = apply(state, chat, {
+    action: 'create',
+    kind: 'development',
+    summary: 'Haulers are extorting inbound farmers at the market.',
+    anchors: ['haulers', 'market'],
+  });
+  const extortionId = state.records.find(record => record.id !== gateId).id;
+
+  chat = [
+    ...chat,
+    { role: 'user', content: 'I wait beneath the awning.' },
+    { role: 'assistant', content: 'A warehouse catches fire beside the square.' },
+  ];
+  state = apply(state, chat, {
+    action: 'create',
+    kind: 'development',
+    summary: 'A warehouse beside the square is burning.',
+    anchors: ['warehouse', 'square'],
+  });
+  assert.equal(state.records.length, 3);
+
+  const regenerated = [
+    chat[0],
+    chat[1],
+    chat[2],
+    chat[3],
+    { role: 'assistant', content: 'Rain begins over the square instead.' },
+  ];
+
+  const reconciled = reconcileBranch(state, regenerated);
+  assert.equal(reconciled.failClosed, false);
+  assert.equal(reconciled.exactRestored, true);
+  assert.equal(reconciled.divergence, 4);
+  assert.equal(reconciled.state.records.length, 2);
+  assert.equal(reconciled.state.records.some(record => record.id === gateId), true);
+  assert.equal(reconciled.state.records.some(record => record.id === extortionId), true);
+  assert.equal(
+    reconciled.state.records.some(record => /warehouse.*burning/i.test(record.summary)),
+    false,
+    'only the abandoned deleted/regenerated suffix should be removed',
+  );
+  assert.equal(reconciled.state.lineage.length, regenerated.length);
+});
+
 test('multiple writes on one raw message coalesce to earliest-before undo', () => {
   let state = seedRootCheckpoint(createState('coalesce'));
   const chat = [{ role: 'assistant', content: 'A reactor incident establishes several facts.' }];

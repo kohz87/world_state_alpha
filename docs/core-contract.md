@@ -183,7 +183,7 @@ No ghost state may survive an abandoned branch.
 
 ## C11. Persistence
 
-One canonical per-chat state owner and one sidecar persistence boundary.
+One canonical per-chat state owner and one sidecar persistence boundary. A canonical mutation is not publishable merely because its sidecar write began while current: current chat/state ownership must still hold after the I/O completes. If it became stale in flight, the previously authoritative state must be compensatingly persisted before the candidate can be discarded; failed compensation blocks the chat fail-closed.
 
 Requirements:
 
@@ -414,14 +414,14 @@ Normal lifecycle ownership:
 - completed assistant message -> reconcile exact branch -> at most one eligible capture request -> canonical reducer result -> branch journal ownership -> sidecar persistence
 - user message before the next generation -> hydrate/prepare from the last durably committed branch-safe state -> compact private injection immediately -> serialize optional provider-backed meaningful elapsed-time/background catch-up on the existing chat writer queue for later injections
 - chat load/change -> cancel World State in-flight work, hydrate/reconcile current owned state, then refresh only the World State prompt/UI
-- edit/delete/swipe lifecycle -> cancel World State requests and run exact `reconcileBranch`; retain the latest passive compatibility proof until reconciliation classifies the divergence, then clear it
+- edit/delete/swipe lifecycle -> synchronously mark the branch dirty, clear the latest passive-capture compatibility token, advance the state epoch/cancel World State requests, then run exact `reconcileBranch`; narration-equivalent passive host rewrites may still rebase when no explicit branch event was observed
 - presentation-only assistant rewrites -> durable lineage role + sanitized narration fingerprints may prove one or many changed historical assistant rows narration-equivalent and rebase owned lineage metadata without undoing canonical state; the latest captured boundary also receives one bounded O(1) raw-fingerprint watch so delayed host normalization cannot hide behind a newer unchanged tail
 - semantic assistant edits, user edits, swipes, deletes, and truncations -> use ordinary exact rollback when the change is proven
 - character/chat rename -> migrate the owner-qualified World State key and pointer only after the new owned sidecar is durably written; host historical-name rewrites rebase proven lineage keys without rolling current world truth backward
 - chat/group-chat/character delete -> resolve exact owner ownership, neutralize the retired sidecar when possible, persist a lifecycle tombstone, then remove active pointer/cache ownership; ambiguity preserves data fail-closed
 - routing/enablement setting changes -> advance the state epoch and cancel matching provider work before new settings take effect
 
-All asynchronous provider-backed work is guarded by current chat identity, exact raw-message lineage, and local state epoch. Host ownership-changing operations additionally use an ownership epoch so stale hydration or persistence completion cannot repopulate a renamed/deleted owner. Stale completion is discarded. Provider-backed automatic work and operator maintenance/Spatial mutations for one chat are serialized through the same per-chat work queue. Automatic assistant capture must not keep SillyTavern's awaited `MESSAGE_RECEIVED` render/save event open. Provider-backed continuity/evolution must likewise not keep the awaited `MESSAGE_SENT` preparation path open: that event publishes only the last durably committed safe state for the current generation, then queues remote completeness work whose committed result is eligible for later injections.
+All asynchronous provider-backed work is guarded by current chat identity, exact raw-message lineage, and local state epoch. Host ownership-changing operations additionally use an ownership epoch so stale hydration or persistence completion cannot repopulate a renamed/deleted owner. Provider currentness is rechecked across persistence: a candidate that becomes stale during sidecar I/O is compensated with the previously authoritative state before publication. Stale completion is otherwise discarded. Provider-backed automatic work and operator maintenance/Spatial mutations for one chat are serialized through the same per-chat work queue. Automatic assistant capture must not keep SillyTavern's awaited `MESSAGE_RECEIVED` render/save event open. Provider-backed continuity/evolution must likewise not keep the awaited `MESSAGE_SENT` preparation path open: that event publishes only the last durably committed safe state for the current generation, then queues remote completeness work whose committed result is eligible for later injections.
 
 The host calls `setExtensionPrompt` only for `world_state_alpha_private_continuity`, SYSTEM / `IN_CHAT`, at the configured shallow depth. Disabling, leaving a chat, or failing hydration clears only that World State key. The host never mutates global RP provider/model/preset settings.
 

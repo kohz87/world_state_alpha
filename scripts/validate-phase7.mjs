@@ -117,7 +117,7 @@ for (const event of [
   if (!index.includes(event)) throw new Error('Phase 7 host event missing: ' + event);
 }
 const userHandlerStart = index.indexOf('async function handleUserMessage(messageId)');
-const userHandlerEnd = index.indexOf('async function handleBranchChange()', userHandlerStart);
+const userHandlerEnd = index.indexOf('async function handleBranchChange(', userHandlerStart);
 const userHandlerSource = index.slice(userHandlerStart, userHandlerEnd);
 if (/await\s+queueChatWork\(/.test(userHandlerSource)
   || !/updatePrivateInjection\(\);[\s\S]*void queueChatWork\(chatKey, async \(\) =>/.test(userHandlerSource)
@@ -143,12 +143,22 @@ if (!/selectRelevantRecords\([\s\S]*maxRecords:\s*CAPTURE_LIMITS\.visibleRecords
 if (!hostStorage.includes('withWriterLock') || !hostStorage.includes('navigator?.locks')) {
   throw new Error('Phase 7 host sidecar writes are not serialized');
 }
+if (!/async function persistGuardedMutation\(\{[\s\S]*await persistState\(chatKey, candidateState\)[\s\S]*if \(guard\(\)\) return \{ stale: false, committed \}[\s\S]*await persistState\(chatKey, recoveryState\)[\s\S]*WORLD_STATE_STALE_WRITE_COMPENSATED/.test(index)) {
+  throw new Error('Phase 7 stale in-flight writes are not compensated before publication');
+}
+if (!/async function handleBranchChange\(reason = 'branch'\)[\s\S]*branchDirtyChats\.add\(chatKey\);[\s\S]*passiveCaptureRebaseCandidates\.delete\(chatKey\);[\s\S]*stateEpochs\.set\(chatKey, epoch\(chatKey\) \+ 1\)/.test(index)) {
+  throw new Error('Phase 7 explicit branch events do not synchronously invalidate passive capture ownership');
+}
+if (!/source\.on\(events\[name\], \(\) => handleBranchChange\(name\)\)/.test(index)) {
+  throw new Error('Phase 7 branch event identity is not forwarded into reconciliation');
+}
 for (const [reason, stateExpr] of [['capture', 'result.state'], ['evolution', 'prepared.state']]) {
   const commitAt = index.indexOf("commitMutationBoundary(before, " + stateExpr + ", liveChat, messageId, '" + reason + "'");
-  const persistAt = index.indexOf('await persistState(chatKey, committed)', commitAt);
-  const publishAt = index.indexOf('setCachedState(chatKey, committed', persistAt);
-  if (!(commitAt >= 0 && persistAt > commitAt && publishAt > persistAt)) {
-    throw new Error('Phase 7 ' + reason + ' must persist before publishing canonical cache');
+  const persistAt = index.indexOf('await persistGuardedMutation({', commitAt);
+  const staleAt = index.indexOf('if (persisted.stale)', persistAt);
+  const publishAt = index.indexOf('setCachedState(chatKey, committed', staleAt);
+  if (!(commitAt >= 0 && persistAt > commitAt && staleAt > persistAt && publishAt > staleAt)) {
+    throw new Error('Phase 7 ' + reason + ' must guarded-persist and reject stale writes before publishing canonical cache');
   }
 }
 if ((index.match(/await persistState\(chatKey, next, \{ allowBootstrapRecovery: true \}\);\s*setCachedState\(chatKey, next\);/g) || []).length !== 2) {
@@ -232,4 +242,4 @@ const conflict = await conflicting.write({
 });
 if (!conflict?.conflict || uploadAttempts !== 0) throw new Error('Phase 7 revision conflict did not fail before upload');
 
-console.log('World State Alpha Phase 7 validation passed: isolated host entrypoint, owner-qualified identity, host-ready/retry-hardened sidecar hydration, bounded capture/continuity lifecycle, and no cross-extension dependency.');
+console.log('World State Alpha Phase 7 validation passed: isolated host entrypoint, owner-qualified identity, host-ready/retry-hardened hydration, stale-write compensation, branch-race invalidation, bounded capture/continuity lifecycle, and no cross-extension dependency.');

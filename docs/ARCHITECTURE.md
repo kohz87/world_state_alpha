@@ -636,14 +636,14 @@ Phase 8 also removes full-chat lineage hashing from ordinary user/assistant even
 
 - The cached exact lineage is extended only for newly appended raw messages.
 - The previous tail fingerprint is checked before suffix extension.
-- Edit/delete/swipe events synchronously mark the chat branch dirty; a dirty chat cannot use the append fast path and must complete exact reconciliation first.
+- Edit/delete/swipe events synchronously mark the chat branch dirty, revoke the latest passive-capture rebase token, advance the local state epoch, and cancel provider work; a dirty chat cannot use the append fast path and must complete exact reconciliation first.
 - Bounded exchange extraction reuses cached lineage.
 - Provider currentness guards compare the owned source-message fingerprint plus chat/state epoch instead of rebuilding the whole lineage.
 - Capture/evolution journal commits receive the already-known lineage.
 - After a successful live capture, the host retains the latest captured boundary ID so the suffix fast path performs one extra O(1) raw-fingerprint check on that boundary. This detects delayed host/Regex normalization even if newer tail messages already exist.
 - Every newly owned lineage row persists role metadata plus a sanitized narration fingerprint for non-user messages. Exact reconciliation can therefore prove that one or several older assistant messages were rewritten only in non-canonical presentation/planning text and rebase all owned lineage metadata without replaying undo.
 
-Full `chatLineage` / exact `reconcileBranch` work remains appropriate for chat hydration, edit/delete/swipe recovery, explicit rebuild, and other operations that genuinely need whole-history proof. Genuine semantic edits, user edits, swipes, and deletions continue through exact rollback.
+Full `chatLineage` / exact `reconcileBranch` work remains appropriate for chat hydration, edit/delete/swipe recovery, explicit rebuild, and other operations that genuinely need whole-history proof. Genuine semantic edits, user edits, swipes, and deletions continue through exact rollback. Canonical mutation persistence is transaction-guarded around sidecar I/O: when a branch/state epoch changes during the write, the prior authoritative state is compensatingly written back and the stale candidate is never published.
 
 ### C. Canonical evidence compaction
 
@@ -655,7 +655,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.25`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
+Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.26`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

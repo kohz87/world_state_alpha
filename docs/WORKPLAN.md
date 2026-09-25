@@ -216,6 +216,7 @@ Deliverables:
 - v0.9.0-alpha.23 pre-1.0 simplification: drop schema-1 and old-lineage upgrade compatibility, collapse base-map parsing to one generalized Cartesian contract, remove adapter identity, and keep map/location identity stable across source-version changes
 - v0.9.0-alpha.24 Coordinate Profile controls: expose journaled manual Cartesian profile editing, make attached base-map profiles authoritative/read-only, and invalidate stale derived coordinates when profile math changes
 - v0.9.0-alpha.25 session/device hydration hardening: gate canonical hydration on host readiness, retry/recheck deterministic sidecar discovery, and pause established chats with missing durable state until Full rebuild/import/reset establishes a proven baseline
+- v0.9.0-alpha.26 rapid branch-write hardening: guard currentness across sidecar I/O, compensate stale in-flight canonical writes before publication, synchronously revoke passive capture ownership on explicit edit/delete/swipe events, and preserve earlier World State across immediate delete/regenerate replacement
 
 Acceptance:
 

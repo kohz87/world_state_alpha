@@ -517,7 +517,7 @@ test('host manual history actions stay queued, auditable, and hidden-ID safe', (
   assert.match(source, /summary: historySummary/);
   assert.match(source, /window\.confirm\('Move this record to history as '/);
   assert.match(source, /applyManualMutation\(\{[\s\S]*action: actionId,[\s\S]*recordId: record\.id,[\s\S]*note: String\(note\)\.trim\(\)/);
-  assert.match(source, /await persistState\(chatKey, result\.state\);[\s\S]*setCachedState\(chatKey, result\.state\);[\s\S]*updatePrivateInjection\(\);/);
+  assert.match(source, /persistGuardedMutation\(\{[\s\S]*candidateState: result\.state,[\s\S]*recoveryState: state,[\s\S]*label: 'manual lifecycle'[\s\S]*\}\);[\s\S]*if \(persisted\.stale\)[\s\S]*setCachedState\(chatKey, result\.state\);[\s\S]*updatePrivateInjection\(\);/);
 });
 
 test('host panel actions are bound to the chat that opened the panel', () => {
@@ -582,14 +582,20 @@ test('host guards the latest captured boundary against passive post-processing r
   assert.match(maintenanceBody, /if \(actionId === 'reset'\)[\s\S]*setCachedState\(chatKey, next\);\s*passiveCaptureRebaseCandidates\.delete\(chatKey\)/);
   assert.match(maintenanceBody, /setCachedState\(chatKey, result\.state\);\s*passiveCaptureRebaseCandidates\.delete\(chatKey\)/);
 
-  const branchStart = source.indexOf('async function handleBranchChange()');
+  const branchStart = source.indexOf('async function handleBranchChange(');
   const branchEnd = source.indexOf('async function activateCurrentChat()', branchStart);
   const branchBody = source.slice(branchStart, branchEnd);
   const dirtyAt = branchBody.indexOf('branchDirtyChats.add(chatKey)');
   const clearAt = branchBody.indexOf('passiveCaptureRebaseCandidates.delete(chatKey)');
+  const epochAt = branchBody.indexOf('stateEpochs.set(chatKey, epoch(chatKey) + 1)');
   const reconcileAt = branchBody.indexOf('reconcileCurrentBranch(chatKey');
-  assert.ok(dirtyAt >= 0 && reconcileAt > dirtyAt);
-  assert.equal(clearAt, -1, 'branch events must keep passive semantic proof available until reconciliation');
+  assert.ok(dirtyAt >= 0 && clearAt > dirtyAt && epochAt > clearAt && reconcileAt > epochAt);
+  assert.match(source, /source\.on\(events\[name\], \(\) => handleBranchChange\(name\)\)/);
+  assert.match(
+    source,
+    /persisted\.stale[\s\S]*resetRelevanceIndex\(chatKey, before\)[\s\S]*return;[\s\S]*setCachedState\(chatKey, committed[\s\S]*passiveCaptureRebaseCandidates\.set\(chatKey, messageId\)/,
+    'a capture invalidated during persistence must return before publishing or reinstalling passive rewrite eligibility',
+  );
 });
 
 test('recovery-required host state suppresses both Reality and Spatial private injection', () => {
@@ -607,7 +613,7 @@ test('recovery-required host state suppresses both Reality and Spatial private i
 test('MESSAGE_SENT prepares from committed state without awaiting provider-backed continuity queue', async () => {
   const source = fs.readFileSync('index.js', 'utf8');
   const start = source.indexOf('async function handleUserMessage(messageId)');
-  const end = source.indexOf('async function handleBranchChange()', start);
+  const end = source.indexOf('async function handleBranchChange(', start);
   const body = source.slice(start, end).trim();
 
   assert.doesNotMatch(body, /await\s+queueChatWork\(/);
@@ -672,6 +678,70 @@ test('MESSAGE_SENT prepares from committed state without awaiting provider-backe
   assert.equal(refreshed, 1);
   assert.equal(queued, 1);
   assert.equal(typeof queuedWork, 'function');
+});
+
+test('stale in-flight mutation writes are compensated before publication', async () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const start = source.indexOf('async function persistGuardedMutation({');
+  const end = source.indexOf('function setPrivatePrompt(', start);
+  const body = source.slice(start, end).trim();
+
+  assert.match(body, /const committed = await persistState\(chatKey, candidateState\)/);
+  assert.match(body, /if \(guard\(\)\) return \{ stale: false, committed \}/);
+  assert.match(body, /await persistState\(chatKey, recoveryState\)/);
+  assert.match(body, /WORLD_STATE_STALE_WRITE_RESTORE_FAILURE/);
+  assert.match(body, /WORLD_STATE_STALE_WRITE_COMPENSATED/);
+
+  let current = true;
+  let durable = 'recovery';
+  const writes = [];
+  const diagnostics = [];
+  const factory = new Function(
+    'persistState',
+    'hydrationErrors',
+    'clearPrivatePrompt',
+    'diagnosticStore',
+    'return (' + body.replace(/^async function persistGuardedMutation/, 'async function') + ');',
+  );
+  const helper = factory(
+    async (_chatKey, state) => {
+      writes.push(state.value);
+      durable = state.value;
+      if (state.value === 'candidate') current = false;
+      return { revision: writes.length };
+    },
+    new Map(),
+    () => {},
+    { record(_chatKey, row) { diagnostics.push(row); } },
+  );
+
+  const result = await helper({
+    chatKey: 'chat:test',
+    candidateState: { value: 'candidate' },
+    recoveryState: { value: 'recovery' },
+    isCurrent: () => current,
+    label: 'capture',
+    sourceMessageId: 12,
+  });
+
+  assert.equal(result.stale, true);
+  assert.equal(result.phase, 'after');
+  assert.deepEqual(writes, ['candidate', 'recovery']);
+  assert.equal(durable, 'recovery', 'stale candidate must not remain durable after invalidation during write');
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].code, 'WORLD_STATE_STALE_WRITE_COMPENSATED');
+
+  writes.length = 0;
+  current = false;
+  const beforeWrite = await helper({
+    chatKey: 'chat:test',
+    candidateState: { value: 'candidate-2' },
+    recoveryState: { value: 'recovery' },
+    isCurrent: () => current,
+  });
+  assert.equal(beforeWrite.stale, true);
+  assert.equal(beforeWrite.phase, 'before');
+  assert.deepEqual(writes, []);
 });
 
 test('host rebuild never persists or reports success before completed outcome gate', () => {
@@ -741,9 +811,10 @@ test('host publishes mutated canonical state only after durable sidecar success'
 
   for (const reason of ['capture', 'evolution']) {
     const commitAt = source.indexOf("commitMutationBoundary(before, " + (reason === 'capture' ? 'result.state' : 'prepared.state') + ", liveChat, messageId, '" + reason + "'");
-    const persistAt = source.indexOf('await persistState(chatKey, committed)', commitAt);
-    const publishAt = source.indexOf('setCachedState(chatKey, committed', persistAt);
-    assert.ok(commitAt >= 0 && persistAt > commitAt && publishAt > persistAt, reason + ' must persist before cache publication');
+    const persistAt = source.indexOf('await persistGuardedMutation({', commitAt);
+    const staleAt = source.indexOf('if (persisted.stale)', persistAt);
+    const publishAt = source.indexOf('setCachedState(chatKey, committed', staleAt);
+    assert.ok(commitAt >= 0 && persistAt > commitAt && staleAt > persistAt && publishAt > staleAt, reason + ' must durably guard and reject stale persistence before cache publication');
   }
   assert.equal(
     (source.match(/await persistState\(chatKey, next, \{ allowBootstrapRecovery: true \}\);\s*setCachedState\(chatKey, next\);/g) || []).length,
@@ -752,7 +823,7 @@ test('host publishes mutated canonical state only after durable sidecar success'
   );
   assert.match(
     source,
-    /if \(changed && durableRestore\) \{\s*await persistState\(chatKey, result\.state\);\s*setCachedState\(chatKey, result\.state,[\s\S]*?\);/,
+    /if \(changed && durableRestore\) \{[\s\S]*persistGuardedMutation\(\{[\s\S]*candidateState: result\.state,[\s\S]*recoveryState: state,[\s\S]*label: 'branch reconciliation'[\s\S]*\}\);[\s\S]*if \(persisted\.stale\)[\s\S]*return \{[\s\S]*stalePersistence: true[\s\S]*\};[\s\S]*setCachedState\(chatKey, result\.state,/,
   );
   assert.match(
     source,
@@ -760,7 +831,7 @@ test('host publishes mutated canonical state only after durable sidecar success'
   );
   assert.match(
     source,
-    /catch \(error\) \{\s*clearPrivatePrompt\(\);\s*console\.error\('\[World State Alpha\] branch reconciliation failed safely'/,
+    /catch \(error\) \{\s*clearPrivatePrompt\(\);\s*console\.error\('\[World State Alpha\] branch reconciliation failed safely \(' \+ reason \+ '\)'/,
   );
 });
 

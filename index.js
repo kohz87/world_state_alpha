@@ -40,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.25';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.26';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1323,6 +1323,53 @@ function queueChatWork(chatKey, task) {
   return next;
 }
 
+function chatHeadGuard(chatKey) {
+  const startEpoch = epoch(chatKey);
+  const startLineage = stableStringify(chatLineage(getContext().chat || []));
+  return () => currentChatKey() === chatKey
+    && epoch(chatKey) === startEpoch
+    && stableStringify(chatLineage(getContext().chat || [])) === startLineage;
+}
+
+async function persistGuardedMutation({
+  chatKey,
+  candidateState,
+  recoveryState,
+  isCurrent,
+  label = 'mutation',
+  sourceMessageId = null,
+} = {}) {
+  if (!chatKey || chatKey === 'no-chat') return { stale: true, phase: 'before' };
+  const guard = typeof isCurrent === 'function' ? isCurrent : () => true;
+  if (!guard()) return { stale: true, phase: 'before' };
+
+  const committed = await persistState(chatKey, candidateState);
+  if (guard()) return { stale: false, committed };
+
+  try {
+    if (!recoveryState) throw new Error('No authoritative recovery state was available.');
+    await persistState(chatKey, recoveryState);
+  } catch (restoreError) {
+    const detail = String(restoreError?.message || restoreError || 'stale write compensation failed').slice(0, 320);
+    const blocked = new Error('World State Alpha blocked this chat after a stale ' + label + ' write could not be compensated: ' + detail);
+    blocked.code = 'WORLD_STATE_STALE_WRITE_RESTORE_FAILURE';
+    hydrationErrors.set(chatKey, blocked);
+    clearPrivatePrompt();
+    throw blocked;
+  }
+
+  diagnosticStore.record(chatKey, {
+    operationId: 'stale-write:' + label + ':' + Date.now(),
+    label: 'persistence',
+    sourceMessageId: Number.isInteger(sourceMessageId) ? sourceMessageId : null,
+    outcome: 'stale-write-compensated',
+    code: 'WORLD_STATE_STALE_WRITE_COMPENSATED',
+    detail: 'A ' + label + ' sidecar write became stale while in flight and was compensated before publication.',
+    providerCalls: 0,
+  });
+  return { stale: true, phase: 'after', committed };
+}
+
 function setPrivatePrompt(text = '', depth = 1) {
   const ctx = getContext();
   if (typeof ctx?.setExtensionPrompt !== 'function') return;
@@ -1447,7 +1494,25 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
     && ['rollback-journal', 'exact-checkpoint', 'fail-closed', 'passive-capture-rebase', 'semantic-lineage-rebase'].includes(result.action);
 
   if (changed && durableRestore) {
-    await persistState(chatKey, result.state);
+    const branchIsCurrent = chatHeadGuard(chatKey);
+    const persisted = await persistGuardedMutation({
+      chatKey,
+      candidateState: result.state,
+      recoveryState: state,
+      isCurrent: branchIsCurrent,
+      label: 'branch reconciliation',
+      sourceMessageId: result.divergence,
+    });
+    if (persisted.stale) {
+      branchDirtyChats.add(chatKey);
+      return {
+        ...result,
+        action: 'stale-persist',
+        exactRestored: false,
+        failClosed: true,
+        stalePersistence: true,
+      };
+    }
     setCachedState(chatKey, result.state, { indexMode: lineageRebase ? 'preserve' : 'rebuild' });
   } else if (changed) {
     // Forward lineage extension and passive lineage rebases change chronology
@@ -1625,7 +1690,19 @@ async function handleAssistantMessage(messageId) {
 
     if (!isCurrent() || result.outcome === 'stale' || result.outcome === 'skipped') return;
     const committed = commitMutationBoundary(before, result.state, liveChat, messageId, 'capture', { lineage: before.lineage });
-    await persistState(chatKey, committed);
+    const persisted = await persistGuardedMutation({
+      chatKey,
+      candidateState: committed,
+      recoveryState: before,
+      isCurrent,
+      label: 'capture',
+      sourceMessageId: messageId,
+    });
+    if (persisted.stale) {
+      resetRelevanceIndex(chatKey, before);
+      resetSpatialRelevanceIndex(chatKey, before.spatial, baseMap);
+      return;
+    }
     setCachedState(chatKey, committed, {
       indexMode: 'delta',
       indexDelta: result.indexDelta,
@@ -1724,7 +1801,18 @@ async function handleUserMessage(messageId) {
     if (stateChanged(before, prepared.state)) {
       const committed = commitMutationBoundary(before, prepared.state, liveChat, messageId, 'evolution', { lineage: before.lineage });
       try {
-        await persistState(chatKey, committed);
+        const persisted = await persistGuardedMutation({
+          chatKey,
+          candidateState: committed,
+          recoveryState: before,
+          isCurrent,
+          label: 'evolution',
+          sourceMessageId: messageId,
+        });
+        if (persisted.stale) {
+          resetRelevanceIndex(chatKey, before);
+          return;
+        }
       } catch (error) {
         resetRelevanceIndex(chatKey, before);
         throw error;
@@ -1738,7 +1826,7 @@ async function handleUserMessage(messageId) {
   });
 }
 
-async function handleBranchChange() {
+async function handleBranchChange(reason = 'branch') {
   if (!hostHydrationReady) return;
   const chatKey = currentChatKey();
   if (chatKey === 'no-chat') {
@@ -1746,6 +1834,7 @@ async function handleBranchChange() {
     return;
   }
   branchDirtyChats.add(chatKey);
+  passiveCaptureRebaseCandidates.delete(chatKey);
   stateEpochs.set(chatKey, epoch(chatKey) + 1);
   cancelWorldStateRequests({ chatKey });
   await queueChatWork(chatKey, async () => {
@@ -1763,7 +1852,7 @@ async function handleBranchChange() {
       refreshPanel();
     } catch (error) {
       clearPrivatePrompt();
-      console.error('[World State Alpha] branch reconciliation failed safely', error);
+      console.error('[World State Alpha] branch reconciliation failed safely (' + reason + ')', error);
     }
   });
 }
@@ -2615,6 +2704,7 @@ async function applyRecordActionNow(actionId, payload, chatKey) {
     return;
   }
 
+  const actionIsCurrent = chatHeadGuard(chatKey);
   const state = stateCache.get(chatKey);
   const publicRecord = payload?.record && typeof payload.record === 'object' ? payload.record : null;
   const keyMatch = /^row-(\d+)$/.exec(String(publicRecord?.key || ''));
@@ -2683,7 +2773,18 @@ async function applyRecordActionNow(actionId, payload, chatKey) {
     return;
   }
 
-  await persistState(chatKey, result.state);
+  const persisted = await persistGuardedMutation({
+    chatKey,
+    candidateState: result.state,
+    recoveryState: state,
+    isCurrent: actionIsCurrent,
+    label: 'manual lifecycle',
+    sourceMessageId: messageId,
+  });
+  if (persisted.stale) {
+    notify('info', 'Manual lifecycle change was cancelled because the chat branch changed before it could be committed.');
+    return;
+  }
   setCachedState(chatKey, result.state);
   passiveCaptureRebaseCandidates.delete(chatKey);
   updatePrivateInjection();
@@ -2704,6 +2805,16 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     notifyBootstrapRequiredOnce(chatKey);
     return;
   }
+  const branch = extendCurrentBranchFast(chatKey)
+    || await reconcileCurrentBranch(chatKey, { persistRestore: true });
+  if (currentChatKey() !== chatKey) return;
+  if (branch?.failClosed) {
+    notify('warning', 'Spatial edit was blocked because World State cannot prove the current chat branch. Rebuild from chat before editing Places.');
+    updatePrivateInjection();
+    refreshPanel();
+    return;
+  }
+  const actionIsCurrent = chatHeadGuard(chatKey);
   const state = stateCache.get(chatKey);
   const baseMap = await getChatBaseMap(chatKey, state);
   if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
@@ -2711,11 +2822,23 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
   const messageId = chat.length ? chat.length - 1 : null;
 
   const persistSpatialState = async (nextState, message) => {
-    await persistState(chatKey, nextState);
+    const persisted = await persistGuardedMutation({
+      chatKey,
+      candidateState: nextState,
+      recoveryState: state,
+      isCurrent: actionIsCurrent,
+      label: 'spatial edit',
+      sourceMessageId: messageId,
+    });
+    if (persisted.stale) {
+      notify('info', 'Spatial edit was cancelled because the chat branch changed before it could be committed.');
+      return false;
+    }
     setCachedState(chatKey, nextState);
     updatePrivateInjection();
     refreshPanel();
     if (message) notify('success', message);
+    return true;
   };
 
   const applySequence = (initialState, steps) => {
@@ -3251,7 +3374,7 @@ function registerEvents() {
   if (events.GROUP_CHAT_DELETED) source.on(events.GROUP_CHAT_DELETED, eventData => handleChatDeleted(eventData, 'group'));
 
   for (const name of ['MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
-    if (events[name]) source.on(events[name], () => handleBranchChange());
+    if (events[name]) source.on(events[name], () => handleBranchChange(name));
   }
   return true;
 }
