@@ -215,6 +215,7 @@ Deliverables:
 - v0.9.0-alpha.22 maintenance cleanup: remove proven-dead helpers/imports and synchronize design-era architecture/data-model/status documentation
 - v0.9.0-alpha.23 pre-1.0 simplification: drop schema-1 and old-lineage upgrade compatibility, collapse base-map parsing to one generalized Cartesian contract, remove adapter identity, and keep map/location identity stable across source-version changes
 - v0.9.0-alpha.24 Coordinate Profile controls: expose journaled manual Cartesian profile editing, make attached base-map profiles authoritative/read-only, and invalidate stale derived coordinates when profile math changes
+- v0.9.0-alpha.25 session/device hydration hardening: gate canonical hydration on host readiness, retry/recheck deterministic sidecar discovery, and pause established chats with missing durable state until Full rebuild/import/reset establishes a proven baseline
 
 Acceptance:
 

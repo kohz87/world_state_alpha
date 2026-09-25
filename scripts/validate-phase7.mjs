@@ -151,8 +151,22 @@ for (const [reason, stateExpr] of [['capture', 'result.state'], ['evolution', 'p
     throw new Error('Phase 7 ' + reason + ' must persist before publishing canonical cache');
   }
 }
-if ((index.match(/await persistState\(chatKey, next\);\s*setCachedState\(chatKey, next\);/g) || []).length !== 2) {
+if ((index.match(/await persistState\(chatKey, next, \{ allowBootstrapRecovery: true \}\);\s*setCachedState\(chatKey, next\);/g) || []).length !== 2) {
   throw new Error('Phase 7 import/reset must persist before publishing canonical cache');
+}
+if (!/if \(!hostHydrationReady\)[\s\S]*WORLD_STATE_HOST_NOT_READY/.test(index)) {
+  throw new Error('Phase 7 canonical hydration is not gated on SillyTavern host readiness');
+}
+if (!/STARTUP_SIDECAR_RETRY_DELAYS_MS[\s\S]*retryDeterministicMiss && deterministic/.test(index)) {
+  throw new Error('Phase 7 deterministic sidecar recovery is not bounded-retry hardened');
+}
+if (!/EXTENSION_SETTINGS_LOADED[\s\S]*recheckFresh: true/.test(index)
+  || !/recheckProvisionalFreshHydration\(chatKey\)/.test(index)) {
+  throw new Error('Phase 7 settings-loaded lifecycle does not recheck provisional fresh hydration');
+}
+if (!/WORLD_STATE_BOOTSTRAP_RECOVERY_REQUIRED/.test(index)
+  || !/bootstrapRecoveryAtStart && mode !== 'full'/.test(index)) {
+  throw new Error('Phase 7 missing-baseline recovery does not fail closed to Full rebuild/import/reset');
 }
 
 const alice = { chatId: 'same.jsonl', characterId: 0, characters: [{ avatar: 'alice.png' }] };
@@ -218,4 +232,4 @@ const conflict = await conflicting.write({
 });
 if (!conflict?.conflict || uploadAttempts !== 0) throw new Error('Phase 7 revision conflict did not fail before upload');
 
-console.log('World State Alpha Phase 7 validation passed: isolated host entrypoint, owner-qualified identity, revision-checked Alpha sidecar, bounded capture/continuity lifecycle, and no cross-extension dependency.');
+console.log('World State Alpha Phase 7 validation passed: isolated host entrypoint, owner-qualified identity, host-ready/retry-hardened sidecar hydration, bounded capture/continuity lifecycle, and no cross-extension dependency.');

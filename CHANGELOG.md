@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.0-alpha.25 - Session and device hydration hardening
+
+### Fixed
+
+- Startup no longer hydrates canonical World State from the DOM-ready phase. Hydration waits for SillyTavern host readiness so an early storage/settings race cannot be mistaken for a brand-new campaign.
+- `EXTENSION_SETTINGS_LOADED` now rechecks any provisional fresh hydration instead of being ignored after the first bootstrap.
+- Deterministic sidecar discovery retries bounded transient misses before concluding that no local durable file is reachable.
+- A settings pointer whose `/user/files` target is absent is now a recoverable missing-baseline state, not an ordinary empty campaign and not an unrecoverable panel lockout.
+
+### Fail-closed recovery
+
+- An established chat with no reachable durable sidecar pauses automatic capture, evolution, private injection, branch persistence, manual record writes, and Spatial writes instead of silently starting continuity from the current turn.
+- The UI shows a persistent recovery banner and hydration source. Recovery may establish a new baseline only through **Full chat rebuild**, bundle import, or explicit reset. Partial rebuild is disabled because the prior canonical boundary cannot be proven.
+- If a baseline-establishing Full rebuild becomes stale after its candidate is already persisted, the recovered candidate is retained and reconciled against the latest branch. It is never compensated with an empty sidecar.
+- Rename/delete lifecycle handlers also defer until host hydration readiness.
+
+### Device/session boundary
+
+- Same-backend browser/session changes can recover from the deterministic World State sidecar even when the local extension-settings pointer is absent or stale.
+- A genuinely different SillyTavern backend does not share the original backend's `/user/files` store automatically. Alpha.25 detects that missing durable baseline and offers explicit rebuild/import recovery rather than presenting a false fresh state.
+
+### Validation
+
+- Added host regressions for host-ready hydration gating, bounded deterministic retries, post-settings rehydration, missing-baseline write guards, Full-rebuild-only baseline recovery, and stale baseline-rebuild retention.
+- Added responsive UI coverage for the recovery banner, hydration source, and disabled partial rebuild modes.
+
 ## 0.9.0-alpha.24 - Spatial Coordinate Profile controls
 
 ### Added

@@ -510,6 +510,52 @@ test('Spatial Coordinate Profile UI distinguishes manual and base-map authority'
   assert.match(lockedHtml, /Base Profile Test/);
 });
 
+test('cross-session recovery UI never presents a missing durable baseline as an ordinary empty state', () => {
+  const state = fixtureState();
+  const model = buildWorldStateUiModel(state, {
+    runtimeInfo: {
+      chatMessages: 120,
+      assistantBoundaries: 58,
+      defaultRebuildBoundaries: 1024,
+      maxRebuildBoundaries: 4096,
+      spatialEnabled: true,
+      hostHydrationReady: true,
+      hydrationSource: 'fresh-confirmed',
+      bootstrapRequired: true,
+    },
+  });
+
+  assert.equal(model.maintenance.recoveryAttention, true);
+  assert.equal(model.maintenance.bootstrapRequired, true);
+  assert.equal(model.maintenance.hydrationSource, 'fresh-confirmed');
+  assert.equal(model.maintenance.rebuild.bootstrapRequired, true);
+
+  const html = renderWorldStatePanel(model, {
+    activeTab: 'current',
+    rebuildOpen: true,
+    rebuildForm: {
+      mode: 'from',
+      startMessageId: 80,
+      lastMessages: 20,
+      maxBoundaries: 1024,
+      includeHiddenMessages: true,
+    },
+  });
+
+  assert.match(html, /Durable World State not found/);
+  assert.match(html, /Automatic continuity is paused/);
+  assert.match(html, /Hydration source: fresh-confirmed/);
+  assert.match(html, /Full rebuild required/);
+  assert.match(html, /value="full" data-wsa-rebuild-mode checked/);
+  assert.match(html, /value="last" data-wsa-rebuild-mode disabled/);
+  assert.match(html, /value="from" data-wsa-rebuild-mode disabled/);
+  assert.match(html, /data-wsa-open-rebuild>Full rebuild/);
+
+  const dataHtml = renderWorldStatePanel(model, { activeTab: 'maintenance' });
+  assert.match(dataHtml, /Durable World State was not found for this established chat/);
+  assert.match(dataHtml, /Hydration source: fresh-confirmed/);
+});
+
 test('responsive renderer exposes Operations, Places, mobile navigation, atomic rebuild sheet, and danger zone', () => {
   const idleModel = buildWorldStateUiModel(fixtureState(), {
     runtimeInfo: {

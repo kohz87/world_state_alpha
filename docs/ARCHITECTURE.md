@@ -283,9 +283,9 @@ Recommended sidecar identity:
 
 Use owner-qualified per-chat keys and revision-guarded sidecar writes.
 
-Phase 7 maps the logical `world_state_alpha/<hash>.json` sidecar to a SillyTavern uploaded filename prefixed `world-state-alpha-`. The actual server-returned path is persisted in `extension_settings.world_state_alpha.dataFiles[chatKey]`. Equal chat filenames owned by different characters/groups therefore remain separate. Character/chat rename events migrate that owner-qualified key by durably writing the re-owned sidecar before moving ownership. In 0.9.0-alpha.4, missing/stale settings pointers may be repaired from the deterministic host-side path, ownership epochs reject stale hydration/write completions, historical character-name rewrites rebase owned lineage metadata, and delete lifecycle uses owner probes plus lifecycle tombstones. Retired sidecars are neutralized to a fresh empty state when possible so a settings-save crash cannot resurrect deleted continuity.
+Phase 7 maps the logical `world_state_alpha/<hash>.json` sidecar to a SillyTavern uploaded filename prefixed `world-state-alpha-`. The actual server-returned path is persisted in `extension_settings.world_state_alpha.dataFiles[chatKey]`. Equal chat filenames owned by different characters/groups therefore remain separate. Character/chat rename events migrate that owner-qualified key by durably writing the re-owned sidecar before moving ownership. Missing/stale settings pointers may be repaired from the deterministic host-side path, ownership epochs reject stale hydration/write completions, historical character-name rewrites rebase owned lineage metadata, and delete lifecycle uses owner probes plus lifecycle tombstones. Alpha.25 additionally treats DOM ready as shell readiness only: canonical hydration waits for host readiness, deterministic discovery uses bounded retry, and settings-load performs a second probe of provisional fresh state. Retired sidecars are neutralized to a fresh empty state when possible so a settings-save crash cannot resurrect deleted continuity.
 
-Hydration is fail-closed. An existing pointer that cannot be read/decoded is preserved; the host must not overwrite it with a fresh empty state.
+Hydration is fail-closed. A sidecar that is temporarily or permanently unavailable must not be mistaken for ordinary fresh continuity. An established chat with no reachable sidecar enters explicit baseline-recovery mode: automatic capture/injection and normal writes pause until Full chat rebuild, import, or explicit reset succeeds. Same-backend sessions may rediscover `/user/files` deterministically; different SillyTavern backends are not assumed to share that store.
 
 Keep only the tiny settings pointer in extension settings; canonical bulk state lives in the sidecar.
 
@@ -655,7 +655,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.24`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
+Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.25`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

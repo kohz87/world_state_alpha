@@ -466,10 +466,15 @@ export function buildWorldStateUiModel(state, {
     detail,
     diagnostics: projectDiagnostics(diagnostics),
     maintenance: {
-      recoveryAttention: Boolean(normalized.recoveryRequired),
-      recoveryMessage: normalized.recoveryRequired
-        ? 'Branch recovery needs attention. Review the current chat branch before choosing rebuild.'
-        : 'Branch continuity is healthy.',
+      recoveryAttention: Boolean(normalized.recoveryRequired) || Boolean(runtimeInfo?.bootstrapRequired),
+      recoveryMessage: runtimeInfo?.bootstrapRequired
+        ? 'Durable World State was not found for this established chat. Automatic continuity is paused until Full chat rebuild, import, or explicit reset establishes a baseline.'
+        : normalized.recoveryRequired
+          ? 'Branch recovery needs attention. Review the current chat branch before choosing rebuild.'
+          : 'Branch continuity is healthy.',
+      bootstrapRequired: Boolean(runtimeInfo?.bootstrapRequired),
+      hydrationSource: clean(runtimeInfo?.hydrationSource, 80),
+      hostHydrationReady: Boolean(runtimeInfo?.hostHydrationReady),
       lastCaptureMessage: integer(normalized.lastCaptureMessage),
       actions: WORLD_STATE_UI_MAINTENANCE_ACTIONS.map(item => ({ ...item })),
       rebuild: {
@@ -478,6 +483,7 @@ export function buildWorldStateUiModel(state, {
         defaultMaxBoundaries: integer(runtimeInfo?.defaultRebuildBoundaries) ?? 1024,
         maxAllowedBoundaries: integer(runtimeInfo?.maxRebuildBoundaries) ?? 4096,
         spatialEnabled: Boolean(runtimeInfo?.spatialEnabled),
+        bootstrapRequired: Boolean(runtimeInfo?.bootstrapRequired),
         status: runtimeInfo?.rebuildStatus && typeof runtimeInfo.rebuildStatus === 'object'
           ? {
             phase: clean(runtimeInfo.rebuildStatus.phase, 24),
@@ -959,7 +965,9 @@ function maintenanceHtml(model) {
     '<p>Rebuild does not require Clear. It builds an isolated candidate and replaces canonical state only after full success.</p></div></div>' +
     '<div class="wsa-health' + healthClass + '"><strong>' + healthTitle + '</strong>' +
     '<p>' + escapeHtml(model.maintenance.recoveryMessage) + '</p>' +
-    '<small>Last automatic capture: ' + lastCapture + '</small></div>' +
+    '<small>Last automatic capture: ' + lastCapture + '</small>' +
+    (model.maintenance.hydrationSource ? '<small>Hydration source: ' + escapeHtml(model.maintenance.hydrationSource) + '</small>' : '') +
+    '</div>' +
     '<div class="wsa-stat-grid">' +
     '<div><b>' + model.counts.total + '</b><span>Total records</span></div>' +
     '<div><b>' + model.counts.current + '</b><span>Current</span></div>' +
@@ -1028,7 +1036,9 @@ function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
   const rebuild = model.maintenance.rebuild;
   const status = rebuild.status;
   const active = status && ['running', 'cancelling', 'committing'].includes(status.phase);
-  const mode = ['full', 'last', 'from'].includes(form.mode) ? form.mode : 'full';
+  const mode = rebuild.bootstrapRequired
+    ? 'full'
+    : (['full', 'last', 'from'].includes(form.mode) ? form.mode : 'full');
   const startMessageId = Number.isInteger(form.startMessageId) ? form.startMessageId : 0;
   const lastMessages = Number.isInteger(form.lastMessages) ? form.lastMessages : Math.min(20, Math.max(1, rebuild.chatMessages));
   const maxBoundaries = Number.isInteger(form.maxBoundaries) ? form.maxBoundaries : rebuild.defaultMaxBoundaries;
@@ -1038,11 +1048,14 @@ function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
     ? '<div class="wsa-rebuild-running">' + rebuildStatusHtml(status, { dismissible: false }) +
       '<p class="wsa-muted">The existing canonical state remains authoritative until the entire candidate rebuild succeeds and is persisted.</p></div>'
     : '<form class="wsa-rebuild-form" onsubmit="return false;">' +
+      (rebuild.bootstrapRequired
+        ? '<div class="wsa-rebuild-safety wsa-bootstrap-safety"><strong>Full rebuild required</strong><p>This chat has history but no durable World State baseline on this session/backend. Partial rebuild cannot prove the missing earlier canonical state.</p></div>'
+        : '') +
       '<fieldset><legend>Rebuild source</legend>' +
       '<label class="wsa-radio"><input type="radio" name="wsa-rebuild-mode" value="full" data-wsa-rebuild-mode' + (mode === 'full' ? ' checked' : '') + '><span><strong>Full chat</strong><small>Messages 0 → ' + Math.max(0, rebuild.chatMessages - 1) + '</small></span></label>' +
-      '<label class="wsa-radio"><input type="radio" name="wsa-rebuild-mode" value="last" data-wsa-rebuild-mode' + (mode === 'last' ? ' checked' : '') + '><span><strong>Last messages</strong><small>Requires exact canonical history before the calculated start.</small></span></label>' +
+      '<label class="wsa-radio"><input type="radio" name="wsa-rebuild-mode" value="last" data-wsa-rebuild-mode' + (mode === 'last' ? ' checked' : '') + (rebuild.bootstrapRequired ? ' disabled' : '') + '><span><strong>Last messages</strong><small>Requires exact canonical history before the calculated start.</small></span></label>' +
       '<label class="wsa-inline-field"><span>Last N messages</span><input type="number" min="1" max="' + Math.max(1, rebuild.chatMessages) + '" value="' + lastMessages + '" data-wsa-rebuild-last></label>' +
-      '<label class="wsa-radio"><input type="radio" name="wsa-rebuild-mode" value="from" data-wsa-rebuild-mode' + (mode === 'from' ? ' checked' : '') + '><span><strong>From message</strong><small>Fails closed if the exact prior canonical boundary is unavailable.</small></span></label>' +
+      '<label class="wsa-radio"><input type="radio" name="wsa-rebuild-mode" value="from" data-wsa-rebuild-mode' + (mode === 'from' ? ' checked' : '') + (rebuild.bootstrapRequired ? ' disabled' : '') + '><span><strong>From message</strong><small>Fails closed if the exact prior canonical boundary is unavailable.</small></span></label>' +
       '<label class="wsa-inline-field"><span>Start message</span><input type="number" min="0" max="' + Math.max(0, rebuild.chatMessages - 1) + '" value="' + startMessageId + '" data-wsa-rebuild-start></label>' +
       '</fieldset>' +
       '<fieldset><legend>Safety &amp; limits</legend>' +
@@ -1083,6 +1096,18 @@ function mobileNavigation(activeTab, moreOpen) {
       ).join('') + '</div>'
     : '';
   return '<nav class="wsa-mobile-nav" aria-label="World State mobile navigation">' + buttons + more + menu + '</nav>';
+}
+
+function bootstrapRecoveryBannerHtml(model) {
+  if (!model?.maintenance?.bootstrapRequired) return '';
+  const source = model.maintenance.hydrationSource
+    ? ' Hydration source: ' + model.maintenance.hydrationSource + '.'
+    : '';
+  return '<aside class="wsa-bootstrap-warning" aria-live="polite">' +
+    '<div><strong>Durable World State not found</strong><span>Automatic continuity is paused so this session cannot silently start from scratch.' +
+    escapeHtml(source) + '</span></div>' +
+    '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-accent" data-wsa-open-rebuild>Full rebuild</button>' +
+    '</aside>';
 }
 
 function continuityIconHtml() {
@@ -1126,6 +1151,7 @@ export function renderWorldStatePanel(model, {
     '<div class="wsa-header-actions"><button type="button" class="wsa-btn wsa-btn-accent wsa-header-rebuild" data-wsa-open-rebuild><span aria-hidden="true">↻</span> Rebuild</button>' +
     '<button type="button" class="wsa-close" data-wsa-close aria-label="Close World State">×</button></div></header>' +
     (showStatus ? rebuildStatusHtml(rebuildStatus) : '') +
+    bootstrapRecoveryBannerHtml(model) +
     '<nav class="wsa-tabs" role="tablist" aria-label="World State views">' + tabs + '</nav>' +
     '<main class="wsa-body">' + body + '</main>' +
     mobileNavigation(tab, mobileMoreOpen) +

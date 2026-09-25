@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.24 adds an operator-facing Spatial Coordinate Profile: manual campaigns can configure Cartesian axis orientation, scale, bounds, precision, and True North behavior; attached base-map profiles are authoritative/read-only; and math-changing profile edits atomically clear stale derived coordinates while preserving manual/base coordinates. Alpha.23 generalized base-map/schema simplification and earlier lifecycle/rebuild hardening remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.25 hardens session/device hydration: startup waits for SillyTavern host readiness, deterministic sidecar discovery is retried and rechecked after extension settings load, and an established chat with no reachable durable sidecar enters explicit recovery mode instead of silently starting from scratch. Full-chat rebuild, import, or explicit reset can establish a new baseline; ordinary capture/injection/writes remain paused until then. Alpha.24 Coordinate Profile controls and Alpha.23 generalized base-map/schema simplification remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 

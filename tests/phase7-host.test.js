@@ -431,6 +431,45 @@ test('host hydration repairs crash-window pointers and rejects stale ownership c
   assert.match(source, /sidecarTombstones/);
 });
 
+test('cross-session hydration waits for host readiness, retries deterministic recovery, and never silently starts an established chat fresh', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+
+  assert.match(source, /const STARTUP_SIDECAR_RETRY_DELAYS_MS = Object\.freeze\(\[120, 240\]\)/);
+  assert.match(source, /async function recoverExistingSidecarPointer\(chatKey, preferredPointer = null, \{[\s\S]*retryDeterministicMiss = false/);
+  assert.match(source, /retryDeterministicMiss && deterministic[\s\S]*STARTUP_SIDECAR_RETRY_DELAYS_MS/);
+  assert.match(source, /loadChatState\(chatKey\)[\s\S]*recoverExistingSidecarPointer\(chatKey, pointer, \{ retryDeterministicMiss: true \}\)/);
+  assert.match(source, /if \(!hostHydrationReady\)[\s\S]*WORLD_STATE_HOST_NOT_READY/);
+  assert.match(source, /provisionalFreshChats\.add\(chatKey\)[\s\S]*chatHasEstablishedHistory\(chatKey\)[\s\S]*bootstrapRequiredChats\.add\(chatKey\)/);
+  assert.match(source, /async function recheckProvisionalFreshHydration\(chatKey = currentChatKey\(\)\)/);
+  assert.match(source, /WORLD_STATE_SESSION_REHYDRATED/);
+  assert.match(source, /WORLD_STATE_BOOTSTRAP_RECOVERY_REQUIRED/);
+  assert.match(source, /bootstrapRecoveryAtStart && mode !== 'full'/);
+  assert.match(source, /allowBootstrapRecovery: bootstrapRecoveryAtStart && mode === 'full'/);
+
+  const initAt = source.indexOf('async function init(');
+  const safeAt = source.indexOf('async function safeInit(', initAt);
+  const initBody = source.slice(initAt, safeAt);
+  assert.match(initBody, /if \(hostReady\) \{[\s\S]*hostHydrationReady = true;[\s\S]*hostReadinessFallbackTimer = null;/);
+  assert.match(initBody, /if \(recheckFresh\) extensionSettingsReady = true/);
+  assert.match(initBody, /if \(!hostHydrationReady\) return/);
+  assert.match(initBody, /await activateCurrentChat\(\)/);
+
+  const activateAt = source.indexOf('async function activateCurrentChat()');
+  const activateEnd = source.indexOf('function connectionProfileUiContext()', activateAt);
+  const activateBody = source.slice(activateAt, activateEnd);
+  assert.match(activateBody, /extensionSettingsReady && provisionalFreshChats\.has\(chatKey\)[\s\S]*recheckProvisionalFreshHydration\(chatKey\)/);
+
+  assert.match(source, /function scheduleHostHydrationReadinessFallback\(\)[\s\S]*hostReadinessFallbackAttempts >= 40/);
+  assert.match(source, /hostReadinessFallbackSignal\(\)[\s\S]*safeInit\(\{ hostReady: true, recheckFresh: true \}\)/);
+  assert.match(source, /APP_READY[\s\S]*safeInit\(\{ hostReady: true \}\)/);
+  assert.match(source, /EXTENSION_SETTINGS_LOADED[\s\S]*safeInit\(\{ hostReady: true, recheckFresh: true \}\)/);
+  assert.match(source, /source: pointer\?\.path \? 'missing-sidecar' : 'fresh'/);
+  assert.match(source, /baselineRecoveryWrite[\s\S]*pointer = \{ path: deterministicPath, revision: 0, checksum: '' \}/);
+  assert.match(source, /applyMaintenanceActionNow[\s\S]*bootstrapRequiredChats\.has\(chatKey\) && !\['import', 'reset', 'rebuild'\]\.includes\(actionId\)/);
+  assert.match(source, /applyRecordActionNow[\s\S]*bootstrapRequiredChats\.has\(chatKey\)[\s\S]*notifyBootstrapRequiredOnce\(chatKey\)/);
+  assert.match(source, /applySpatialActionNow[\s\S]*bootstrapRequiredChats\.has\(chatKey\)[\s\S]*notifyBootstrapRequiredOnce\(chatKey\)/);
+});
+
 test('rebuild cancellation bypasses the per-chat writer queue while rebuild mutations remain serialized', () => {
   const source = fs.readFileSync('index.js', 'utf8');
   const start = source.indexOf('async function applyMaintenanceAction(actionId');
@@ -585,6 +624,7 @@ test('MESSAGE_SENT prepares from committed state without awaiting provider-backe
   let queued = 0;
   let queuedWork = null;
   const factory = new Function(
+    'hostHydrationReady',
     'getWorldStateSettings',
     'clearPrivatePrompt',
     'getContext',
@@ -593,6 +633,8 @@ test('MESSAGE_SENT prepares from committed state without awaiting provider-backe
     'currentChatKey',
     'ensureChatStateLoaded',
     'hydrationErrors',
+    'bootstrapRequiredChats',
+    'notifyBootstrapRequiredOnce',
     'updatePrivateInjection',
     'refreshPanel',
     'queueChatWork',
@@ -600,6 +642,7 @@ test('MESSAGE_SENT prepares from committed state without awaiting provider-backe
     'return (' + body.replace(/^async function handleUserMessage/, 'async function') + ');',
   );
   const handler = factory(
+    true,
     () => ({ enabled: true }),
     () => {},
     () => ({ chat: [{ role: 'user', content: 'Continue.' }] }),
@@ -608,6 +651,8 @@ test('MESSAGE_SENT prepares from committed state without awaiting provider-backe
     () => 'chat:test',
     async () => {},
     new Set(),
+    new Set(),
+    () => {},
     () => { injected += 1; },
     () => { refreshed += 1; },
     (_chatKey, work) => {
@@ -636,7 +681,7 @@ test('host rebuild never persists or reports success before completed outcome ga
   const body = source.slice(actionAt, end);
   const gateAt = body.indexOf("if (result.outcome !== 'completed' || !isCurrent())");
   const committingAt = body.indexOf("phase: 'committing'", gateAt);
-  const persistAt = body.indexOf('await persistState(chatKey, result.state)');
+  const persistAt = body.indexOf('await persistState(chatKey, result.state, {');
   const persistFailureAt = body.indexOf("outcome: 'rebuild-persist-failed'", persistAt);
   const successAt = body.indexOf("outcome: 'rebuild-completed'", persistFailureAt);
   assert.ok(gateAt >= 0 && committingAt > gateAt && persistAt > committingAt && persistFailureAt > persistAt && successAt > persistFailureAt);
@@ -657,30 +702,38 @@ test('host rebuild commit rechecks currentness around durable persistence and co
   const actionAt = source.indexOf("if (actionId === 'rebuild')");
   const end = source.indexOf('async function applySpatialAction(', actionAt);
   const body = source.slice(actionAt, end);
-  const persistAt = body.indexOf('await persistState(chatKey, result.state)');
+  const persistAt = body.indexOf('await persistState(chatKey, result.state, {');
   assert.ok(persistAt > 0);
   assert.ok(body.lastIndexOf('if (!isCurrent())', persistAt) > 0, 'currentness is checked immediately before persistence');
   const staleAfterPersistAt = body.indexOf('if (!isCurrent())', persistAt);
   assert.ok(staleAfterPersistAt > persistAt, 'currentness is rechecked after persistence');
-  const compensateAt = body.indexOf('await persistState(chatKey, state)', staleAfterPersistAt);
+  const compensateAt = body.indexOf('await persistState(chatKey, state, { allowBootstrapRecovery: true })', staleAfterPersistAt);
   assert.ok(compensateAt > staleAfterPersistAt, 'stale durable candidate is compensated with the prior canonical state');
   assert.match(body, /WORLD_STATE_REBUILD_STALE_RESTORE_FAILURE/);
-  assert.ok(body.indexOf('setCachedState(chatKey, result.state)', staleAfterPersistAt) > compensateAt);
+  assert.match(
+    body,
+    /if \(bootstrapRecoveryAtStart\) \{[\s\S]*setCachedState\(chatKey, result\.state\);[\s\S]*reconcileCurrentBranch\(chatKey, \{ persistRestore: true \}\)[\s\S]*WORLD_STATE_BOOTSTRAP_REBUILD_STALE_RETAINED[\s\S]*return;/,
+    'missing-baseline rebuilds retain the recovered candidate instead of compensating with emptiness',
+  );
+  const publishAfterCompensate = body.indexOf('setCachedState(chatKey, result.state)', compensateAt);
+  assert.ok(publishAfterCompensate > compensateAt, 'ordinary stale rebuild compensation must finish before candidate publication');
 });
 
 test('host retries late lifecycle event registration without duplicate wiring', () => {
   const source = fs.readFileSync('index.js', 'utf8');
   const registerAt = source.indexOf('function registerEvents()');
-  const initAt = source.indexOf('async function init()', registerAt);
+  const initAt = source.indexOf('async function init(', registerAt);
   const registerBody = source.slice(registerAt, initAt);
   assert.match(registerBody, /if \(eventsRegistered\) return true/);
   assert.match(registerBody, /!source\?\.on \|\| !events\.MESSAGE_RECEIVED \|\| !events\.CHAT_CHANGED/);
   assert.match(registerBody, /function ensureEventRegistration\(\)/);
   assert.match(registerBody, /eventRegistrationRetryAttempts >= 20/);
   assert.match(registerBody, /setTimeout\(\(\) => \{[\s\S]*ensureEventRegistration\(\);[\s\S]*\}, 250\)/);
-  const safeInitAt = source.indexOf('async function safeInit()', initAt);
+  const safeInitAt = source.indexOf('async function safeInit(', initAt);
   const initBody = source.slice(initAt, safeInitAt);
-  assert.ok(initBody.indexOf('ensureEventRegistration()') < initBody.indexOf('if (initialized)'));
+  assert.ok(initBody.indexOf('ensureEventRegistration()') >= 0);
+  assert.ok(initBody.indexOf('ensureEventRegistration()') < initBody.indexOf('if (!initialized)'));
+  assert.match(initBody, /if \(!hostHydrationReady\) return/);
 });
 
 test('host publishes mutated canonical state only after durable sidecar success', () => {
@@ -693,7 +746,7 @@ test('host publishes mutated canonical state only after durable sidecar success'
     assert.ok(commitAt >= 0 && persistAt > commitAt && publishAt > persistAt, reason + ' must persist before cache publication');
   }
   assert.equal(
-    (source.match(/await persistState\(chatKey, next\);\s*setCachedState\(chatKey, next\);/g) || []).length,
+    (source.match(/await persistState\(chatKey, next, \{ allowBootstrapRecovery: true \}\);\s*setCachedState\(chatKey, next\);/g) || []).length,
     2,
     'import and reset must persist before cache publication',
   );
@@ -703,7 +756,7 @@ test('host publishes mutated canonical state only after durable sidecar success'
   );
   assert.match(
     source,
-    /if \(result\.outcome !== 'completed'[\s\S]*await persistState\(chatKey, result\.state\);[\s\S]*setCachedState\(chatKey, result\.state\);/,
+    /if \(result\.outcome !== 'completed'[\s\S]*await persistState\(chatKey, result\.state, \{[\s\S]*allowBootstrapRecovery:[\s\S]*\}\);[\s\S]*setCachedState\(chatKey, result\.state\);/,
   );
   assert.match(
     source,

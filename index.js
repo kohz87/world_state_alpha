@@ -40,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.24';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.25';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -68,6 +68,10 @@ const baseMapCache = new Map();
 const loadedChats = new Set();
 const hydrationErrors = new Map();
 const loadingChats = new Map();
+const hydrationSources = new Map();
+const provisionalFreshChats = new Set();
+const bootstrapRequiredChats = new Set();
+const bootstrapWarnings = new Set();
 const stateEpochs = new Map();
 const ownershipEpochs = new Map();
 const chatQueues = new Map();
@@ -85,10 +89,16 @@ const CHAT_CACHE_LIMIT = 6;
 const BASE_MAP_CACHE_LIMIT = 8;
 const CHARACTER_RENAME_CONTEXT_LIMIT = 8;
 const DELETE_OWNERSHIP_RETRY_MS = 1000;
+const STARTUP_SIDECAR_RETRY_DELAYS_MS = Object.freeze([120, 240]);
 let cacheTouchSequence = 0;
 
 let activeChatKey = 'no-chat';
 let initialized = false;
+let hostHydrationReady = false;
+let extensionSettingsReady = false;
+let hostReadinessFallbackTimer = null;
+let hostReadinessFallbackAttempts = 0;
+let loadedLogWritten = false;
 let eventsRegistered = false;
 let eventRegistrationRetryTimer = null;
 let eventRegistrationRetryAttempts = 0;
@@ -415,20 +425,47 @@ function pointerFromPayload(path, payload) {
   };
 }
 
-async function recoverExistingSidecarPointer(chatKey, preferredPointer = null) {
-  const deterministicPath = hostStorage.deterministicPath?.(makeSidecarPath(chatKey)) || '';
-  const candidates = [
-    preferredPointer?.path ? String(preferredPointer.path) : '',
-    deterministicPath,
-  ].filter((path, index, rows) => path && rows.indexOf(path) === index);
+function waitForMs(delayMs) {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(delayMs) || 0)));
+}
 
-  for (const path of candidates) {
-    const payload = await readSidecar({
-      adapter: hostStorage,
-      pointer: { path },
-      expectedChatKey: chatKey,
-    });
-    if (payload?.state) return { pointer: pointerFromPayload(path, payload), payload };
+async function recoverExistingSidecarPointer(chatKey, preferredPointer = null, {
+  retryDeterministicMiss = false,
+} = {}) {
+  const deterministicPath = hostStorage.deterministicPath?.(makeSidecarPath(chatKey)) || '';
+  const preferredPath = preferredPointer?.path ? String(preferredPointer.path) : '';
+  const candidates = [];
+  if (preferredPath) candidates.push({ path: preferredPath, source: 'settings-pointer' });
+  if (deterministicPath && deterministicPath !== preferredPath) {
+    candidates.push({ path: deterministicPath, source: 'deterministic' });
+  }
+  if (deterministicPath && deterministicPath === preferredPath && candidates.length) {
+    candidates[0].deterministic = true;
+  }
+
+  for (const candidate of candidates) {
+    const deterministic = candidate.deterministic === true || candidate.path === deterministicPath;
+    const delays = retryDeterministicMiss && deterministic
+      ? [0, ...STARTUP_SIDECAR_RETRY_DELAYS_MS]
+      : [0];
+
+    for (let attempt = 0; attempt < delays.length; attempt += 1) {
+      if (delays[attempt] > 0) await waitForMs(delays[attempt]);
+      const payload = await readSidecar({
+        adapter: hostStorage,
+        pointer: { path: candidate.path },
+        expectedChatKey: chatKey,
+      });
+      if (payload?.state) {
+        return {
+          pointer: pointerFromPayload(candidate.path, payload),
+          payload,
+          source: candidate.source,
+          attempts: attempt + 1,
+        };
+      }
+      if (!deterministic) break;
+    }
   }
   return null;
 }
@@ -456,8 +493,13 @@ async function neutralizeRetiredSidecar(chatKey, pointer) {
   });
 }
 
-async function persistState(chatKey, state = stateCache.get(chatKey)) {
+async function persistState(chatKey, state = stateCache.get(chatKey), { allowBootstrapRecovery = false } = {}) {
   if (!chatKey || chatKey === 'no-chat') return null;
+  if (bootstrapRequiredChats.has(chatKey) && !allowBootstrapRecovery) {
+    const error = new Error('World State Alpha found established chat history without a durable sidecar. Run Full chat rebuild, import, or explicit reset before writing new continuity.');
+    error.code = 'WORLD_STATE_BOOTSTRAP_RECOVERY_REQUIRED';
+    throw error;
+  }
   if (hydrationErrors.has(chatKey)) {
     const error = new Error('World State Alpha will not write while this chat has a hydration error.');
     error.code = 'WORLD_STATE_HYDRATION_BLOCKED';
@@ -469,13 +511,29 @@ async function persistState(chatKey, state = stateCache.get(chatKey)) {
   const settings = getWorldStateSettings();
   const existingSettingsPointer = pointerFor(chatKey);
   const tombstone = tombstoneFor(chatKey);
+  const baselineRecoveryWrite = allowBootstrapRecovery && bootstrapRequiredChats.has(chatKey);
   let pointer = existingSettingsPointer;
+
+  if (baselineRecoveryWrite) {
+    const deterministicPath = hostStorage.deterministicPath?.(makeSidecarPath(chatKey)) || '';
+    if (!deterministicPath) {
+      const error = new Error('World State Alpha cannot establish a recovery baseline without a deterministic host sidecar path.');
+      error.code = 'WORLD_STATE_BOOTSTRAP_PATH_UNAVAILABLE';
+      throw error;
+    }
+    // The old settings pointer may refer to a revision that does not exist on
+    // this backend. Use the physical deterministic target at revision 0 so the
+    // host adapter performs a last-moment existence check before upload. A
+    // concurrently appearing sidecar therefore conflicts instead of being
+    // overwritten by the recovery candidate.
+    pointer = { path: deterministicPath, revision: 0, checksum: '' };
+  }
 
   // A recreated chat may intentionally replace a retired sidecar. Recover only
   // its revision/checksum as the write predecessor; never resurrect its state.
   if (!pointer && tombstone) {
     pointer = tombstone.pointer?.path ? structuredClone(tombstone.pointer) : null;
-    const recovered = await recoverExistingSidecarPointer(chatKey, pointer);
+    const recovered = await recoverExistingSidecarPointer(chatKey, pointer, { retryDeterministicMiss: true });
     assertOwnershipEpoch(chatKey, ownerEpoch);
     if (recovered?.pointer) pointer = recovered.pointer;
   }
@@ -491,6 +549,10 @@ async function persistState(chatKey, state = stateCache.get(chatKey)) {
 
   settings.dataFiles[chatKey] = committed;
   if (settings.sidecarTombstones?.[chatKey]) delete settings.sidecarTombstones[chatKey];
+  provisionalFreshChats.delete(chatKey);
+  bootstrapRequiredChats.delete(chatKey);
+  bootstrapWarnings.delete(chatKey);
+  hydrationSources.set(chatKey, existingSettingsPointer?.path ? 'persisted' : 'persisted-new-sidecar');
 
   if (!existingSettingsPointer?.path || tombstone) {
     await persistCriticalHostSettings('World State sidecar ownership');
@@ -503,7 +565,6 @@ async function persistState(chatKey, state = stateCache.get(chatKey)) {
 }
 
 async function loadChatState(chatKey) {
-  const settings = getWorldStateSettings();
   const pointer = pointerFor(chatKey);
   const tombstone = tombstoneFor(chatKey);
 
@@ -513,21 +574,18 @@ async function loadChatState(chatKey) {
       pointer: null,
       repairPointer: false,
       tombstoned: true,
+      source: 'tombstone',
     };
   }
 
-  const recovered = await recoverExistingSidecarPointer(chatKey, pointer);
+  const recovered = await recoverExistingSidecarPointer(chatKey, pointer, { retryDeterministicMiss: true });
   if (!recovered) {
-    if (pointer?.path) {
-      const error = new Error('World State Alpha sidecar pointer exists but the sidecar is unavailable.');
-      error.code = 'WORLD_STATE_SIDECAR_MISSING';
-      throw error;
-    }
     return {
       state: seedRootCheckpoint(createState(chatKey)),
-      pointer: null,
+      pointer: pointer?.path ? structuredClone(pointer) : null,
       repairPointer: false,
       tombstoned: false,
+      source: pointer?.path ? 'missing-sidecar' : 'fresh',
     };
   }
 
@@ -542,6 +600,7 @@ async function loadChatState(chatKey) {
     pointer: actualPointer,
     repairPointer,
     tombstoned: false,
+    source: recovered.source || 'sidecar',
   };
 }
 
@@ -556,6 +615,10 @@ function clearChatRuntimeState(chatKey) {
   loadedChats.delete(chatKey);
   hydrationErrors.delete(chatKey);
   loadingChats.delete(chatKey);
+  hydrationSources.delete(chatKey);
+  provisionalFreshChats.delete(chatKey);
+  bootstrapRequiredChats.delete(chatKey);
+  bootstrapWarnings.delete(chatKey);
   branchDirtyChats.delete(chatKey);
   passiveCaptureRebaseCandidates.delete(chatKey);
   chatCacheTouches.delete(chatKey);
@@ -673,6 +736,7 @@ function rememberCharacterRename(oldAvatar, newAvatar) {
 }
 
 async function handleCharacterRenamed(oldAvatar, newAvatar) {
+  if (!hostHydrationReady) return false;
   rememberCharacterRename(oldAvatar, newAvatar);
 
   const oldPrefix = characterOwnerKeyPrefix(oldAvatar);
@@ -711,6 +775,7 @@ function stateLineageMatchesPrefix(state, lineage) {
 }
 
 async function handleCharacterRenamedInPastChat(messages, oldAvatar, newAvatar) {
+  if (!hostHydrationReady) return false;
   if (!Array.isArray(messages) || !messages.length) return;
   const renameContext = pendingCharacterRenames.get(String(oldAvatar || ''));
   const oldName = String(renameContext?.oldName || '').trim();
@@ -822,6 +887,7 @@ async function handleCharacterRenamedInPastChat(messages, oldAvatar, newAvatar) 
 }
 
 async function handleCharacterDeleted(eventData = {}) {
+  if (!hostHydrationReady) return false;
   const avatar = String(eventData?.character?.avatar || eventData?.avatar || '').trim();
   const prefix = characterOwnerKeyPrefix(avatar);
   if (!prefix) return;
@@ -839,6 +905,7 @@ async function handleCharacterDeleted(eventData = {}) {
 }
 
 async function handleChatRenamed(eventData = {}) {
+  if (!hostHydrationReady) return false;
   const oldChatId = String(eventData?.oldFileName || '').replace(/\.jsonl$/i, '').trim();
   const newChatId = String(eventData?.newFileName || '').replace(/\.jsonl$/i, '').trim();
   if (!oldChatId || !newChatId || oldChatId === newChatId) return;
@@ -1006,6 +1073,7 @@ function scheduleDeleteOwnershipRetry(chatId, kind) {
 }
 
 async function handleChatDeleted(eventData, forcedKind = 'chat') {
+  if (!hostHydrationReady) return false;
   const deletedChatId = String(
     typeof eventData === 'string'
       ? eventData
@@ -1034,6 +1102,11 @@ async function handleChatDeleted(eventData, forcedKind = 'chat') {
 
 async function ensureChatStateLoaded(chatKey = currentChatKey()) {
   if (!chatKey || chatKey === 'no-chat') return null;
+  if (!hostHydrationReady) {
+    const error = new Error('World State Alpha deferred hydration until SillyTavern host settings/storage are ready.');
+    error.code = 'WORLD_STATE_HOST_NOT_READY';
+    throw error;
+  }
   if (loadedChats.has(chatKey) && !hydrationErrors.has(chatKey)) {
     touchChatCache(chatKey);
     return stateCache.get(chatKey);
@@ -1055,6 +1128,18 @@ async function ensureChatStateLoaded(chatKey = currentChatKey()) {
       }
 
       setCachedState(chatKey, loaded.state);
+      hydrationSources.set(chatKey, loaded.source || 'unknown');
+      if (loaded.source === 'fresh' || loaded.source === 'missing-sidecar') {
+        provisionalFreshChats.add(chatKey);
+        if (loaded.source === 'missing-sidecar' || chatHasEstablishedHistory(chatKey)) {
+          bootstrapRequiredChats.add(chatKey);
+        }
+      } else {
+        provisionalFreshChats.delete(chatKey);
+        bootstrapRequiredChats.delete(chatKey);
+        bootstrapWarnings.delete(chatKey);
+      }
+
       const loadedState = stateCache.get(chatKey);
       if (loadedState?.spatial?.baseMapRef?.id) {
         const baseMap = await getChatBaseMap(chatKey, loadedState);
@@ -1065,6 +1150,18 @@ async function ensureChatStateLoaded(chatKey = currentChatKey()) {
       loadedChats.add(chatKey);
       hydrationErrors.delete(chatKey);
       touchChatCache(chatKey);
+
+      if (loaded.source === 'deterministic') {
+        diagnosticStore.record(chatKey, {
+          operationId: 'hydrate:deterministic',
+          label: 'hydration',
+          sourceMessageId: null,
+          outcome: 'recovered',
+          code: 'WORLD_STATE_DETERMINISTIC_SIDECAR_RECOVERED',
+          detail: 'Recovered durable World State from the deterministic sidecar path without relying on the session settings pointer.',
+          providerCalls: 0,
+        });
+      }
       return loadedState;
     } catch (error) {
       if (error?.code !== 'WORLD_STATE_STALE_OWNERSHIP') hydrationErrors.set(chatKey, error);
@@ -1077,6 +1174,83 @@ async function ensureChatStateLoaded(chatKey = currentChatKey()) {
 
   loadingChats.set(chatKey, loading);
   return loading;
+}
+
+function chatHasEstablishedHistory(chatKey = currentChatKey()) {
+  if (!chatKey || chatKey === 'no-chat' || currentChatKey() !== chatKey) return false;
+  const chat = getContext().chat || [];
+  let assistantBoundaries = 0;
+  let meaningfulMessages = 0;
+  for (const message of chat) {
+    const role = messageRole(message);
+    const content = messageText(message).trim();
+    if (role === 'system' || !content) continue;
+    meaningfulMessages += 1;
+    if (role === 'assistant') assistantBoundaries += 1;
+  }
+  return (assistantBoundaries >= 1 && meaningfulMessages >= 2) || meaningfulMessages >= 4;
+}
+
+async function recheckProvisionalFreshHydration(chatKey = currentChatKey()) {
+  if (!chatKey || chatKey === 'no-chat' || !provisionalFreshChats.has(chatKey)) return false;
+  const ownerEpoch = ownershipEpoch(chatKey);
+  const pointer = pointerFor(chatKey);
+  try {
+    const recovered = await recoverExistingSidecarPointer(chatKey, pointer, { retryDeterministicMiss: true });
+    assertOwnershipEpoch(chatKey, ownerEpoch);
+
+    if (!recovered) {
+      provisionalFreshChats.delete(chatKey);
+      if (pointer?.path) {
+        hydrationSources.set(chatKey, 'missing-sidecar');
+        bootstrapRequiredChats.add(chatKey);
+      } else {
+        hydrationSources.set(chatKey, 'fresh-confirmed');
+        if (chatHasEstablishedHistory(chatKey)) bootstrapRequiredChats.add(chatKey);
+        else bootstrapRequiredChats.delete(chatKey);
+      }
+      return false;
+    }
+
+    const settings = getWorldStateSettings();
+    settings.dataFiles[chatKey] = recovered.pointer;
+    await persistCriticalHostSettings('session-recovered World State sidecar pointer');
+    assertOwnershipEpoch(chatKey, ownerEpoch);
+
+    const recoveredState = normalizeState(recovered.payload.state, { strictSchema: true, chatKey });
+    setCachedState(chatKey, recoveredState);
+    loadedChats.add(chatKey);
+    hydrationErrors.delete(chatKey);
+    provisionalFreshChats.delete(chatKey);
+    bootstrapRequiredChats.delete(chatKey);
+    bootstrapWarnings.delete(chatKey);
+    hydrationSources.set(chatKey, 'settings-recheck:' + (recovered.source || 'sidecar'));
+    touchChatCache(chatKey);
+
+    diagnosticStore.record(chatKey, {
+      operationId: 'hydrate:settings-recheck',
+      label: 'hydration',
+      sourceMessageId: null,
+      outcome: 'recovered',
+      code: 'WORLD_STATE_SESSION_REHYDRATED',
+      detail: 'Recovered durable continuity after SillyTavern finished loading extension settings/storage.',
+      providerCalls: 0,
+    });
+    return true;
+  } catch (error) {
+    if (error?.code !== 'WORLD_STATE_STALE_OWNERSHIP') hydrationErrors.set(chatKey, error);
+    loadedChats.delete(chatKey);
+    throw error;
+  }
+}
+
+function notifyBootstrapRequiredOnce(chatKey = currentChatKey()) {
+  if (!chatKey || chatKey === 'no-chat' || !bootstrapRequiredChats.has(chatKey) || bootstrapWarnings.has(chatKey)) return;
+  bootstrapWarnings.add(chatKey);
+  notify(
+    'warning',
+    'World State Alpha found existing chat history but no durable sidecar. Automatic continuity is paused to avoid starting from scratch. Run Full chat rebuild, import a World State bundle, or explicitly reset to establish a new baseline.',
+  );
 }
 
 function messageText(message) {
@@ -1169,7 +1343,7 @@ function clearPrivatePrompt() {
 function updatePrivateInjection() {
   const settings = getWorldStateSettings();
   const chatKey = currentChatKey();
-  if (!settings.enabled || (!settings.inject && !settings.spatialInject) || chatKey === 'no-chat' || hydrationErrors.has(chatKey) || !loadedChats.has(chatKey)) {
+  if (!hostHydrationReady || !settings.enabled || (!settings.inject && !settings.spatialInject) || chatKey === 'no-chat' || hydrationErrors.has(chatKey) || !loadedChats.has(chatKey) || bootstrapRequiredChats.has(chatKey)) {
     clearPrivatePrompt();
     return null;
   }
@@ -1317,6 +1491,7 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
 }
 
 async function handleAssistantMessage(messageId) {
+  if (!hostHydrationReady) return;
   const settings = getWorldStateSettings();
   if (!settings.enabled || !settings.autoCapture) return;
   const ctx = getContext();
@@ -1331,6 +1506,12 @@ async function handleAssistantMessage(messageId) {
   await queueChatWork(chatKey, async () => {
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+    if (bootstrapRequiredChats.has(chatKey)) {
+      notifyBootstrapRequiredOnce(chatKey);
+      clearPrivatePrompt();
+      refreshPanel();
+      return;
+    }
     const liveSettings = getWorldStateSettings();
     if (!liveSettings.enabled || !liveSettings.autoCapture) return;
     const branch = extendCurrentBranchFast(chatKey)
@@ -1461,6 +1642,7 @@ async function handleAssistantMessage(messageId) {
 }
 
 async function handleUserMessage(messageId) {
+  if (!hostHydrationReady) return;
   const settings = getWorldStateSettings();
   if (!settings.enabled) {
     clearPrivatePrompt();
@@ -1478,6 +1660,12 @@ async function handleUserMessage(messageId) {
   // but completes in the background for later injections.
   await ensureChatStateLoaded(chatKey);
   if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+  if (bootstrapRequiredChats.has(chatKey)) {
+    notifyBootstrapRequiredOnce(chatKey);
+    clearPrivatePrompt();
+    refreshPanel();
+    return;
+  }
   updatePrivateInjection();
   refreshPanel();
 
@@ -1551,6 +1739,7 @@ async function handleUserMessage(messageId) {
 }
 
 async function handleBranchChange() {
+  if (!hostHydrationReady) return;
   const chatKey = currentChatKey();
   if (chatKey === 'no-chat') {
     clearPrivatePrompt();
@@ -1563,6 +1752,12 @@ async function handleBranchChange() {
     try {
       await ensureChatStateLoaded(chatKey);
       if (currentChatKey() !== chatKey) return;
+      if (bootstrapRequiredChats.has(chatKey)) {
+        notifyBootstrapRequiredOnce(chatKey);
+        clearPrivatePrompt();
+        refreshPanel();
+        return;
+      }
       await reconcileCurrentBranch(chatKey, { persistRestore: true });
       updatePrivateInjection();
       refreshPanel();
@@ -1584,15 +1779,26 @@ async function activateCurrentChat() {
     cancelWorldStateRequests({ chatKey: previousKey });
   }
 
-  if (!identity.ready || chatKey === 'no-chat') {
+  if (!hostHydrationReady || !identity.ready || chatKey === 'no-chat') {
     clearPrivatePrompt();
     refreshPanel();
     return;
   }
 
   try {
+    if (extensionSettingsReady && provisionalFreshChats.has(chatKey)) {
+      await recheckProvisionalFreshHydration(chatKey);
+      if (currentChatKey() !== chatKey) return;
+    }
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey) return;
+    if (bootstrapRequiredChats.has(chatKey)) {
+      notifyBootstrapRequiredOnce(chatKey);
+      clearPrivatePrompt();
+      refreshPanel();
+      evictDormantChatStates(chatKey);
+      return;
+    }
     await reconcileCurrentBranch(chatKey, { persistRestore: true });
     if (currentChatKey() !== chatKey) return;
     updatePrivateInjection();
@@ -1864,6 +2070,10 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
 async function applyMaintenanceActionNow(actionId, payload, chatKey) {
   await ensureChatStateLoaded(chatKey);
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
+  if (bootstrapRequiredChats.has(chatKey) && !['import', 'reset', 'rebuild'].includes(actionId)) {
+    notifyBootstrapRequiredOnce(chatKey);
+    return;
+  }
   let state = stateCache.get(chatKey);
 
   if (actionId === 'export') {
@@ -1881,7 +2091,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const preview = previewWorldStateImport(text, { targetChatKey: chatKey });
     if (!window.confirm('Import this World State bundle into the current chat? Existing World State records will be replaced after confirmation.')) return;
     const next = seedRootCheckpoint(applyWorldStateImport(preview, { confirmed: true }));
-    await persistState(chatKey, next);
+    await persistState(chatKey, next, { allowBootstrapRecovery: true });
     setCachedState(chatKey, next);
     passiveCaptureRebaseCandidates.delete(chatKey);
     if (next.spatial?.baseMapRef?.id) {
@@ -1900,7 +2110,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     if (!window.confirm('Reset World State Alpha for this chat? This replaces the current World State after confirmation.')) return;
     const next = seedRootCheckpoint(applyWorldStateReset(preview, { confirmed: true }));
     rebuildStatuses.delete(chatKey);
-    await persistState(chatKey, next);
+    await persistState(chatKey, next, { allowBootstrapRecovery: true });
     setCachedState(chatKey, next);
     passiveCaptureRebaseCandidates.delete(chatKey);
     updatePrivateInjection();
@@ -1915,6 +2125,11 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       && !window.confirm('Rebuild World State Alpha from this chat chronology? This is an explicit provider-backed recovery operation.')) return;
 
     const mode = ['full', 'last', 'from'].includes(rebuildRequest.mode) ? rebuildRequest.mode : 'full';
+    const bootstrapRecoveryAtStart = bootstrapRequiredChats.has(chatKey);
+    if (bootstrapRecoveryAtStart && mode !== 'full') {
+      notify('error', 'This chat has no durable World State baseline. Use Full chat rebuild, import, or explicit reset; partial rebuild cannot safely recover missing continuity.');
+      return;
+    }
     const numeric = (value, fallback, min, max) => {
       const number = Number(value);
       if (!Number.isFinite(number)) return fallback;
@@ -2169,7 +2384,9 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     }
 
     try {
-      await persistState(chatKey, result.state);
+      await persistState(chatKey, result.state, {
+        allowBootstrapRecovery: bootstrapRecoveryAtStart && mode === 'full',
+      });
     } catch (error) {
       const detail = String(error?.message || error || 'persistence failure').slice(0, 320);
       rebuildStatuses.set(chatKey, {
@@ -2203,8 +2420,58 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     }
 
     if (!isCurrent()) {
+      if (bootstrapRecoveryAtStart) {
+        setCachedState(chatKey, result.state);
+        passiveCaptureRebaseCandidates.delete(chatKey);
+        let reconcileDetail = 'Recovered baseline was retained because no prior durable baseline existed.';
+        try {
+          if (currentChatKey() === chatKey) {
+            const reconciled = await reconcileCurrentBranch(chatKey, { persistRestore: true });
+            reconcileDetail = reconciled?.failClosed
+              ? 'Recovered baseline was retained and the changed branch failed closed for explicit recovery.'
+              : 'Recovered baseline was retained and reconciled against the latest chat branch.';
+          }
+        } catch (reconcileError) {
+          const detail = String(reconcileError?.message || reconcileError || 'post-recovery reconciliation failed').slice(0, 320);
+          const blocked = new Error('World State Alpha preserved the recovered baseline but could not reconcile the changed branch: ' + detail);
+          blocked.code = 'WORLD_STATE_BOOTSTRAP_REBUILD_RECONCILE_FAILURE';
+          hydrationErrors.set(chatKey, blocked);
+          reconcileDetail = blocked.message;
+        }
+
+        rebuildStatuses.set(chatKey, {
+          ...(rebuildStatuses.get(chatKey) || {}),
+          phase: hydrationErrors.has(chatKey) ? 'failed' : 'cancelled',
+          detail: reconcileDetail,
+          completedAt: Date.now(),
+        });
+        diagnosticStore.record(chatKey, {
+          operationId,
+          label: 'rebuild',
+          sourceMessageId,
+          outcome: hydrationErrors.has(chatKey) ? 'rebuild-persist-failed' : 'rebuild-cancelled',
+          code: hydrationErrors.has(chatKey)
+            ? 'WORLD_STATE_BOOTSTRAP_REBUILD_RECONCILE_FAILURE'
+            : 'WORLD_STATE_BOOTSTRAP_REBUILD_STALE_RETAINED',
+          detail: reconcileDetail,
+          providerCalls: result.providerCalls || 0,
+          applied,
+          rejected,
+          aliasRepairs,
+          processedBoundaries: result.processedBoundaries || 0,
+          totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+        });
+        updatePrivateInjection();
+        refreshPanel();
+        notify(
+          hydrationErrors.has(chatKey) ? 'error' : 'info',
+          'World State Alpha Full rebuild became stale during persistence. ' + reconcileDetail,
+        );
+        return;
+      }
+
       try {
-        await persistState(chatKey, state);
+        await persistState(chatKey, state, { allowBootstrapRecovery: true });
       } catch (restoreError) {
         const detail = String(restoreError?.message || restoreError || 'stale rebuild compensation failed').slice(0, 320);
         const blocked = new Error('World State Alpha blocked this chat after a stale rebuild write could not be compensated: ' + detail);
@@ -2330,6 +2597,10 @@ async function applyRecordAction(actionId, payload = {}, expectedChatKey = curre
 async function applyRecordActionNow(actionId, payload, chatKey) {
   await ensureChatStateLoaded(chatKey);
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
+  if (bootstrapRequiredChats.has(chatKey)) {
+    notifyBootstrapRequiredOnce(chatKey);
+    return;
+  }
 
   const branch = extendCurrentBranchFast(chatKey)
     || await reconcileCurrentBranch(chatKey, { persistRestore: true });
@@ -2429,6 +2700,10 @@ async function applySpatialAction(actionId, payload = {}, expectedChatKey = curr
 async function applySpatialActionNow(actionId, payload, chatKey) {
   await ensureChatStateLoaded(chatKey);
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
+  if (bootstrapRequiredChats.has(chatKey)) {
+    notifyBootstrapRequiredOnce(chatKey);
+    return;
+  }
   const state = stateCache.get(chatKey);
   const baseMap = await getChatBaseMap(chatKey, state);
   if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
@@ -2889,6 +3164,10 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
 }
 
 export async function openWorldStatePanel() {
+  if (!hostHydrationReady) {
+    notify('warning', 'World State Alpha is waiting for SillyTavern settings/storage to finish loading.');
+    return false;
+  }
   const chatKey = currentChatKey();
   if (chatKey === 'no-chat') {
     notify('warning', 'Open a chat before opening World State Alpha.');
@@ -2927,6 +3206,9 @@ export async function openWorldStatePanel() {
         defaultRebuildBoundaries: REBUILD_LIMITS.maxBoundaries,
         maxRebuildBoundaries: 4096,
         spatialEnabled: Boolean(getWorldStateSettings().spatialEnabled),
+        hostHydrationReady,
+        hydrationSource: hydrationSources.get(chatKey) || '',
+        bootstrapRequired: bootstrapRequiredChats.has(chatKey),
         rebuildStatus: rebuildStatuses.get(chatKey) ? clone(rebuildStatuses.get(chatKey)) : null,
       };
     },
@@ -2992,44 +3274,103 @@ function ensureEventRegistration() {
   return false;
 }
 
-async function init() {
+async function init({ hostReady = false, recheckFresh = false } = {}) {
   ensureEventRegistration();
-  if (initialized) {
-    scheduleSettingsMount();
-    return;
+  if (hostReady) {
+    hostHydrationReady = true;
+    if (hostReadinessFallbackTimer !== null) {
+      clearInterval(hostReadinessFallbackTimer);
+      hostReadinessFallbackTimer = null;
+    }
   }
-  initialized = true;
+  if (recheckFresh) extensionSettingsReady = true;
+
+  if (!initialized) {
+    initialized = true;
+    bindSettingsEvents();
+  }
+
+  // DOM ready is intentionally shell-only. Hydration waits for APP_READY or
+  // EXTENSION_SETTINGS_LOADED so an early /user/files miss cannot be accepted
+  // as a new campaign and cached for the rest of the browser session.
+  if (!hostHydrationReady) return;
+
   getWorldStateSettings();
-  bindSettingsEvents();
   scheduleSettingsMount();
+
   await activateCurrentChat();
-  console.log('[World State Alpha] v' + WORLD_STATE_ALPHA_VERSION + ' loaded');
+
+  if (!loadedLogWritten) {
+    loadedLogWritten = true;
+    console.log('[World State Alpha] v' + WORLD_STATE_ALPHA_VERSION + ' loaded');
+  }
 }
 
-async function safeInit() {
+function hostReadinessFallbackSignal() {
+  if (!globalThis.document?.querySelector) return false;
+  return Boolean(
+    document.querySelector('#extensions_settings2')
+    || document.querySelector('#extensions_settings')
+    || document.querySelector('#extensionsMenu')
+  );
+}
+
+function scheduleHostHydrationReadinessFallback() {
+  if (hostHydrationReady || hostReadinessFallbackTimer !== null || !globalThis.document) return;
+  hostReadinessFallbackAttempts = 0;
+  hostReadinessFallbackTimer = setInterval(() => {
+    hostReadinessFallbackAttempts += 1;
+    if (hostReadinessFallbackSignal()) {
+      clearInterval(hostReadinessFallbackTimer);
+      hostReadinessFallbackTimer = null;
+      void safeInit({ hostReady: true, recheckFresh: true });
+      return;
+    }
+    if (hostReadinessFallbackAttempts >= 40) {
+      clearInterval(hostReadinessFallbackTimer);
+      hostReadinessFallbackTimer = null;
+      console.warn('[World State Alpha] SillyTavern host readiness was not observed; canonical hydration remains paused.');
+    }
+  }, 250);
+}
+
+async function safeInit(options = {}) {
   try {
-    await init();
+    await init(options);
   } catch (error) {
-    initialized = false;
-    console.error('[World State Alpha] initialization failed safely', error);
+    console.error('[World State Alpha] initialization/hydration failed safely', error);
+    clearPrivatePrompt();
+    refreshPanel();
   }
+}
+
+function bootstrapFromDomReady() {
+  void safeInit();
+  scheduleHostHydrationReadinessFallback();
 }
 
 if (globalThis.document?.readyState === 'loading') {
-  globalThis.document.addEventListener('DOMContentLoaded', safeInit, { once: true });
+  globalThis.document.addEventListener('DOMContentLoaded', bootstrapFromDomReady, { once: true });
 } else {
-  queueMicrotask(safeInit);
+  queueMicrotask(bootstrapFromDomReady);
 }
 
 try {
   const ctx = getContext();
   const events = ctx?.eventTypes || ctx?.event_types || {};
   if (ctx?.eventSource?.on) {
-    if (events.APP_READY) ctx.eventSource.on(events.APP_READY, safeInit);
-    if (events.EXTENSION_SETTINGS_LOADED) ctx.eventSource.on(events.EXTENSION_SETTINGS_LOADED, safeInit);
+    if (events.APP_READY) {
+      ctx.eventSource.on(events.APP_READY, () => void safeInit({ hostReady: true }));
+    }
+    if (events.EXTENSION_SETTINGS_LOADED) {
+      ctx.eventSource.on(
+        events.EXTENSION_SETTINGS_LOADED,
+        () => void safeInit({ hostReady: true, recheckFresh: true }),
+      );
+    }
   }
 } catch (error) {
-  console.debug('[World State Alpha] lifecycle bootstrap will rely on DOM ready.', error);
+  console.debug('[World State Alpha] lifecycle bootstrap will rely on DOM ready and registered chat events.', error);
 }
 
 globalThis.WorldStateAlpha = Object.freeze({
@@ -3038,8 +3379,13 @@ globalThis.WorldStateAlpha = Object.freeze({
   status: () => {
     const key = currentChatKey();
     return Object.freeze({
+      hostHydrationReady,
+      extensionSettingsReady,
       chatReady: key !== 'no-chat' && loadedChats.has(key) && !hydrationErrors.has(key),
       hydrationError: hydrationErrors.get(key)?.message || null,
+      hydrationSource: hydrationSources.get(key) || '',
+      provisionalFresh: provisionalFreshChats.has(key),
+      bootstrapRequired: bootstrapRequiredChats.has(key),
       panelOpen: Boolean(panelRoot?.isConnected),
       diagnostics: diagnosticStore.records(key).length,
     });

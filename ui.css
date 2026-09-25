@@ -1557,6 +1557,16 @@
     padding: 12px 4px;
   }
 
+  .wsa-bootstrap-warning {
+    align-items: stretch;
+    flex-direction: column;
+    margin-inline: 10px;
+  }
+
+  .wsa-bootstrap-warning .wsa-btn {
+    min-height: 44px;
+  }
+
   .wsa-spatial-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -2012,6 +2022,38 @@
 
 .wsa-danger-zone {
   border-color: rgba(255,155,155,.22);
+}
+
+.wsa-bootstrap-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 14px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(241, 199, 121, 0.6);
+  border-radius: 9px;
+  background: rgba(241, 199, 121, 0.09);
+}
+
+.wsa-bootstrap-warning > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.wsa-bootstrap-warning strong {
+  font-size: 13px;
+}
+
+.wsa-bootstrap-warning span {
+  color: var(--wsa-muted);
+  font-size: 12px;
+}
+
+.wsa-bootstrap-safety {
+  border-color: rgba(241, 199, 121, 0.6);
+  background: rgba(241, 199, 121, 0.08);
 }
 
 .wsa-rebuild-toast {
