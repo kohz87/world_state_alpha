@@ -820,3 +820,37 @@ test('Places projection nests sub-places, flags possible duplicates, and lists m
   const duplicatesOnly = buildWorldStateUiModel(state, { spatialDuplicatesOnly: true });
   assert.equal(duplicatesOnly.spatial.locations.length, 2);
 });
+
+test('merged or archived places leave the Places list, duplicate flags, and counts', async () => {
+  const { applySpatialManualMutation } = await import('../spatial-manual.js');
+  const state = fixtureState();
+  state.spatial.locations = [
+    spatialLocation('wsloc_ditch_a', 'Southern Drainage Ditch', { x: -198.1, y: 188.1 }),
+    spatialLocation('wsloc_ditch_b', 'Drainage Ditch South of Farwick', { x: -198.1, y: 188.1 }),
+    spatialLocation('wsloc_other', 'Northglass', { x: 5, y: 5 }),
+  ];
+
+  const before = buildWorldStateUiModel(state, { selectedSpatialKey: 'sloc-1' });
+  assert.equal(before.spatial.duplicateCount, 2);
+  assert.deepEqual(before.spatial.detail.duplicateNames, ['Southern Drainage Ditch']);
+  assert.match(renderWorldStatePanel(before, { activeTab: 'spatial' }), /May duplicate “Southern Drainage Ditch”/);
+
+  const merged = applySpatialManualMutation({
+    state,
+    chatKey: state.chatKey,
+    mutation: { action: 'merge_locations', sourceId: 'wsloc_ditch_b', targetId: 'wsloc_ditch_a' },
+    note: 'Merged accidental duplicate',
+  });
+  assert.equal(merged.outcome, 'applied');
+  assert.equal(merged.state.spatial.locations.find(loc => loc.id === 'wsloc_ditch_b').status, 'archived');
+
+  const after = buildWorldStateUiModel(merged.state);
+  assert.deepEqual(after.spatial.locations.map(loc => loc.name), ['Southern Drainage Ditch', 'Northglass']);
+  assert.equal(after.spatial.duplicateCount, 0);
+  assert.equal(after.spatial.archivedCount, 1);
+  assert.equal(after.counts.spatialLocations, 2);
+  assert.equal(after.spatial.detail.locationOptions.some(item => item.name === 'Drainage Ditch South of Farwick'), false);
+  const html = renderWorldStatePanel(after, { activeTab: 'spatial' });
+  assert.doesNotMatch(html, /Drainage Ditch South of Farwick/);
+  assert.match(html, /1 archived or merged place is not listed/);
+});

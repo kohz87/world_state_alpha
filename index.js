@@ -3548,14 +3548,21 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       notify('warning', 'No other campaign location is available to merge into.');
       return;
     }
+    const sameName = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+    const suggested = (Array.isArray(payload.mergeSuggestions) ? payload.mergeSuggestions : [])
+      .map(name => candidates.find(loc => sameName(loc.name, name)))
+      .filter(Boolean);
+    const listed = [...new Set([...suggested, ...candidates])].slice(0, 12);
     const targetName = window.prompt(
-      'Merge this duplicate into which campaign location?\n' + candidates.slice(0, 12).map(loc => '- ' + loc.name).join('\n'),
-      '',
+      'Merge "' + payload.location.name + '" into which campaign location? Its routes, evidence, and relations move to the target and it is archived.\n' +
+        listed.map(loc => '- ' + loc.name + (suggested.includes(loc) ? '  (possible duplicate)' : '')).join('\n') +
+        (candidates.length > listed.length ? '\n…and ' + (candidates.length - listed.length) + ' more (type the exact name)' : ''),
+      suggested[0]?.name || '',
     );
     if (!targetName?.trim()) return;
-    const target = candidates.find(loc => loc.name.toLowerCase() === targetName.trim().toLowerCase());
+    const target = candidates.find(loc => sameName(loc.name, targetName));
     if (!target) {
-      notify('error', 'Merge target not found among campaign locations.');
+      notify('error', 'Merge target not found among active campaign locations: ' + targetName.trim());
       return;
     }
     if (!window.confirm('Merge "' + payload.location.name + '" into "' + target.name + '"? The source will be archived.')) return;
@@ -3570,6 +3577,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     });
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state, 'Merged duplicate into ' + target.name);
+    } else {
+      notify('error', 'Merge rejected: ' + (res.rejected?.[0]?.reason || 'invalid merge'));
     }
     return;
   }

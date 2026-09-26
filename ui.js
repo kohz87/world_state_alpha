@@ -334,7 +334,7 @@ function projectSpatialDetail(spatialState, loc, baseMap, key) {
     relations,
     primaryRelation,
     locationOptions: allEffective
-      .filter(item => item.id !== loc.id)
+      .filter(item => item.id !== loc.id && item.status !== 'archived')
       .slice(0, WORLD_STATE_UI_LIMITS.spatialLocations)
       .map(item => ({ id: clean(item.id, 120), name: clean(item.name, 120) })),
   };
@@ -387,7 +387,11 @@ function possibleDuplicatePlaceKeys(locations, parents) {
     normalizedName: loc.name.toLocaleLowerCase().replace(/\s+/gu, ' ').trim(),
     tokens: placeNameTokens(loc.name),
   }));
-  const flagged = new Set();
+  const flagged = new Map();
+  const flag = (key, partnerKey) => {
+    if (!flagged.has(key)) flagged.set(key, new Set());
+    flagged.get(key).add(partnerKey);
+  };
   for (let i = 0; i < rows.length; i += 1) {
     for (let j = i + 1; j < rows.length; j += 1) {
       const a = rows[i];
@@ -402,8 +406,8 @@ function possibleDuplicatePlaceKeys(locations, parents) {
         && Math.abs(a.loc.y - b.loc.y) <= 0.05;
       const nameContained = smaller >= 2 && shared === smaller;
       if (sameName || (samePoint && shared >= 2) || nameContained) {
-        flagged.add(a.loc.key);
-        flagged.add(b.loc.key);
+        flag(a.loc.key, b.loc.key);
+        flag(b.loc.key, a.loc.key);
       }
     }
   }
@@ -516,7 +520,10 @@ export function buildWorldStateUiModel(state, {
   const detail = detailRecordId ? projectDetail(normalized, detailRecordId, reasons, key) : null;
 
   // Spatial Projection
-  const effectiveLocations = resolveEffectiveLocations(normalized.spatial, baseMap);
+  const resolvedLocations = resolveEffectiveLocations(normalized.spatial, baseMap);
+  // Archived places (including merged duplicates) are history, not current
+  // geography: Spatial injection already skips them, so the list does too.
+  const effectiveLocations = resolvedLocations.filter(loc => loc.status !== 'archived');
   const hasBaseMap = Boolean(baseMap || normalized.spatial.baseMapRef);
   const activeSpatialProfile = resolveSpatialProfile(normalized.spatial, baseMap);
   const displaySpatialProfile = activeSpatialProfile || {
@@ -573,6 +580,9 @@ export function buildWorldStateUiModel(state, {
     spatialDetail.parentName = parentKey ? projectedByKey.get(parentKey)?.name || '' : '';
     spatialDetail.childCount = [...placeParents.values()].filter(key => key === activeSpatialKey).length;
     spatialDetail.possibleDuplicate = duplicateKeys.has(activeSpatialKey);
+    spatialDetail.duplicateNames = [...(duplicateKeys.get(activeSpatialKey) || [])]
+      .map(key => projectedByKey.get(key)?.name)
+      .filter(Boolean);
     spatialDetail.mentions = placeMentions(projected, spatialDetail.name);
   }
 
@@ -607,6 +617,7 @@ export function buildWorldStateUiModel(state, {
       totalCount: effectiveLocations.length,
       filteredCount: filteredSpatial.length,
       duplicateCount: duplicateKeys.size,
+      archivedCount: resolvedLocations.length - effectiveLocations.length,
       duplicatesOnly: Boolean(spatialDuplicatesOnly),
       search: spatialSearch,
       selectedKey: activeSpatialKey,
@@ -982,7 +993,10 @@ function spatialReadHtml(detail) {
     : '<p class="wsa-muted">No world-state records mention this place.</p>';
 
   const duplicateNote = detail.possibleDuplicate && editable
-    ? '<div class="wsa-inline-warning">' + icon('warn') + '<span>This place may duplicate another entry.</span>' +
+    ? '<div class="wsa-inline-warning">' + icon('warn') + '<span>' +
+      (detail.duplicateNames?.length
+        ? 'May duplicate ' + detail.duplicateNames.map(name => '“' + escapeHtml(name) + '”').join(', ') + '.'
+        : 'This place may duplicate another entry.') + '</span>' +
       '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-spatial-action="merge_location">' + icon('merge') + 'Merge…</button></div>'
     : '';
 
@@ -1165,9 +1179,12 @@ function spatialViewHtml(model, { detailOpen = false, editing = false, mapSettin
     : emptyState(sp.duplicatesOnly ? 'No duplicates flagged' : 'No places found',
       sp.duplicatesOnly ? 'No possible duplicates match the current filter.' : 'No places match the search criteria.');
 
-  const truncated = model.truncation.spatial > 0
+  const truncated = (model.truncation.spatial > 0
     ? '<p class="wsa-list-note">' + model.truncation.spatial + ' additional places hidden. Narrow the filter to view them.</p>'
-    : '';
+    : '') +
+    (sp.archivedCount > 0
+      ? '<p class="wsa-list-note">' + sp.archivedCount + ' archived or merged place' + (sp.archivedCount === 1 ? ' is' : 's are') + ' not listed.</p>'
+      : '');
 
   const duplicates = sp.duplicateCount > 0 || sp.duplicatesOnly
     ? '<button type="button" class="wsa-dup-banner' + (sp.duplicatesOnly ? ' is-active' : '') + '" data-wsa-spatial-dups>' +
@@ -2031,6 +2048,7 @@ export function createWorldStateUiController({
       await onSpatialAction(action, {
         location: currentLoc,
         formData,
+        mergeSuggestions: action === 'merge_location' ? [...(currentLoc?.duplicateNames || [])] : [],
         spatialModel: currentModel.spatial,
       });
       if (['save_location', 'archive_location', 'merge_location', 'delete_location'].includes(action)) ui.spatialEditing = false;

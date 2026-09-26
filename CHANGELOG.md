@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Merging (or archiving) a place now removes it from the Places list. Archived places were already excluded from Spatial injection, but the panel still listed them, so a successful merge looked like it had done nothing and the duplicate flag stayed. Place counts, duplicate flags, and relative-anchor suggestions now also ignore archived places, and the list notes how many are hidden.
+- The merge prompt pre-fills the flagged duplicate partner, lists suggested targets first, and says how many more exist beyond the listed twelve. A rejected merge now shows its reason instead of failing silently.
+
+
 ## 0.9.0-alpha.28 - Operator panel redesign
 
 ### Changed
