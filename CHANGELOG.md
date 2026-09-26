@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - Operator panel redesign
+## 0.9.0-alpha.28 - Operator panel redesign
 
 ### Changed
 

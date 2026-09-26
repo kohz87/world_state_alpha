@@ -217,6 +217,8 @@ Deliverables:
 - v0.9.0-alpha.24 Coordinate Profile controls: expose journaled manual Cartesian profile editing, make attached base-map profiles authoritative/read-only, and invalidate stale derived coordinates when profile math changes
 - v0.9.0-alpha.25 session/device hydration hardening: gate canonical hydration on host readiness, retry/recheck deterministic sidecar discovery, and pause established chats with missing durable state until Full rebuild/import/reset establishes a proven baseline
 - v0.9.0-alpha.26 rapid branch-write hardening: guard currentness across sidecar I/O, compensate stale in-flight canonical writes before publication, synchronously revoke passive capture ownership on explicit edit/delete/swipe events, and preserve earlier World State across immediate delete/regenerate replacement
+- v0.9.0-alpha.27 server-authoritative multi-session freshness: revision-aware hydration, boundary rechecks of the same-backend sidecar, stale cross-session writer rejection, and fail-closed preservation of a newer sidecar when the host chat is behind
+- v0.9.0-alpha.28 operator panel redesign: World / Places workspace with a More menu, grouped trend-coded record disclosures, read-first Places with display-only nesting/duplicate hints, and consolidated scoped CSS; projection-only, no durable-format or host-action change
 
 Acceptance:
 
