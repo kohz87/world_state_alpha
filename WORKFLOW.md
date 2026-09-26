@@ -30,7 +30,7 @@ Included in the current gate:
 - explicit coexistence hardening against NPC State Delta and Ukiyo/Megumin ownership
 - cumulative Phase 1-9 deterministic tests and validation
 
-Still gated: any unrelated semantic subsystem, Story Director behavior, atlas renderer, external-state adapter, launcher/watchdog framework, or generic slash-command surface.
+Still gated: any unrelated semantic subsystem, Story Director behavior, atlas renderer, external-state adapter, watchdog/MutationObserver framework, cross-extension launcher coordination, or generic slash-command surface. (A single World-State-owned floating button was authorized for 0.9.0-alpha.30.)
 
 ## Standard engineering loop
 

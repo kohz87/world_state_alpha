@@ -313,7 +313,7 @@ The host-neutral controller accepts a caller-supplied root, `getState()`, option
 
 Desktop uses a centered workspace up to roughly 1180 px with two primary tabs (World / Places), a records search field, and a `⋯` menu for Rebuild, Operations, Data & maintenance, and map settings. World is one records surface with an Active / Recently changed / Resolved filter (the existing `current` / `recent` / `resolved` / `search` projections). Active rows are grouped into Changed recently, Ongoing developments, and Facts; each row carries a trend/status tone, bounded anchor tags, and a relative message age, and expands in place for state, timeline, anchors, connections, evidence, and manual lifecycle actions. Places opens a read view first (position, connections, routes, records that mention the place, evidence) and switches to the manual editor only on Edit; base-map and Coordinate Profile controls live behind a compact map-settings strip. Place nesting (a name that extends another place's name at a word boundary) and possible-duplicate flags are display-only projections that are never persisted or fed back into Spatial state; merging remains an explicit operator action. Tablet keeps the split Places layout; below 768 px Places switches to single-pane list/detail. Mobile (<600 px) uses full-screen `100vw × 100dvh`, bottom navigation (World / Places / Search / More), safe-area-aware controls, >=44 px touch targets, and a full-height rebuild sheet. Dense operation/detail grids collapse progressively rather than shrinking typography.
 
-Phase 6 itself remains host-neutral. Phase 7 mounts it through one `world_state_alpha_panel_root` plus a compact, natively collapsible World State settings card. Phase 7 still deliberately omits a launcher/watchdog/MutationObserver framework, generic slash-command surface, and cross-extension adapter.
+Phase 6 itself remains host-neutral. Phase 7 mounts it through one `world_state_alpha_panel_root` plus a compact, natively collapsible World State settings card. Since 0.9.0-alpha.30 the host also mounts a single World-State-owned floating button (`launcher.js`: movable, per-browser `localStorage` position, left-side default, toggled by the `showLauncher` setting) that only opens the existing panel; it knows nothing about other extensions' launchers and avoids overlap only through its default placement and operator dragging. Phase 7 still deliberately omits a watchdog/MutationObserver framework, cross-extension launcher coordination or shared dock, generic slash-command surface, and cross-extension adapter.
 
 ## 15. Manual controls
 
@@ -657,7 +657,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.29`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
+Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.30`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

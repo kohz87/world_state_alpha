@@ -425,7 +425,7 @@ All asynchronous provider-backed work is guarded by current chat identity, exact
 
 The host calls `setExtensionPrompt` only for `world_state_alpha_private_continuity`, SYSTEM / `IN_CHAT`, at the configured shallow depth. Disabling, leaving a chat, or failing hydration clears only that World State key. The host never mutates global RP provider/model/preset settings.
 
-Phase 7 mounts the existing Phase 6 panel through one World-State-owned root and a small, natively collapsible settings card. It does not add a launcher/watchdog/MutationObserver framework or a generic slash-command surface. Maintenance remains a host projection over Phase 5 services:
+Phase 7 mounts the existing Phase 6 panel through one World-State-owned root and a small, natively collapsible settings card. Since 0.9.0-alpha.30 it may also mount a single World-State-owned floating button (`launcher.js`: movable, per-browser `localStorage` position, left-side default, toggled by the `showLauncher` setting) that only opens the existing panel. It does not add a watchdog/MutationObserver framework, cross-extension launcher coordination, or a generic slash-command surface. Maintenance remains a host projection over Phase 5 services:
 
 - export is local
 - import uses preview, explicit confirmation, then apply/persist

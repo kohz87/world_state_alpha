@@ -31,6 +31,7 @@
     "spatial-injection.js",
     "spatial-manual.js",
     "ui.js",
+    "launcher.js",
     "host-identity.js",
     "host-storage.js"
   ],

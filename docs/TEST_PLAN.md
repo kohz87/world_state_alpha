@@ -71,7 +71,7 @@ No fixture may require schema code specific to its setting.
 39. Alpha and pinned Delta identifiers do not collide across settings, prompt key, DOM, global, sidecar filename, manifest dependency, or loading order.
 40. Phase 7 host source neither reads nor mutates NPC State Delta, Ukiyo, Megumin Suite, or Writer's Mind state.
 41. Import/reset/rebuild host actions preserve Phase 5 preview/confirm/atomic contracts and rebuild remains explicit-only.
-42. No launcher/watchdog/MutationObserver or generic slash-command framework is introduced by Phase 7.
+42. No watchdog/MutationObserver, cross-extension launcher coordination, or generic slash-command framework is introduced by Phase 7. The only floating control is the World-State-owned `launcher.js` button, which opens the existing panel, persists its position per browser, and references no other extension.
 43. 1000-record indexed retrieval isolates the relevant record while evaluating <=16 candidate records.
 44. Candidate cap saturation bounds candidates to 128 while deterministically prioritizing exact anchors over common-token matches.
 45. Incremental index update produces identical retrieval output to an index rebuilt from scratch.

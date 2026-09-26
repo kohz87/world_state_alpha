@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.0-alpha.30 - Floating World State button
+
+### Added
+
+- Optional floating World State button (`launcher.js`) that opens the existing panel. Drag it anywhere with mouse or touch; the position is remembered per browser (`localStorage` key `world_state_alpha_launcher_position_v1`). It defaults to the left side (bottom-left on desktop, left edge mid-height on narrow screens) so it does not sit on launchers that use the bottom-right corner. The "Show floating World State button" setting (default on) controls it, and it is also hidden while World State itself is disabled.
+- Resizes (window resize, on-screen keyboard) clamp the button on screen without overwriting the saved spot, so it returns when the viewport grows back. Bounds use the layout viewport, so pinch-zoom does not trap it. A drag interrupted by `pointercancel` keeps its position.
+- The button stacks above the chat but below SillyTavern's menus, drawers, top bar, and popups, and below the World State panel.
+- Mounting the button can never block chat hydration; a failure is logged and the button is skipped.
+
+### Architecture
+
+- The Phase 7 "no launcher" gate is narrowed to one World-State-owned, opener-only button. It has no knowledge of other extensions, no DOM observer or polling, no shared dock, and no durable-state involvement. The watchdog/MutationObserver, cross-extension coordination, and slash-command gates remain, and the Phase 7 coexistence scan now also covers `launcher.js`.
+
+### Validation
+
+- Added launcher regressions: viewport clamping, namespaced and tolerant position storage, click-to-open, drag suppresses the click and saves, resize never persists, `pointercancel` keeps the dragged spot, remount replaces the open handler, idempotent mount/destroy, stacking below host UI, hidden-when-disabled and hydration-safe wiring, and no observer or foreign-extension references. The host coexistence test no longer bans the word "launcher"; its NPC State/Ukiyo/Megumin, MutationObserver, and slash-command bans are unchanged.
+- No canonical schema, sidecar, bundle, or rollback-journal changes.
+
+
 ## 0.9.0-alpha.29 - Places duplicate merge repair
 
 ### Fixed

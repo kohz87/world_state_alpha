@@ -220,6 +220,7 @@ Deliverables:
 - v0.9.0-alpha.27 server-authoritative multi-session freshness: revision-aware hydration, boundary rechecks of the same-backend sidecar, stale cross-session writer rejection, and fail-closed preservation of a newer sidecar when the host chat is behind
 - v0.9.0-alpha.28 operator panel redesign: World / Places workspace with a More menu, grouped trend-coded record disclosures, read-first Places with display-only nesting/duplicate hints, and consolidated scoped CSS; projection-only, no durable-format or host-action change
 - v0.9.0-alpha.29 Places merge repair: hide archived/merged campaign places from the operator list while keeping archived base-map overrides reachable, id-based duplicate merge suggestions, id-derived place selection keys, active-only relative-anchor resolution, and surfaced archive/merge/lock/delete rejections
+- v0.9.0-alpha.30 floating World State button: one opener-only, draggable, per-browser-positioned `launcher.js` button with a left-side default, hidden when World State or the setting is off, stacked below host drawers/popups, and isolated from hydration failures
 
 Acceptance:
 

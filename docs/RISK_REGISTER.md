@@ -67,7 +67,7 @@
 | Stale panel retarget | panel opened on chat A invokes maintenance/spatial action after navigation and mutates chat B | bind panel controller callbacks/state projection to opening chat key and close panel on navigation | host panel ownership test |
 | Render-path blocking | awaited MESSAGE_RECEIVED listener holds SillyTavern render/save completion open for provider latency | background capture dispatch plus existing per-chat queue/currentness guards | host event wiring test |
 | Host cache growth | long session accumulates hydrated chat/base-map objects indefinitely | bounded LRU-style chat/base-map caches; never evict active/panel/in-flight owner | host cache/static measurement |
-| Host framework creep | launcher/watchdog/commands become a second UI/runtime system | settings card + existing Phase 6 panel only; no MutationObserver/generic commands | static source validator |
+| Host framework creep | launcher/watchdog/commands become a second UI/runtime system | settings card + existing Phase 6 panel + one opener-only floating button; no MutationObserver/generic commands/cross-extension coordination | static source validator, launcher regression tests |
 | Live co-install mismatch | deterministic isolation passes but real ST/Delta event order differs | keep host shell independent and run explicit live simultaneous-install acceptance | Phase 8 live co-install run |
 | Over-ontology | schema accretes genre assumptions | no mandatory typed anchors/scope; universality fixtures | schema lint |
 | Incremental index drift | In-memory relevance index becomes out of sync with mutated state | `reduceMutations` computes exact `indexDelta`; incremental delta tested against fresh index | incremental update fixture |
@@ -79,7 +79,7 @@
 | Rebuild cancel starvation | Cancel is queued behind the provider-backed rebuild and cannot stop it | cancellation is control-plane only and bypasses the per-chat writer queue; canonical mutation/persistence remains serialized | provider prefix-cancel + host ordering fixtures |
 | Record detail invisibility | flatter list removes access to anchors/evidence/history | native disclosure row opens bounded anchors, timeline, evidence and relations inline; selected projection remains escaped/bounded | Phase 6 disclosure/XSS fixtures |
 | Status-banner navigation displacement | rebuild status consumes a grid row and pushes tabs/content out of reach | absolute dismissible rebuild toast anchored over content, not layout flow; mobile toast sits above bottom navigation | responsive renderer/CSS fixtures |
-| Storage schema version drift | Application maintenance release accidentally changes durable format versions | decouple app version (currently 0.9.0-alpha.29) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
+| Storage schema version drift | Application maintenance release accidentally changes durable format versions | decouple app version (currently 0.9.0-alpha.30) from canonical schema 2 and sidecar/bundle/journal envelope version 1 | Phase 8/9 static version validators |
 | Passive rewrite mass rollback | an older or multi-message host/Regex/reasoning cleanup is discovered late and exact reconciliation replays every later undo, emptying Current | durable role + sanitized narration fingerprints on lineage rows; narration-equivalent non-user rewrites rebase together; legacy unprovable non-user divergence fails closed with canonical records preserved | multi-message semantic rebase + legacy fail-closed branch fixtures |
 
 
