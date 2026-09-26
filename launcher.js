@@ -25,7 +25,11 @@ export function clampLauncherPosition(position = {}, viewport = {}, size = {}, m
   };
 }
 
-export function readLauncherPosition(storage = globalThis.localStorage) {
+function defaultStorage() {
+  try { return globalThis.localStorage; } catch { return null; }
+}
+
+export function readLauncherPosition(storage = defaultStorage()) {
   try {
     const parsed = JSON.parse(storage?.getItem?.(WORLD_STATE_LAUNCHER_STORAGE_KEY) || 'null');
     if (!parsed || !Number.isFinite(Number(parsed.left)) || !Number.isFinite(Number(parsed.top))) return null;
@@ -35,7 +39,7 @@ export function readLauncherPosition(storage = globalThis.localStorage) {
   }
 }
 
-export function saveLauncherPosition(position, storage = globalThis.localStorage) {
+export function saveLauncherPosition(position, storage = defaultStorage()) {
   try {
     storage?.setItem?.(WORLD_STATE_LAUNCHER_STORAGE_KEY, JSON.stringify({
       left: Math.round(finite(position?.left)),
@@ -58,11 +62,14 @@ export function mountWorldStateLauncher({
   onOpen,
   doc = globalThis.document,
   win = globalThis,
-  storage = globalThis.localStorage,
+  storage = defaultStorage(),
 } = {}) {
   if (!doc?.body || typeof doc.createElement !== 'function') return null;
   const existing = doc.getElementById?.(WORLD_STATE_LAUNCHER_ID);
-  if (existing?.__worldStateLauncher) return existing.__worldStateLauncher;
+  if (existing?.__worldStateLauncher) {
+    existing.__worldStateLauncher.setOnOpen(onOpen);
+    return existing.__worldStateLauncher;
+  }
   existing?.remove?.();
 
   const button = doc.createElement('button');
@@ -75,12 +82,18 @@ export function mountWorldStateLauncher({
 
   let drag = null;
   let suppressClickUntil = 0;
+  let openHandler = onOpen;
+  // The operator's chosen spot. Resizes clamp the displayed position against
+  // it but never overwrite it, so a transient shrink (on-screen keyboard,
+  // narrowed window) does not permanently move the button.
+  let preferred = null;
 
+  // position:fixed is laid out against the layout viewport, not the
+  // pinch-zoomed visual viewport.
   function viewport() {
-    const visual = win.visualViewport;
     return {
-      width: finite(visual?.width, win.innerWidth || doc.documentElement?.clientWidth || 0),
-      height: finite(visual?.height, win.innerHeight || doc.documentElement?.clientHeight || 0),
+      width: finite(doc.documentElement?.clientWidth, 0) || finite(win.innerWidth, 0),
+      height: finite(doc.documentElement?.clientHeight, 0) || finite(win.innerHeight, 0),
     };
   }
 
@@ -95,10 +108,15 @@ export function mountWorldStateLauncher({
   }
 
   function onResize() {
-    if (button.dataset.positioned !== 'true') return;
+    if (preferred) applyPosition(preferred);
+  }
+
+  function commitDraggedPosition() {
     const rect = button.getBoundingClientRect();
     const clamped = applyPosition({ left: rect.left, top: rect.top });
-    if (clamped) saveLauncherPosition(clamped, storage);
+    if (!clamped) return;
+    preferred = clamped;
+    saveLauncherPosition(clamped, storage);
   }
 
   function onPointerDown(event) {
@@ -131,21 +149,21 @@ export function mountWorldStateLauncher({
     finishDrag(event);
     if (!moved) return;
     event.preventDefault?.();
-    const rect = button.getBoundingClientRect();
-    const clamped = applyPosition({ left: rect.left, top: rect.top });
-    if (clamped) saveLauncherPosition(clamped, storage);
+    commitDraggedPosition();
     suppressClickUntil = Date.now() + CLICK_SUPPRESS_MS;
   }
 
   function onPointerCancel(event) {
     if (!drag || event.pointerId !== drag.pointerId) return;
+    const moved = drag.moved;
     finishDrag(event);
+    if (moved) commitDraggedPosition();
   }
 
   function onClick(event) {
     event.preventDefault?.();
     if (Date.now() < suppressClickUntil) return;
-    if (typeof onOpen === 'function') onOpen();
+    if (typeof openHandler === 'function') openHandler();
   }
 
   button.addEventListener('pointerdown', onPointerDown);
@@ -154,18 +172,20 @@ export function mountWorldStateLauncher({
   button.addEventListener('pointercancel', onPointerCancel);
   button.addEventListener('click', onClick);
   win.addEventListener?.('resize', onResize);
-  win.visualViewport?.addEventListener?.('resize', onResize);
   doc.body.appendChild(button);
 
-  const stored = readLauncherPosition(storage);
-  if (stored) {
-    const restore = () => applyPosition(stored);
+  preferred = readLauncherPosition(storage);
+  if (preferred) {
+    const restore = () => applyPosition(preferred);
     if (typeof win.requestAnimationFrame === 'function') win.requestAnimationFrame(restore);
     else restore();
   }
 
   const controller = Object.freeze({
     element: button,
+    setOnOpen(next) {
+      openHandler = next;
+    },
     destroy() {
       button.removeEventListener('pointerdown', onPointerDown);
       button.removeEventListener('pointermove', onPointerMove);
@@ -173,7 +193,6 @@ export function mountWorldStateLauncher({
       button.removeEventListener('pointercancel', onPointerCancel);
       button.removeEventListener('click', onClick);
       win.removeEventListener?.('resize', onResize);
-      win.visualViewport?.removeEventListener?.('resize', onResize);
       delete button.__worldStateLauncher;
       button.remove();
     },

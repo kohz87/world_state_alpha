@@ -41,7 +41,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.29';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.30';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -2381,6 +2381,7 @@ function bindSettingsEvents() {
 
     persistHostSettings();
     syncSettingsControls();
+    if (target.id === 'world_state_alpha_enabled') syncFloatingLauncher();
 
     const spatialToggle = target.id === 'world_state_alpha_spatial_enabled'
       || target.id === 'world_state_alpha_spatial_inject';
@@ -2416,14 +2417,20 @@ function bindSettingsEvents() {
 
 // One World-State-owned floating button, mounted on init and on setting change.
 // Nothing polls or observes the DOM for it; SillyTavern leaves our body child alone.
+// The button is optional chrome: a failure here must never block hydration.
 function syncFloatingLauncher() {
-  if (!globalThis.document?.body) return;
-  const wanted = getWorldStateSettings().showLauncher !== false;
-  if (wanted && !floatingLauncher?.element?.isConnected) {
-    floatingLauncher = mountWorldStateLauncher({ onOpen: () => void openWorldStatePanel() });
-  } else if (!wanted && floatingLauncher) {
-    floatingLauncher.destroy();
+  try {
+    if (!globalThis.document?.body) return;
+    const settings = getWorldStateSettings();
+    const wanted = settings.showLauncher !== false && settings.enabled !== false;
+    if (wanted && floatingLauncher?.element?.isConnected) return;
+    floatingLauncher?.destroy();
+    floatingLauncher = wanted
+      ? mountWorldStateLauncher({ onOpen: () => void openWorldStatePanel() })
+      : null;
+  } catch (error) {
     floatingLauncher = null;
+    console.warn('[World State Alpha] floating button unavailable', error);
   }
 }
 

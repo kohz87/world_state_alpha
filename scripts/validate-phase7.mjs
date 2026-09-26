@@ -54,7 +54,8 @@ const index = fs.readFileSync('index.js', 'utf8');
 const bootstrap = fs.readFileSync('bootstrap.js', 'utf8');
 const hostStorage = fs.readFileSync('host-storage.js', 'utf8');
 const hostIdentity = fs.readFileSync('host-identity.js', 'utf8');
-const hostRuntime = [index, bootstrap, hostStorage, hostIdentity].join('\n');
+const floatingButton = fs.readFileSync('launcher.js', 'utf8');
+const hostRuntime = [index, bootstrap, hostStorage, hostIdentity, floatingButton].join('\n');
 
 for (const forbidden of [
   'npc_state_delta',
