@@ -1,5 +1,6 @@
 import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
+import { hashText } from './hash.js';
 import { clone, normalizeState } from './state-core.js';
 import { resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 
@@ -274,11 +275,13 @@ function projectSpatialLocation(loc, key) {
     routeRefs: Array.isArray(loc.routeRefs) ? loc.routeRefs.map(r => clean(r, 120)).filter(Boolean) : [],
     notes: clean(loc.notes, 400),
     status: loc.status || 'active',
+    archived: loc.status === 'archived',
+    campaignId: !loc.isBase || loc.isOverridden ? clean(loc.overrideId || loc.id, 120) : '',
     lastChangedMessage: integer(loc.lastChangedMessage),
   };
 }
 
-function projectSpatialDetail(spatialState, loc, baseMap, key) {
+function projectSpatialDetail(spatialState, loc, key, { resolvedLocations, listedLocations }) {
   const base = projectSpatialLocation(loc, key);
   const evidence = (loc.evidenceIds || [])
     .map(evId => spatialState?.evidence?.[evId])
@@ -291,8 +294,7 @@ function projectSpatialDetail(spatialState, loc, baseMap, key) {
       claim: clean(item?.claim, 500),
     }));
 
-  const allEffective = resolveEffectiveLocations(spatialState, baseMap);
-  const locMap = new Map(allEffective.map(item => [item.id, item]));
+  const locMap = new Map(resolvedLocations.map(item => [item.id, item]));
   const campaignId = loc.overrideId || loc.id;
 
   const relations = (spatialState?.relations || [])
@@ -333,7 +335,7 @@ function projectSpatialDetail(spatialState, loc, baseMap, key) {
     evidence,
     relations,
     primaryRelation,
-    locationOptions: allEffective
+    locationOptions: listedLocations
       .filter(item => item.id !== loc.id && item.status !== 'archived')
       .slice(0, WORLD_STATE_UI_LIMITS.spatialLocations)
       .map(item => ({ id: clean(item.id, 120), name: clean(item.name, 120) })),
@@ -521,9 +523,11 @@ export function buildWorldStateUiModel(state, {
 
   // Spatial Projection
   const resolvedLocations = resolveEffectiveLocations(normalized.spatial, baseMap);
-  // Archived places (including merged duplicates) are history, not current
-  // geography: Spatial injection already skips them, so the list does too.
-  const effectiveLocations = resolvedLocations.filter(loc => loc.status !== 'archived');
+  // Archived campaign places (including merged duplicates) are history, not
+  // current geography: Spatial injection already skips them, so the list does
+  // too. An archived override stays listed because it is the only way back to
+  // the base-map place it shadows (delete the override).
+  const effectiveLocations = resolvedLocations.filter(loc => loc.status !== 'archived' || loc.isOverridden);
   const hasBaseMap = Boolean(baseMap || normalized.spatial.baseMapRef);
   const activeSpatialProfile = resolveSpatialProfile(normalized.spatial, baseMap);
   const displaySpatialProfile = activeSpatialProfile || {
@@ -540,17 +544,19 @@ export function buildWorldStateUiModel(state, {
       && Number.isFinite(location.coordinate.x)
       && Number.isFinite(location.coordinate.y)
   ).length;
-  const spatialKeyByLocId = new Map(effectiveLocations.map((loc, index) => [loc.id, 'sloc-' + index]));
-  const locBySpatialKey = new Map(effectiveLocations.map((loc, index) => ['sloc-' + index, loc]));
+  // Keys are derived from the location id, not list position, so archiving,
+  // merging, or a rehydrated change elsewhere cannot re-point a kept selection
+  // (or an open edit form) at a different place.
+  const spatialKeyOf = loc => 'sloc-' + hashText(loc.id).slice(0, 12);
+  const locBySpatialKey = new Map(effectiveLocations.map(loc => [spatialKeyOf(loc), loc]));
 
   const spatialNeedle = clean(spatialSearch, 120).toLowerCase();
-  const allSpatialProjected = effectiveLocations.map((loc, index) =>
-    projectSpatialLocation(loc, 'sloc-' + index),
-  );
+  const allSpatialProjected = effectiveLocations.map(loc => projectSpatialLocation(loc, spatialKeyOf(loc)));
   const placeParents = placeParentKeys(allSpatialProjected);
-  const duplicatePool = allSpatialProjected.length <= PLACE_DUPLICATE_POOL
-    ? allSpatialProjected
-    : allSpatialProjected.filter(loc => !loc.isBase || loc.isOverridden).slice(0, PLACE_DUPLICATE_POOL);
+  const activeSpatialProjected = allSpatialProjected.filter(loc => !loc.archived);
+  const duplicatePool = activeSpatialProjected.length <= PLACE_DUPLICATE_POOL
+    ? activeSpatialProjected
+    : activeSpatialProjected.filter(loc => loc.campaignId).slice(0, PLACE_DUPLICATE_POOL);
   const duplicateKeys = possibleDuplicatePlaceKeys(duplicatePool, placeParents);
 
   const searchedSpatial = spatialNeedle
@@ -573,16 +579,24 @@ export function buildWorldStateUiModel(state, {
     : boundedSpatial[0]?.key || '';
 
   const selectedLoc = activeSpatialKey ? locBySpatialKey.get(activeSpatialKey) : null;
-  const spatialDetail = selectedLoc ? projectSpatialDetail(normalized.spatial, selectedLoc, baseMap, activeSpatialKey) : null;
+  const spatialDetail = selectedLoc
+    ? projectSpatialDetail(normalized.spatial, selectedLoc, activeSpatialKey, { resolvedLocations, listedLocations: effectiveLocations })
+    : null;
   if (spatialDetail) {
     const projectedByKey = new Map(allSpatialProjected.map(loc => [loc.key, loc]));
     const parentKey = placeParents.get(activeSpatialKey);
     spatialDetail.parentName = parentKey ? projectedByKey.get(parentKey)?.name || '' : '';
     spatialDetail.childCount = [...placeParents.values()].filter(key => key === activeSpatialKey).length;
     spatialDetail.possibleDuplicate = duplicateKeys.has(activeSpatialKey);
-    spatialDetail.duplicateNames = [...(duplicateKeys.get(activeSpatialKey) || [])]
-      .map(key => projectedByKey.get(key)?.name)
+    const partners = [...(duplicateKeys.get(activeSpatialKey) || [])]
+      .map(key => projectedByKey.get(key))
       .filter(Boolean);
+    spatialDetail.duplicateNames = partners.map(loc => loc.name);
+    // Only campaign entries can be merge targets; ids keep same-named or
+    // whitespace-variant partners unambiguous for the host.
+    spatialDetail.mergeSuggestions = partners
+      .filter(loc => loc.campaignId)
+      .map(loc => ({ id: loc.campaignId, name: loc.name }));
     spatialDetail.mentions = placeMentions(projected, spatialDetail.name);
   }
 
@@ -607,7 +621,7 @@ export function buildWorldStateUiModel(state, {
       evidence: Object.keys(normalized.evidence).length,
       links: normalized.links.length,
       spatialLocations: effectiveLocations.length,
-      spatialCampaign: normalized.spatial.locations.length,
+      spatialCampaign: normalized.spatial.locations.filter(loc => loc.status !== 'archived').length,
       spatialBase: baseMap ? (baseMap.locations?.length || 0) : 0,
     },
     views: { current, recent, resolved, search: searched },
@@ -917,9 +931,11 @@ function placeOriginLabel(loc) {
 }
 
 function placeRow(loc, selected) {
-  const trailing = loc.possibleDuplicate
-    ? '<span class="wsa-place-flag" title="Possible duplicate">' + icon('warn') + 'duplicate?</span>'
-    : '<span class="wsa-place-type">' + escapeHtml(loc.type) + '</span>';
+  const trailing = loc.archived
+    ? '<span class="wsa-place-type">archived</span>'
+    : loc.possibleDuplicate
+      ? '<span class="wsa-place-flag" title="Possible duplicate">' + icon('warn') + 'duplicate?</span>'
+      : '<span class="wsa-place-type">' + escapeHtml(loc.type) + '</span>';
   return '<button type="button" class="wsa-place-row wsa-depth-' + (loc.depth || 0) + (selected ? ' is-selected' : '') +
     '" data-wsa-spatial-key="' + escapeHtml(loc.key) + '" aria-pressed="' + (selected ? 'true' : 'false') + '"' +
     (loc.displayName !== loc.name ? ' title="' + escapeHtml(loc.name) + '"' : '') + '>' +
@@ -1005,6 +1021,7 @@ function spatialReadHtml(detail) {
     '<div class="wsa-place-title"><h2>' + escapeHtml(detail.name) + '</h2>' +
     '<p><span>' + escapeHtml(detail.type) + '</span>' +
     pill(detail.authorityLabel, 'wsa-auth') +
+    (detail.archived ? pill('Archived', 'wsa-archived') : '') +
     '<span>' + escapeHtml(placeOriginLabel(detail)) + '</span>' +
     (detail.parentName ? '<span>in ' + escapeHtml(detail.parentName) + '</span>' : '') +
     '</p></div>' +
@@ -2048,7 +2065,7 @@ export function createWorldStateUiController({
       await onSpatialAction(action, {
         location: currentLoc,
         formData,
-        mergeSuggestions: action === 'merge_location' ? [...(currentLoc?.duplicateNames || [])] : [],
+        mergeSuggestions: action === 'merge_location' ? (currentLoc?.mergeSuggestions || []).map(item => ({ ...item })) : [],
         spatialModel: currentModel.spatial,
       });
       if (['save_location', 'archive_location', 'merge_location', 'delete_location'].includes(action)) ui.spatialEditing = false;

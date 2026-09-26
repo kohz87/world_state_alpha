@@ -830,9 +830,13 @@ test('merged or archived places leave the Places list, duplicate flags, and coun
     spatialLocation('wsloc_other', 'Northglass', { x: 5, y: 5 }),
   ];
 
-  const before = buildWorldStateUiModel(state, { selectedSpatialKey: 'sloc-1' });
+  const initial = buildWorldStateUiModel(state);
+  const keyOf = (model, name) => model.spatial.locations.find(loc => loc.name === name)?.key;
+  const northglassKey = keyOf(initial, 'Northglass');
+  const before = buildWorldStateUiModel(state, { selectedSpatialKey: keyOf(initial, 'Drainage Ditch South of Farwick') });
   assert.equal(before.spatial.duplicateCount, 2);
   assert.deepEqual(before.spatial.detail.duplicateNames, ['Southern Drainage Ditch']);
+  assert.deepEqual(before.spatial.detail.mergeSuggestions, [{ id: 'wsloc_ditch_a', name: 'Southern Drainage Ditch' }]);
   assert.match(renderWorldStatePanel(before, { activeTab: 'spatial' }), /May duplicate “Southern Drainage Ditch”/);
 
   const merged = applySpatialManualMutation({
@@ -850,7 +854,40 @@ test('merged or archived places leave the Places list, duplicate flags, and coun
   assert.equal(after.spatial.archivedCount, 1);
   assert.equal(after.counts.spatialLocations, 2);
   assert.equal(after.spatial.detail.locationOptions.some(item => item.name === 'Drainage Ditch South of Farwick'), false);
+  assert.equal(after.counts.spatialCampaign, 2);
+  // Keys follow the location, not list position, so a kept selection survives the merge.
+  assert.equal(keyOf(after, 'Northglass'), northglassKey);
+  assert.equal(buildWorldStateUiModel(merged.state, { selectedSpatialKey: northglassKey }).spatial.detail.name, 'Northglass');
   const html = renderWorldStatePanel(after, { activeTab: 'spatial' });
   assert.doesNotMatch(html, /Drainage Ditch South of Farwick/);
   assert.match(html, /1 archived or merged place is not listed/);
+});
+
+test('an archived campaign override stays reachable so the base-map place can be restored', () => {
+  const state = fixtureState();
+  const baseMap = {
+    id: 'base-archive-test',
+    name: 'Archive Test Map',
+    version: '1',
+    profile: null,
+    locations: [
+      { id: 'base_mill', name: 'Farwick Mill', type: 'mill', coordinate: { x: 1, y: 2 } },
+      { id: 'base_bridge', name: 'Old Bridge', type: 'bridge', coordinate: { x: 3, y: 4 } },
+    ],
+    routes: [],
+  };
+  state.spatial.baseMapRef = { id: baseMap.id, name: baseMap.name, version: '1', digest: 'd', path: '/base.json' };
+  state.spatial.locations = [{
+    ...spatialLocation('wsloc_mill_override', 'Farwick Mill', { x: 1, y: 2 }),
+    baseRefId: 'base_mill',
+    status: 'archived',
+  }];
+  const model = buildWorldStateUiModel(state, { baseMap });
+  const mill = model.spatial.locations.find(loc => loc.name === 'Farwick Mill');
+  assert.ok(mill, 'archived override remains listed');
+  assert.equal(mill.archived, true);
+  assert.equal(model.spatial.duplicateCount, 0);
+  const selected = buildWorldStateUiModel(state, { baseMap, selectedSpatialKey: mill.key });
+  assert.match(renderWorldStatePanel(selected, { activeTab: 'spatial' }), /wsa-archived">Archived/);
+  assert.match(renderWorldStatePanel(selected, { activeTab: 'spatial', spatialEditing: true }), /data-wsa-spatial-action="delete_location"/);
 });
