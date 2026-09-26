@@ -300,7 +300,6 @@ test('Phase 7 host runtime owns only World State settings DOM prompt storage and
     'Megumin',
     "Writer's Mind",
     'MutationObserver',
-    'launcher',
     'registerSlash',
     'SlashCommand',
   ]) assert.equal(host.includes(forbidden), false, 'host runtime must not contain ' + forbidden);

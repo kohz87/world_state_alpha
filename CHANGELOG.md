@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Optional floating World State button (`launcher.js`). It opens the existing panel, can be dragged anywhere, remembers its position per browser (`localStorage` key `world_state_alpha_launcher_position_v1`), and defaults to the left side (bottom-left on desktop, left edge mid-height on narrow screens) so it does not sit on launchers that use the bottom-right corner. A settings toggle, "Show floating World State button", turns it off; it is on by default.
+
+### Architecture
+
+- The Phase 7 "no launcher" gate is narrowed to one World-State-owned, opener-only button. It has no knowledge of other extensions, no DOM observer or polling, no shared dock, and no durable-state involvement. The watchdog/MutationObserver, cross-extension coordination, and slash-command gates remain.
+
+### Validation
+
+- Added launcher regressions (viewport clamping, namespaced/tolerant position storage, click-to-open, drag suppresses click and saves position, idempotent mount/destroy, no observer or foreign-extension references). The host coexistence test no longer bans the word "launcher"; its NPC State/Ukiyo/Megumin, MutationObserver, and slash-command bans are unchanged.
+- No canonical schema, sidecar, bundle, or rollback-journal changes.
+
+
 ## 0.9.0-alpha.29 - Places duplicate merge repair
 
 ### Fixed

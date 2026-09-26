@@ -12,7 +12,7 @@ Resolved: Phase 5 manual correction is attached only to the current raw-message 
 
 Resolved: Phase 6 uses a projection-only adaptive panel with Current / Recent / Resolved / Places / Search / Operations / Data views. Reality records expand inline on desktop/tablet/mobile; Places keeps the adaptive split/single-pane editor; mobile uses Current / Places / Ops / More bottom navigation plus full-height rebuild sheets. Maintenance/range/cancel controls emit intents only and do not acquire mutation authority.
 
-Resolved: Phase 7 uses a minimal settings-card host with no separate launcher/watchdog framework and no generic slash-command family. It mounts the existing Phase 6 panel, stores only World State sidecar pointers under `extension_settings.world_state_alpha`, uses the existing private prompt key, and has no NPC State/Ukiyo/Megumin dependency or external-state adapter.
+Resolved: Phase 7 uses a minimal settings-card host (plus, since 0.9.0-alpha.30, one opener-only floating button) with no watchdog/MutationObserver framework and no generic slash-command family. It mounts the existing Phase 6 panel, stores only World State sidecar pointers under `extension_settings.world_state_alpha`, uses the existing private prompt key, and has no NPC State/Ukiyo/Megumin dependency or external-state adapter.
 
 Resolved: Phase 8 introduced the ephemeral per-chat relevance index, bounded evidence compaction, deterministic packaging, and live-acceptance protocol while the pre-Spatial schema was still version 1. Phase 9 intentionally migrated canonical state to schema version 2; sidecar/bundle/journal envelope versions remain 1.
 

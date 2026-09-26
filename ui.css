@@ -2683,3 +2683,82 @@
     min-height: 44px;
   }
 }
+
+/* Floating World State button. Lives outside the panel root; defaults to the
+   left side and stays below the open panel's stacking layer. */
+#world_state_alpha_launcher.world-state-alpha-launcher {
+  position: fixed;
+  left: max(18px, env(safe-area-inset-left));
+  bottom: 74px;
+  z-index: 2147482000;
+  width: 46px;
+  height: 46px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(127, 176, 255, 0.6);
+  border-radius: 50%;
+  background: #14171d;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#world_state_alpha_launcher.world-state-alpha-launcher:hover {
+  border-color: rgba(127, 176, 255, 0.95);
+  background: #1b2130;
+}
+
+#world_state_alpha_launcher.world-state-alpha-launcher.is-dragging {
+  cursor: grabbing;
+  opacity: 0.9;
+}
+
+#world_state_alpha_launcher.world-state-alpha-launcher:focus-visible {
+  outline: 2px solid #7fb0ff;
+  outline-offset: 3px;
+}
+
+#world_state_alpha_launcher.world-state-alpha-launcher[data-positioned="true"] {
+  right: auto;
+  bottom: auto;
+  transform: none;
+}
+
+#world_state_alpha_launcher svg {
+  width: 30px;
+  height: 30px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+#world_state_alpha_launcher svg > circle:first-child {
+  fill: rgba(80, 135, 255, 0.08);
+  stroke: rgba(122, 170, 255, 0.92);
+  stroke-width: 1.8;
+}
+
+#world_state_alpha_launcher svg path {
+  fill: none;
+  stroke: rgba(122, 170, 255, 0.7);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+#world_state_alpha_launcher svg circle:not(:first-child) {
+  fill: #dbe9ff;
+  stroke: #4f8dff;
+  stroke-width: 1.4;
+}
+
+@media (max-width: 1100px) {
+  #world_state_alpha_launcher.world-state-alpha-launcher:not([data-positioned="true"]) {
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+  }
+}

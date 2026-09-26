@@ -39,6 +39,7 @@ import { normalizeSpatialProfile, resolveEffectiveLocations, resolveSpatialProfi
 import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
+import { mountWorldStateLauncher } from './launcher.js';
 
 export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.29';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
@@ -59,6 +60,7 @@ const DEFAULTS = Object.freeze({
   spatialInject: true,
   spatialInjectBudgetTokens: 500,
   spatialBaseMaps: {},
+  showLauncher: true,
 });
 
 const stateCache = new Map();
@@ -109,6 +111,7 @@ let settingsMountTimer = null;
 let serverFreshnessResumeTimer = null;
 let panelController = null;
 let panelRoot = null;
+let floatingLauncher = null;
 let panelChatKey = 'no-chat';
 
 const hostStorage = createSillyTavernWorldStateStorageAdapter({
@@ -155,6 +158,7 @@ export function getWorldStateSettings() {
   settings.enabled = settings.enabled !== false;
   settings.autoCapture = settings.autoCapture !== false;
   settings.inject = settings.inject !== false;
+  settings.showLauncher = settings.showLauncher !== false;
   {
     const depth = Number(settings.injectDepth);
     settings.injectDepth = Math.max(0, Math.min(20, Number.isFinite(depth) ? Math.trunc(depth) : 1));
@@ -2268,6 +2272,7 @@ function syncSettingsControls() {
   syncConnectionProfileControl(root, settings.connectionProfile);
   assignChecked('world_state_alpha_spatial_enabled', settings.spatialEnabled);
   assignChecked('world_state_alpha_spatial_inject', settings.spatialInject);
+  assignChecked('world_state_alpha_show_launcher', settings.showLauncher);
   assignValue('world_state_alpha_spatial_inject_budget', settings.spatialInjectBudgetTokens);
 }
 
@@ -2300,6 +2305,7 @@ function buildSettingsCard() {
     '<label class="world-state-alpha-toggle"><input id="world_state_alpha_spatial_inject" type="checkbox"><span>Inject spatial continuity</span></label>',
     '<label class="world-state-alpha-field"><span>Spatial injection budget</span><input id="world_state_alpha_spatial_inject_budget" type="number" min="1" max="2400" step="1"></label>',
     '</div>',
+    '<label class="world-state-alpha-toggle"><input id="world_state_alpha_show_launcher" type="checkbox"><span>Show floating World State button (drag to move)</span></label>',
     '<button id="world_state_alpha_open" type="button" class="menu_button world-state-alpha-open">Open World State</button>',
     '</div>',
     '</div>',
@@ -2353,6 +2359,13 @@ function bindSettingsEvents() {
     else if (target.id === 'world_state_alpha_spatial_enabled') settings.spatialEnabled = Boolean(target.checked);
     else if (target.id === 'world_state_alpha_spatial_inject') settings.spatialInject = Boolean(target.checked);
     else if (target.id === 'world_state_alpha_spatial_inject_budget') settings.spatialInjectBudgetTokens = Math.max(1, Math.min(2400, Math.trunc(Number(target.value) || 500)));
+    else if (target.id === 'world_state_alpha_show_launcher') {
+      settings.showLauncher = Boolean(target.checked);
+      persistHostSettings();
+      syncSettingsControls();
+      syncFloatingLauncher();
+      return;
+    }
     else return;
 
     if ([
@@ -2399,6 +2412,19 @@ function bindSettingsEvents() {
   });
   globalThis.addEventListener?.('pageshow', () => scheduleServerFreshnessRefresh('pageshow'));
   globalThis.addEventListener?.('focus', () => scheduleServerFreshnessRefresh('window-focus'));
+}
+
+// One World-State-owned floating button, mounted on init and on setting change.
+// Nothing polls or observes the DOM for it; SillyTavern leaves our body child alone.
+function syncFloatingLauncher() {
+  if (!globalThis.document?.body) return;
+  const wanted = getWorldStateSettings().showLauncher !== false;
+  if (wanted && !floatingLauncher?.element?.isConnected) {
+    floatingLauncher = mountWorldStateLauncher({ onOpen: () => void openWorldStatePanel() });
+  } else if (!wanted && floatingLauncher) {
+    floatingLauncher.destroy();
+    floatingLauncher = null;
+  }
 }
 
 function closeWorldStatePanel() {
@@ -3823,6 +3849,7 @@ async function init({ hostReady = false, recheckFresh = false } = {}) {
 
   getWorldStateSettings();
   scheduleSettingsMount();
+  syncFloatingLauncher();
 
   await activateCurrentChat();
 

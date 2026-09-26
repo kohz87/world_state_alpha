@@ -67,7 +67,7 @@
 | Stale panel retarget | panel opened on chat A invokes maintenance/spatial action after navigation and mutates chat B | bind panel controller callbacks/state projection to opening chat key and close panel on navigation | host panel ownership test |
 | Render-path blocking | awaited MESSAGE_RECEIVED listener holds SillyTavern render/save completion open for provider latency | background capture dispatch plus existing per-chat queue/currentness guards | host event wiring test |
 | Host cache growth | long session accumulates hydrated chat/base-map objects indefinitely | bounded LRU-style chat/base-map caches; never evict active/panel/in-flight owner | host cache/static measurement |
-| Host framework creep | launcher/watchdog/commands become a second UI/runtime system | settings card + existing Phase 6 panel only; no MutationObserver/generic commands | static source validator |
+| Host framework creep | launcher/watchdog/commands become a second UI/runtime system | settings card + existing Phase 6 panel + one opener-only floating button; no MutationObserver/generic commands/cross-extension coordination | static source validator, launcher regression tests |
 | Live co-install mismatch | deterministic isolation passes but real ST/Delta event order differs | keep host shell independent and run explicit live simultaneous-install acceptance | Phase 8 live co-install run |
 | Over-ontology | schema accretes genre assumptions | no mandatory typed anchors/scope; universality fixtures | schema lint |
 | Incremental index drift | In-memory relevance index becomes out of sync with mutated state | `reduceMutations` computes exact `indexDelta`; incremental delta tested against fresh index | incremental update fixture |
