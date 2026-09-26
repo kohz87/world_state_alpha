@@ -1645,11 +1645,21 @@ test('Spatial UI exposes the complete manual continuity edit surface', () => {
     coordinate: { x: 42.3, y: 171.8, authority: 'manual', locked: true },
     context: 'Northern frontier',
   }));
-  const html = renderWorldStatePanel(buildWorldStateUiModel(state), { activeTab: 'spatial' });
+  const model = buildWorldStateUiModel(state);
+  const readHtml = renderWorldStatePanel(model, { activeTab: 'spatial' });
+  for (const required of [
+    'data-wsa-spatial-action="add_location_modal"',
+    'data-wsa-spatial-action="toggle_lock"',
+    'data-wsa-spatial-edit',
+  ]) assert.ok(readHtml.includes(required), 'read view ' + required);
+  assert.ok(!readHtml.includes('data-wsa-field="name"'), 'read view does not open the editor by default');
+
+  const html = renderWorldStatePanel(model, { activeTab: 'spatial', spatialEditing: true });
   for (const required of [
     'data-wsa-spatial-action="add_location_modal"',
     'data-wsa-spatial-action="save_location"',
-    'data-wsa-spatial-action="toggle_lock"',
+    'data-wsa-spatial-cancel-edit',
+    'data-wsa-field="locked"',
     'data-wsa-spatial-action="archive_location"',
     'data-wsa-spatial-action="merge_location"',
     'data-wsa-spatial-action="delete_location"',

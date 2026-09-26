@@ -11,7 +11,7 @@ The Reality Core models **change, not maps** and keeps its two-kind fact/develop
 
 ## Implementation status
 
-**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.27 makes the SillyTavern server sidecar authoritative across same-backend desktop/mobile/tabs: hydrated browser state is revision-aware, meaningful boundaries refresh newer server state, stale cross-session writers are rejected and rehydrated, and a newer sidecar is never rolled backward merely because the local host chat has not caught up yet. Alpha.26 branch-write race hardening, Alpha.25 startup/session hydration recovery, Alpha.24 Coordinate Profile controls, and Alpha.23 generalized base-map/schema simplification remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
+**Phases 1-9 are implemented as candidates. Version 0.9.0-alpha.28 redesigns the operator panel: a World / Places workspace with a More menu, grouped trend-coded record rows that expand in place, and a read-first Places view with display-only sub-place nesting and possible-duplicate hints. It changes no durable format or host action. Alpha.27 server-authoritative same-backend desktop/mobile/tab freshness, Alpha.26 branch-write race hardening, Alpha.25 startup/session hydration recovery, Alpha.24 Coordinate Profile controls, and Alpha.23 generalized base-map/schema simplification remain intact. Canonical schema is version 2; sidecar, bundle, and rollback-journal envelope formats remain version 1.**
 
 The initial design is grounded against NPC State Delta current `main` at:
 
