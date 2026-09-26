@@ -721,3 +721,102 @@ test('Phase 6 UI namespace is isolated from NPC State and host/bootstrap code', 
   assert.equal(source.includes('SillyTavern'), false);
   assert.equal(source.includes('executeSlashCommands'), false);
 });
+
+function spatialLocation(id, name, { x = null, y = null, type = 'landmark', context = '' } = {}) {
+  return {
+    id,
+    name,
+    type,
+    status: 'active',
+    baseRefId: null,
+    coordinate: { x, y, authority: x === null ? 'unknown' : 'narrative_explicit', locked: false },
+    context,
+    routeRefs: [],
+    notes: '',
+    createdAtMessage: 1,
+    lastChangedMessage: 1,
+    evidenceIds: [],
+  };
+}
+
+test('redesigned World view groups active records and keeps rows free of raw identifiers', () => {
+  const state = fixtureState();
+  state.records.push(record('wsr_hidden_old_fact', {
+    summary: 'Southport harbour charter predates the strike.',
+    anchors: ['Southport'],
+    changed: 1,
+  }));
+  state.spatial.locations = [spatialLocation('wsloc_southport', 'Southport')];
+  const model = buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 16 } });
+  assert.equal(model.latestMessage, 15);
+
+  const html = renderWorldStatePanel(model, { activeTab: 'current' });
+  assert.match(html, /wsa-group-head"><span>Changed recently/);
+  assert.match(html, /wsa-group-head"><span>Facts/);
+  assert.match(html, /wsa-rec-rising/);
+  assert.match(html, /<b>Rising<\/b> · 4 messages ago/);
+  assert.match(html, /class="wsa-tag is-place">[\s\S]*?Southport<\/span>/);
+  assert.match(html, /data-wsa-tab="recent"/);
+  assert.match(html, /data-wsa-tab="resolved"/);
+  assert.match(html, /data-wsa-search/);
+  assert.match(html, /class="wsa-menu" role="menu" aria-label="More World State actions" hidden/);
+  assert.match(html, /data-wsa-menu-toggle/);
+  assert.match(html, /Private continuity context — not character knowledge/);
+  assert.equal(html.includes('wsr_hidden'), false);
+
+  const menuHtml = renderWorldStatePanel(model, { activeTab: 'current', menuOpen: true });
+  assert.doesNotMatch(menuHtml, /aria-label="More World State actions" hidden/);
+  assert.match(menuHtml, /data-wsa-open-map-settings/);
+});
+
+test('Places projection nests sub-places, flags possible duplicates, and lists mentioning records without persisting either', () => {
+  const state = fixtureState();
+  state.records.push(record('wsr_hidden_farwick', {
+    summary: 'Beasts were cleared from the center of Farwick.',
+    anchors: ['Noc'],
+    changed: 12,
+  }));
+  state.spatial.locations = [
+    spatialLocation('wsloc_farwick', 'Farwick', { x: -198.12, y: 188.15, type: 'settlement' }),
+    spatialLocation('wsloc_gate', 'Farwick North Gate', { x: -198.1, y: 188.3 }),
+    spatialLocation('wsloc_ditch_a', 'Southern Drainage Ditch', { x: -198.1, y: 188.1 }),
+    spatialLocation('wsloc_ditch_b', 'Drainage Ditch South of Farwick', { x: -198.1, y: 188.1 }),
+    spatialLocation('wsloc_other', 'Northglass', { x: 5, y: 5 }),
+  ];
+  state.spatial.relations = [{
+    id: 'wsrel_ditch', fromId: 'wsloc_farwick', toId: 'wsloc_ditch_a',
+    direction: 'south', distanceKm: 3, distanceMode: 'straight_line', notes: '', evidenceIds: [],
+  }];
+  const before = JSON.stringify(state.spatial);
+  const model = buildWorldStateUiModel(state);
+  assert.equal(JSON.stringify(state.spatial), before);
+
+  const rows = model.spatial.locations;
+  assert.deepEqual(rows.map(row => [row.displayName, row.depth]), [
+    ['Farwick', 0],
+    ['North Gate', 1],
+    ['Southern Drainage Ditch', 0],
+    ['Drainage Ditch South of Farwick', 0],
+    ['Northglass', 0],
+  ]);
+  assert.equal(model.spatial.duplicateCount, 2);
+  assert.deepEqual(rows.filter(row => row.possibleDuplicate).map(row => row.name), [
+    'Southern Drainage Ditch',
+    'Drainage Ditch South of Farwick',
+  ]);
+  assert.equal(model.spatial.detail.name, 'Farwick');
+  assert.equal(model.spatial.detail.childCount, 1);
+  assert.equal(model.spatial.detail.mentions.total, 1);
+  assert.equal(model.spatial.detail.mentions.rows[0].summary, 'Beasts were cleared from the center of Farwick.');
+  assert.match(model.spatial.detail.mentions.rows[0].key, /^row-\d+$/);
+
+  const html = renderWorldStatePanel(model, { activeTab: 'spatial' });
+  assert.match(html, /2 possible duplicates/);
+  assert.match(html, /data-wsa-open-record="row-\d+"/);
+  assert.match(html, /Southern Drainage Ditch<\/span><small>south · 3 km straight-line/);
+  assert.match(html, /data-wsa-spatial-edit/);
+  assert.equal(html.includes('wsloc_'), false);
+
+  const duplicatesOnly = buildWorldStateUiModel(state, { spatialDuplicatesOnly: true });
+  assert.equal(duplicatesOnly.spatial.locations.length, 2);
+});

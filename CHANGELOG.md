@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased - Operator panel redesign
+
+### Changed
+
+- The World State panel now has a compact header (one Rebuild icon, a `⋯` menu, and Close), two primary tabs (World / Places), and a records search field. Operations, Data & maintenance, and map settings moved into the `⋯` menu (bottom-nav More on phones).
+- Current / Recent / Resolved are one World view with an Active / Recently changed / Resolved filter. Active records are grouped into Changed recently, Ongoing, and Facts.
+- Record rows drop the redundant kind/status chips and bold summaries in favour of a trend-coloured stripe and glyph, anchor tags (place-shaped anchors get a pin), and a relative message age. Expanded rows show state, story time, timeline, anchors, connections, quoted evidence, and the existing manual lifecycle actions.
+- Places opens a read view first (position with lock toggle, sub-place count, connections, routes, world-state records that mention the place, provenance) and switches to the editor only on Edit. The coordinate lock is a real switch instead of an unstyled checkbox. Base map and Coordinate Profile controls moved into a collapsible map-settings strip.
+- Places lists nest sub-places under a parent place when the name extends the parent's name at a word boundary, and flag possible duplicates (same name, same point with shared name words, or one name's words contained in the other's). Both are display-only; nothing is persisted and merging stays explicit.
+- A status bar shows continuity health, the last capture message, and the private-continuity reminder.
+- Panel CSS was consolidated into one pass, scoped element resets stop SillyTavern theme styles (heading rules, checkbox appearance) leaking into the panel. Place connection rows give the other place's bearing as seen from the selected place.
+
+### Validation
+
+- Updated the Spatial edit-surface regression for the read/edit split and added projection/render regressions for grouping, place nesting, duplicate flags, place mentions, and the header menu.
+- No canonical schema, sidecar, bundle, rollback-journal, or host-action changes.
+
+
 ## 0.9.0-alpha.27 - Server-authoritative multi-session freshness
 
 ### Fixed
