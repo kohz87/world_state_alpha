@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0-alpha.29 - Places duplicate merge repair
+
+### Fixed
+
+- Merging or archiving a place now removes it from the Places list. Archived places were already excluded from Spatial injection, but the panel still listed them, so a successful merge looked like it had done nothing and the duplicate flag stayed. Place counts, duplicate flags, and relative-anchor suggestions also ignore archived places, and the list notes how many are hidden. An archived campaign override of a base-map place stays listed (marked Archived) so the override can still be deleted to restore the base place.
+- The merge prompt pre-fills the flagged duplicate partner, lists suggested targets first, and reports how many candidates exist beyond the listed twelve. Suggestions are passed by campaign id, so same-named or whitespace-variant partners resolve unambiguously and base-map-only partners are never offered as targets.
+- Place selection keys are derived from the location id rather than list position, so archiving, merging, or a change rehydrated from another session can no longer re-point a kept selection or open edit form at a different place.
+- Relative-anchor resolution on save ignores archived places.
+- Rejected merge, archive, coordinate-lock, and delete actions now show the reducer's reason instead of failing silently.
+
+### Validation
+
+- Added regressions that run a real merge and check the resulting panel (list, counts, duplicate flags, id-based suggestions, stable selection), plus an archived base-map override case. Both fail against the alpha.28 panel.
+- No canonical schema, sidecar, bundle, or rollback-journal changes.
+
+
 ## 0.9.0-alpha.28 - Operator panel redesign
 
 ### Changed

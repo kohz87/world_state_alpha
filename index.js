@@ -40,7 +40,7 @@ import { clone, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.28';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.29';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -3251,7 +3251,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
   const findEffectiveByName = (currentState, name) => {
     const needle = String(name || '').trim().toLowerCase();
     if (!needle) return null;
-    return effectiveLocations(currentState).find(loc => loc.name.toLowerCase() === needle) || null;
+    return effectiveLocations(currentState)
+      .find(loc => loc.status !== 'archived' && loc.name.toLowerCase() === needle) || null;
   };
 
   const derivedCoordinateLocations = currentState =>
@@ -3519,6 +3520,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     });
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state, (nextLocked ? 'Locked' : 'Unlocked') + ' coordinates for ' + payload.location.name);
+    } else {
+      notify('error', 'Coordinate lock change rejected: ' + (res.rejected?.[0]?.reason || 'invalid edit'));
     }
     return;
   }
@@ -3537,6 +3540,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     });
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state, 'Archived location ' + payload.location.name);
+    } else {
+      notify('error', 'Archive rejected: ' + (res.rejected?.[0]?.reason || 'invalid archive'));
     }
     return;
   }
@@ -3548,14 +3553,23 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       notify('warning', 'No other campaign location is available to merge into.');
       return;
     }
+    const normalName = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const sameName = (left, right) => normalName(left) === normalName(right);
+    const suggested = [...new Set((Array.isArray(payload.mergeSuggestions) ? payload.mergeSuggestions : [])
+      .map(item => candidates.find(loc => loc.id === item?.id))
+      .filter(Boolean))];
+    const listed = [...new Set([...suggested, ...candidates])].slice(0, 12);
     const targetName = window.prompt(
-      'Merge this duplicate into which campaign location?\n' + candidates.slice(0, 12).map(loc => '- ' + loc.name).join('\n'),
-      '',
+      'Merge "' + payload.location.name + '" into which campaign location? Its routes, evidence, and relations move to the target and it is archived.\n' +
+        listed.map(loc => '- ' + loc.name + (suggested.includes(loc) ? '  (possible duplicate)' : '')).join('\n') +
+        (candidates.length > listed.length ? '\n…and ' + (candidates.length - listed.length) + ' more (type the exact name)' : ''),
+      suggested[0]?.name || '',
     );
     if (!targetName?.trim()) return;
-    const target = candidates.find(loc => loc.name.toLowerCase() === targetName.trim().toLowerCase());
+    const target = suggested.find(loc => sameName(loc.name, targetName))
+      || candidates.find(loc => sameName(loc.name, targetName));
     if (!target) {
-      notify('error', 'Merge target not found among campaign locations.');
+      notify('error', 'Merge target not found among active campaign locations: ' + targetName.trim());
       return;
     }
     if (!window.confirm('Merge "' + payload.location.name + '" into "' + target.name + '"? The source will be archived.')) return;
@@ -3570,6 +3584,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     });
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state, 'Merged duplicate into ' + target.name);
+    } else {
+      notify('error', 'Merge rejected: ' + (res.rejected?.[0]?.reason || 'invalid merge'));
     }
     return;
   }
@@ -3591,6 +3607,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     });
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state, 'Deleted location ' + payload.location.name);
+    } else {
+      notify('error', 'Delete rejected: ' + (res.rejected?.[0]?.reason || 'invalid delete'));
     }
     return;
   }
