@@ -1349,10 +1349,12 @@ test('accumulated day steps wake background catch-up for an unrelated developmen
     derived: [],
   });
   const calls = { count: 0 };
+  const index = buildRelevanceIndex(seeded.state);
+  assert.equal(index.elapsedEvidenceBoundary, -1);
   const result = await prepareWorldStateContinuity({
     ctx: provider(response, calls),
     state: seeded.state,
-    index: buildRelevanceIndex(seeded.state),
+    index,
     recentText: 'I track the stag.',
     currentMessageId: current,
     exchange: exchange.slice(-2),
@@ -1367,6 +1369,8 @@ test('accumulated day steps wake background catch-up for an unrelated developmen
   assert.equal(result.state.records[0].status, 'active');
   assert.equal(result.state.records[0].lastEvaluatedMessage, current, 'evaluated at the boundary where the check ran');
   assert.equal(latestElapsedEvolutionBoundary(result.state), 4, 'the catch-up is recorded at the firing message');
+  assert.equal(index.elapsedEvidenceBoundary, 4, 'the index advances incrementally from the reducer delta, without an evidence scan');
+  assert.equal(buildRelevanceIndex(result.state).elapsedEvidenceBoundary, 4, 'a full rebuild agrees with the incremental value');
   assert.equal(detectAccumulatedDayStepHint(exchange, current, {
     sinceMessageId: latestElapsedEvolutionBoundary(result.state),
     lineage,

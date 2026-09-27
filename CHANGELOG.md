@@ -7,6 +7,15 @@
 - Day-by-day narration now adds up for background catch-up. Previously a single "two days later" woke off-scene developments, but the same two days told as "The next morning…" then "The following day…" never did, because each step alone is under the 2-day threshold and steps did not accumulate.
 - When no explicit skip is present, `detectAccumulatedDayStepHint` walks the current branch's messages after the last recorded elapsed catch-up (40-message lookback) and counts at most one narrated day step per exchange. Recognised steps include "the next/following day/morning/dawn/evening/night", "next morning", "the morning/day after", "a day later", "after a day" and "a day passed". Quoted dialogue, plans ("will", "'ll", "tomorrow"), hypotheticals ("if"), hidden planning blocks and system messages never count.
 - At two days it produces one meaningful hint bound to the message that completed the second day, then restarts the count. An explicit skip resets it too. Firing points are recomputed from the messages rather than stored, so swipes, deletes and branches cannot leave a stale counter.
+- Hardening from code review:
+  - Hidden rows never count, and a user message restating the morning the narrator just described is the same day.
+  - Dialogue is stripped before matching, so single-quoted plans don't count and a quoted first mention can't hide later narration.
+  - A hint without raw-message lineage fails closed.
+  - A firing point is only offered while it is inside the current exchange window, so a failed or interrupted catch-up can't re-arm it for dozens of turns.
+  - A non-meaningful explicit phrase ("a day later", "an hour later") no longer blocks accumulation.
+  - The walk is skipped when there are no active developments.
+  - The last recorded catch-up boundary is kept incrementally on the relevance index from reducer deltas, so ordinary turns never scan the evidence map.
+  - Elapsed regexes are compiled once.
 
 ### Architecture
 

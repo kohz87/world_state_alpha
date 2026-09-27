@@ -81,7 +81,7 @@ for (const required of [
   'runCaptureOperation({',
   'prepareWorldStateContinuity({',
   'affectingEvidence: []',
-  'detectElapsedHintFromExchange(exchange)',
+  'resolveContinuityElapsedHint({',
   'cancelWorldStateRequests({ chatKey })',
   'reconcileBranch(state, getContext().chat || [], {',
   'passiveCaptureMessageId:',
