@@ -221,6 +221,7 @@ Deliverables:
 - v0.9.0-alpha.28 operator panel redesign: World / Places workspace with a More menu, grouped trend-coded record disclosures, read-first Places with display-only nesting/duplicate hints, and consolidated scoped CSS; projection-only, no durable-format or host-action change
 - v0.9.0-alpha.29 Places merge repair: hide archived/merged campaign places from the operator list while keeping archived base-map overrides reachable, id-based duplicate merge suggestions, id-derived place selection keys, active-only relative-anchor resolution, and surfaced archive/merge/lock/delete rejections
 - v0.9.0-alpha.30 floating World State button: one opener-only, draggable, per-browser-positioned `launcher.js` button with a left-side default, hidden when World State or the setting is off, stacked below host drawers/popups, and isolated from hydration failures
+- v0.9.0-alpha.31 mobile placement and arrangement capture: compute the floating button's default spot in viewport pixels (SillyTavern's transformed, zero-height <html> broke CSS percentages on phones/tablets), and add capture guidance for ongoing arrangements shown through one incident with attributed dialogue-borne claims
 
 Acceptance:
 

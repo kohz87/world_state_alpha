@@ -116,6 +116,8 @@ For provider-driven capture/rebuild, non-create mutations may target only active
 
 Automatic capture/rebuild must not create a standalone record already in a terminal lifecycle state merely to preserve an event. A redundant terminal create may be deterministically consolidated into `resolve` for a sufficiently similar visible active episode; otherwise it is rejected. Any create that consolidates into a non-create mutation must pass the source firewall again against the selected active target. An explicit `newEpisodeOfRecordId` may create a new record only when no sufficiently similar recurrence is already active; otherwise it consolidates into that current recurrence. This preserves the current-reality model instead of turning `records[]` into an event log or duplicating Current.
 
+A single shown incident may establish a persistent **arrangement** when the narration shows a group asserting control over a place, collecting levies/tolls/fees/protection payments, enforcing a blockade/curfew/checkpoint, or bystanders habitually avoiding or submitting to it. The arrangement is captured as a development even though the individual confrontation or payment is one-off. When the arrangement rests on dialogue-borne claims (a new tax, an order, claimed jurisdiction), the summary stays attributed to who is asserting or demanding it; the source firewall rejects unattributed restatements of the claim.
+
 If several independent materially persistent conditions are established in one exchange, capture may represent each once in the same bounded request rather than stopping after the most scene-salient one.
 
 Capture must not run global simulation or fabricate off-screen developments merely to keep the world busy.
