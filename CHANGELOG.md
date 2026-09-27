@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0-alpha.31 - Mobile button placement and arrangement capture
 
 ### Fixed
 
