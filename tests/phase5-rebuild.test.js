@@ -1366,3 +1366,33 @@ test('partial rebuild before the kept journal names the earliest start it can pr
   });
   assert.equal(later.outcome, 'completed');
 });
+
+test('partial rebuild that fails for another reason does not blame journal trimming', async () => {
+  const chat = [
+    { role: 'assistant', content: 'Greeting.' },
+    { role: 'user', content: 'Walk.' },
+    { role: 'assistant', content: 'The mill burns.' },
+    { role: 'user', content: 'Run.' },
+    { role: 'assistant', content: 'The bridge falls.' },
+  ];
+  const lineage = chatLineage(chat);
+  let state = seedRootCheckpoint(createState('unjournaled-rebuild'));
+  state.lineage = lineage;
+  // An unjournaled change with no matching checkpoint.
+  state = reduceMutations(state, {
+    chatKey: state.chatKey, messageId: 2, lineageKey: lineage[2].lineageKey,
+    mutations: [{ action: 'create', kind: 'fact', summary: 'The mill burns.', anchors: ['mill'] }],
+  }).state;
+  const result = await runManualRebuild({
+    ctx: {},
+    dispatcher: async () => ({ text: '{"mutations":[]}', receipt: { dispatched: true, outcome: 'success' } }),
+    state,
+    chat,
+    chatKey: 'unjournaled-rebuild',
+    startMessageId: 3,
+    isCurrent: () => true,
+  });
+  assert.equal(result.errorCode, 'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE');
+  assert.match(result.errorMessage, /cannot be proven from the saved history\. Use Full chat\./);
+  assert.doesNotMatch(result.errorMessage, /no longer stored/);
+});

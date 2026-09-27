@@ -1050,7 +1050,12 @@ test('branch changes resume parked branches and capture a settled swipe or edite
   const reconcileStart = source.indexOf('async function reconcileCurrentBranch(');
   const reconcileBody = source.slice(reconcileStart, source.indexOf('async function handleAssistantMessage(', reconcileStart));
   assert.match(reconcileBody, /abandonedBranch = parkAbandonedBranch\(state, result\);/);
-  assert.match(reconcileBody, /resumeParkedBranch\(result\.state, liveChat, parkedBranches\.get\(chatKey\) \|\| \[\]\)/);
+  assert.match(reconcileBody, /const resumed = resumeParkedBranch\(result\.state, liveChat, parks\);/);
+  // The park list changes only after a non-stale durable result.
+  const staleAt = reconcileBody.indexOf("action: 'stale-persist'");
+  const consumeAt = reconcileBody.indexOf('if (resumedPark) parkedBranches.set(');
+  const rememberAt = reconcileBody.indexOf('rememberParkedBranch(chatKey, abandonedBranch);');
+  assert.ok(staleAt > 0 && consumeAt > staleAt && rememberAt > staleAt);
   assert.match(reconcileBody, /'parked-branch-resume', 'fail-closed'/);
   assert.match(reconcileBody, /WORLD_STATE_BRANCH_RESUMED/);
   assert.match(reconcileBody, /result\.divergence < liveChat\.length - 1/);
@@ -1136,7 +1141,10 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   assert.match(source, /createDiagnosticStore\(\{\s*limit: OPERATION_LOG_LIMIT,\s*onRecord: chatKey => scheduleOperationLogSave\(chatKey\),\s*\}\)/);
   assert.match(source, /return 'world-state-alpha-ops-' \+ hashText\(String\(chatKey\)\) \+ '\.json';/);
   assert.match(source, /raw\.format !== OPERATION_LOG_FORMAT[\s\S]{0,120}raw\.chatKey !== chatKey/);
-  assert.match(source, /const server = await readOperationLog\(chatKey\)\.catch\(\(\) => \[\]\);\s*const rows = mergeOperationRows\(server, diagnosticStore\.records\(chatKey\), OPERATION_LOG_LIMIT\);/);
+  assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.records\(chatKey\), OPERATION_LOG_LIMIT\);/);
+  assert.match(source, /return withWorldStateFileLock\(operationLogFile\(chatKey\), task\);/);
+  assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return;/);
+  assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);
   assert.match(source, /void hydrateOperationLog\(chatKey\);\s*await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation' \}\);/);
   assert.match(source, /await retireOperationLog\(oldKey, newKey\);\s*clearChatRuntimeState\(oldKey\);/);
   assert.match(source, /await retireOperationLog\(chatKey\);\s*clearChatRuntimeState\(chatKey\);/);

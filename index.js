@@ -14,7 +14,7 @@ import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
 import { hashText, stableStringify } from './hash.js';
 import { buildWorldStateChatKey, getWorldStateChatIdentity, getWorldStateChatKey, parseWorldStateChatKey } from './host-identity.js';
-import { createSillyTavernWorldStateStorageAdapter } from './host-storage.js';
+import { createSillyTavernWorldStateStorageAdapter, withWorldStateFileLock } from './host-storage.js';
 import { storeBaseMapSource, loadBaseMapSource } from './host-base-map.js';
 import {
   WORLD_STATE_PROMPT_KEY,
@@ -144,7 +144,9 @@ const OPERATION_LOG_SAVE_DELAY_MS = 1500;
 const OPERATION_LOG_TEXT_CHARS = 6000;
 const operationLogLoads = new Map();
 const operationLogTimers = new Map();
-const operationLogWrites = new Map();
+// Identities whose log was emptied by chat deletion; late rows for them are
+// never written back. Reopening that identity starts a new log.
+const retiredOperationLogs = new Set();
 
 function operationLogFile(chatKey) {
   return 'world-state-alpha-ops-' + hashText(String(chatKey)) + '.json';
@@ -174,14 +176,9 @@ function hydrateOperationLog(chatKey) {
   return operationLogLoads.get(chatKey);
 }
 
+// Same cross-tab (Web Locks) + in-process writer lock the sidecar uses.
 function queueOperationLogWrite(chatKey, task) {
-  const previous = operationLogWrites.get(chatKey) || Promise.resolve();
-  const next = previous.catch(() => {}).then(task);
-  operationLogWrites.set(chatKey, next);
-  void next.finally(() => {
-    if (operationLogWrites.get(chatKey) === next) operationLogWrites.delete(chatKey);
-  }).catch(() => {});
-  return next;
+  return withWorldStateFileLock(operationLogFile(chatKey), task);
 }
 
 function operationLogBody(chatKey, operations) {
@@ -198,12 +195,17 @@ function operationLogBody(chatKey, operations) {
   };
 }
 
-function saveOperationLog(chatKey) {
+// `snapshot` saves rows of a chat leaving the cache without re-hydrating it.
+function saveOperationLog(chatKey, snapshot = null) {
   return queueOperationLogWrite(chatKey, async () => {
     try {
-      await hydrateOperationLog(chatKey);
+      if (retiredOperationLogs.has(chatKey)) return;
       const server = await readOperationLog(chatKey).catch(() => []);
-      const rows = mergeOperationRows(server, diagnosticStore.records(chatKey), OPERATION_LOG_LIMIT);
+      if (!snapshot && !operationLogLoads.has(chatKey)) {
+        diagnosticStore.merge(chatKey, server);
+        operationLogLoads.set(chatKey, Promise.resolve());
+      }
+      const rows = mergeOperationRows(server, snapshot || diagnosticStore.records(chatKey), OPERATION_LOG_LIMIT);
       await hostStorage.uploadJsonFile(operationLogFile(chatKey), operationLogBody(chatKey, rows));
     } catch (error) {
       console.warn('[World State Alpha] Operations log could not be saved; it remains available in this session.', error);
@@ -212,7 +214,7 @@ function saveOperationLog(chatKey) {
 }
 
 function scheduleOperationLogSave(chatKey) {
-  if (!hostHydrationReady || !chatKey || chatKey === 'no-chat') return;
+  if (!hostHydrationReady || !chatKey || chatKey === 'no-chat' || retiredOperationLogs.has(chatKey)) return;
   clearTimeout(operationLogTimers.get(chatKey));
   operationLogTimers.set(chatKey, setTimeout(() => {
     operationLogTimers.delete(chatKey);
@@ -220,21 +222,32 @@ function scheduleOperationLogSave(chatKey) {
   }, OPERATION_LOG_SAVE_DELAY_MS));
 }
 
+// A chat leaving the cache keeps its pending rows: save that snapshot now.
+function flushOperationLog(chatKey) {
+  if (!operationLogTimers.has(chatKey)) return;
+  clearTimeout(operationLogTimers.get(chatKey));
+  operationLogTimers.delete(chatKey);
+  void saveOperationLog(chatKey, diagnosticStore.records(chatKey));
+}
+
 // Rename carries the log to the new owner; delete leaves an empty log so a
 // later chat reusing the same identity never shows the retired history.
 function retireOperationLog(chatKey, successorKey = '') {
   clearTimeout(operationLogTimers.get(chatKey));
   operationLogTimers.delete(chatKey);
+  retiredOperationLogs.add(chatKey);
   return queueOperationLogWrite(chatKey, async () => {
     try {
-      const rows = mergeOperationRows(
-        await readOperationLog(chatKey).catch(() => []),
-        diagnosticStore.records(chatKey),
-        OPERATION_LOG_LIMIT,
-      );
-      if (successorKey && rows.length) {
-        diagnosticStore.merge(successorKey, rows);
-        scheduleOperationLogSave(successorKey);
+      if (successorKey) {
+        const rows = mergeOperationRows(
+          await readOperationLog(chatKey).catch(() => []),
+          diagnosticStore.records(chatKey),
+          OPERATION_LOG_LIMIT,
+        );
+        if (rows.length) {
+          diagnosticStore.merge(successorKey, rows);
+          scheduleOperationLogSave(successorKey);
+        }
       }
       await hostStorage.uploadJsonFile(operationLogFile(chatKey), operationLogBody(chatKey, []));
     } catch (error) {
@@ -399,6 +412,7 @@ function forgetCachedChat(chatKey) {
   passiveCaptureRebaseCandidates.delete(key);
   forgetBranchContinuations(key);
   chatCacheTouches.delete(key);
+  flushOperationLog(key);
   diagnosticStore.clear(key);
   operationLogLoads.delete(key);
   rebuildStatuses.delete(key);
@@ -1966,19 +1980,19 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
     passiveCaptureMessageId: Number.isInteger(passiveCaptureMessageId) ? passiveCaptureMessageId : null,
   });
   let abandonedBranch = null;
+  let resumedPark = null;
   if (!result.failClosed) {
     // Keep what an abandoned suffix established, and if the current messages
     // are exactly a branch abandoned earlier (e.g. swiping back to a captured
-    // reply), resume that branch's exact state instead of losing it.
+    // reply), resume that branch's exact state instead of losing it. The park
+    // list only changes once this result is durably accepted below.
     abandonedBranch = parkAbandonedBranch(state, result);
-    const resumed = resumeParkedBranch(result.state, liveChat, parkedBranches.get(chatKey) || []);
+    const parks = parkedBranches.get(chatKey) || [];
+    const resumed = resumeParkedBranch(result.state, liveChat, parks);
     if (resumed) {
-      const parks = [...(parkedBranches.get(chatKey) || [])];
-      parks.splice(resumed.parkIndex, 1);
-      parkedBranches.set(chatKey, parks);
+      resumedPark = parks[resumed.parkIndex];
       result = { ...result, state: resumed.state, action: 'parked-branch-resume', rolledBackBy: result.action };
     }
-    rememberParkedBranch(chatKey, abandonedBranch);
   }
   const changed = stateChanged(state, result.state);
   const passiveRebase = result.action === 'passive-capture-rebase';
@@ -2013,6 +2027,8 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
     // metadata only; canonical relevance data is unchanged.
     setCachedState(chatKey, result.state, { indexMode: 'preserve' });
   }
+  if (resumedPark) parkedBranches.set(chatKey, (parkedBranches.get(chatKey) || []).filter(park => park !== resumedPark));
+  rememberParkedBranch(chatKey, abandonedBranch);
 
   if (lineageRebase) {
     passiveCaptureRebaseCandidates.delete(chatKey);
@@ -2444,6 +2460,7 @@ async function activateCurrentChat() {
     }
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey) return;
+    retiredOperationLogs.delete(chatKey);
     void hydrateOperationLog(chatKey);
     await refreshChatStateFromServer(chatKey, { reason: 'chat-activation' });
     if (currentChatKey() !== chatKey) return;

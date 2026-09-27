@@ -12,6 +12,14 @@
 - **Rollback start.** When a real change is reconciled together with visibility-only or narration-equivalent rows, rollback starts at the first real change and the proven prefix is rebased.
 - **Operations log.** The log lived only in browser memory and vanished on reload. The last 80 operations per chat now persist in a separate `world-state-alpha-ops-<chat hash>.json` server file, never the canonical sidecar. It is restored on chat activation and saved read-merge-write after a short quiet period, carried across rename and emptied on delete.
 - **Partial rebuild in long chats.** A partial rebuild that starts before the kept journal now names the earliest message it can prove, and the rebuild sheet shows that start in long chats.
+- **Hardening from code review:**
+  - A branch parked in the same reconcile as a hide is relinked to the live lineage keys, so swiping back after a hide still resumes it.
+  - The park list changes only after the reconcile result is durably accepted, so a stale write can no longer consume a park.
+  - Parks keep only their own journal entries and checkpoints, and resume merges back the live ones. The base-state hash is computed only after the cheap lineage checks pass.
+  - An unjournaled state is compared with checkpoint snapshots without cloning the whole state.
+  - Emptying the journal by rollback keeps its floor, so trimmed history is never advertised as rebuildable. A checkpoint restore sets the floor to its own boundary.
+  - The partial-rebuild error only blames journal trimming when the start really is before the kept journal.
+  - Operations log saves are serialized with the same cross-tab Web Locks writer lock as the sidecar and read the server file once. A chat leaving the cache flushes its pending rows, and a deleted chat's log is never written again by late operations.
 
 ### Validation
 

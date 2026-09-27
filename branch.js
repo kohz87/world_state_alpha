@@ -139,6 +139,19 @@ function domainHash(state) {
   return hashText(stableStringify(canonicalDomain(state)));
 }
 
+// Hash of the canonical domain a checkpoint snapshot restores, without cloning
+// the whole state (its journal and every other checkpoint) to find out.
+function snapshotDomainHash(state, snapshot = {}) {
+  return domainHash({
+    chatKey: state?.chatKey || '',
+    records: snapshot?.records || [],
+    evidence: snapshot?.evidence || {},
+    links: snapshot?.links || [],
+    lastCaptureMessage: Number.isInteger(snapshot?.lastCaptureMessage) ? snapshot.lastCaptureMessage : null,
+    spatial: snapshot?.spatial || createSpatialState(),
+  });
+}
+
 function checkpointSnapshot(state) {
   return canonicalDomain(state);
 }
@@ -168,7 +181,7 @@ function unjournaledStateSince(state, lineage, maxMessageId) {
     .sort((a, b) => a.messageId - b.messageId);
   if (!candidates.length) return null;
   const current = domainHash(state);
-  const match = candidates.find(item => domainHash(restoreCheckpoint(state, item.snapshot || {})) === current);
+  const match = candidates.find(item => snapshotDomainHash(state, item.snapshot) === current);
   return match ? match.messageId : null;
 }
 
@@ -176,7 +189,10 @@ function trimJournal(state, maxEntries) {
   const cap = Math.max(1, Number(maxEntries) || LIMITS.rollbackEntries);
   if (state.rollbackJournal.length <= cap) {
     const first = state.rollbackJournal[0];
-    state.rollbackJournalFloorMessageId = first ? Math.max(-1, first.beforeMessageId) : state.rollbackHead?.messageId ?? -1;
+    // An emptied journal keeps the floor it had: the remaining state is exact
+    // only from there, and older trimmed history must not be advertised.
+    const keptFloor = Number.isInteger(state.rollbackJournalFloorMessageId) ? Math.max(-1, state.rollbackJournalFloorMessageId) : -1;
+    state.rollbackJournalFloorMessageId = first ? Math.max(-1, first.beforeMessageId) : state.rollbackHead?.messageId ?? keptFloor;
     return;
   }
   state.rollbackJournal = state.rollbackJournal.slice(-cap);
@@ -475,6 +491,10 @@ export function reconcileBranch(inputState, chat, options = {}) {
     : null;
   if (restored.rollbackHead && !retainedSeqs.has(restored.rollbackHead.seq)) restored.rollbackHead = null;
   restored.checkpoints = state.checkpoints.filter(item => item.messageId < cut);
+  // A checkpoint restore with no retained entries is exact from its own boundary.
+  if (action === 'exact-checkpoint' && !restored.rollbackJournal.length) {
+    restored.rollbackJournalFloorMessageId = targetMessageId;
+  }
   if (cut > divergence) {
     restored.lineage = previousLineage.slice(0, cut);
     restored = rebaseLineageMetadata(restored, previousLineage.slice(0, cut), currentLineage.slice(0, cut));
@@ -522,13 +542,35 @@ export function seedRootCheckpoint(inputState) {
 // byte-identical to the base the branch was abandoned from, and the returning
 // messages must reproduce the parked lineage keys (same parent chain + content).
 
-// Checkpoints at or before the base are the same ones the current branch
-// keeps, so a parked branch holds only its own; resume merges them back.
+// Journal entries and checkpoints at or before the base are the same ones the
+// current branch keeps, so a parked branch holds only its own; resume merges
+// the live ones back.
 function compactParkedState(state, baseMessageId) {
   const parked = normalizeState(clone(state));
   parked.checkpoints = parked.checkpoints.filter(item => item.messageId > baseMessageId);
+  parked.rollbackJournal = parked.rollbackJournal.filter(entry => entry.messageId > baseMessageId);
   parked.recoveryRequired = null;
   return parked;
+}
+
+// Re-derive lineage keys after the live prefix changed (for example rows
+// before the cut were hidden and rebased): each later key chains from the new
+// parent with the row's own unchanged fingerprint.
+function relinkLineage(previous, prefix) {
+  const out = [];
+  let parent = 'root';
+  for (let index = 0; index < previous.length; index += 1) {
+    if (index < prefix.length) {
+      out.push(clone(prefix[index]));
+      parent = prefix[index].lineageKey;
+      continue;
+    }
+    const entry = previous[index];
+    const lineageKey = deterministicId('ln', [parent, entry.fingerprint]);
+    out.push({ ...clone(entry), parentLineageKey: parent, lineageKey });
+    parent = lineageKey;
+  }
+  return out;
 }
 
 export function parkAbandonedBranch(beforeState, result) {
@@ -537,13 +579,24 @@ export function parkAbandonedBranch(beforeState, result) {
   const baseMessageId = Number(result.divergence) - 1;
   const abandoned = before.lineage?.[baseMessageId + 1];
   if (!Number.isInteger(baseMessageId) || baseMessageId < -1 || !abandoned?.lineageKey) return null;
-  if (domainHash(before) === domainHash(result.state)) return null;
+  const baseDomainHash = domainHash(result.state);
+  if (domainHash(before) === baseDomainHash) return null;
+
+  let source = before;
+  const livePrefix = (result.state.lineage || []).slice(0, baseMessageId + 1);
+  if (livePrefix.some((entry, index) => entry?.lineageKey !== before.lineage[index]?.lineageKey)) {
+    try {
+      source = rebaseLineageMetadata(before, before.lineage, relinkLineage(before.lineage, livePrefix));
+    } catch {
+      return null;
+    }
+  }
   return {
     baseMessageId,
-    baseLineageKey: baseMessageId < 0 ? 'root' : String(result.state.lineage?.[baseMessageId]?.lineageKey || ''),
-    baseDomainHash: domainHash(result.state),
-    firstLineageKey: abandoned.lineageKey,
-    state: compactParkedState(before, baseMessageId),
+    baseLineageKey: baseMessageId < 0 ? 'root' : String(livePrefix[baseMessageId]?.lineageKey || ''),
+    baseDomainHash,
+    firstLineageKey: source.lineage[baseMessageId + 1].lineageKey,
+    state: compactParkedState(source, baseMessageId),
   };
 }
 
@@ -551,7 +604,7 @@ export function resumeParkedBranch(inputState, chat, parks = [], options = {}) {
   const state = normalizeState(inputState);
   const lineage = Array.isArray(state.lineage) ? state.lineage : [];
   if (!Array.isArray(parks) || !parks.length || state.recoveryRequired) return null;
-  const currentHash = domainHash(state);
+  let currentHash = null;
   const journalTop = state.rollbackJournal.reduce((max, entry) => Math.max(max, Number(entry?.messageId)), -1);
 
   for (let index = parks.length - 1; index >= 0; index -= 1) {
@@ -560,7 +613,9 @@ export function resumeParkedBranch(inputState, chat, parks = [], options = {}) {
     if (!Number.isInteger(base) || base + 1 >= lineage.length) continue;
     if (base >= 0 && lineage[base]?.lineageKey !== park.baseLineageKey) continue;
     if (lineage[base + 1]?.lineageKey !== park.firstLineageKey) continue;
-    if (journalTop > base || park.baseDomainHash !== currentHash) continue;
+    if (journalTop > base) continue;
+    currentHash ??= domainHash(state);
+    if (park.baseDomainHash !== currentHash) continue;
 
     const resumed = reconcileBranch(park.state, chat, options);
     if (resumed.failClosed || !resumed.exactRestored) continue;
@@ -569,6 +624,12 @@ export function resumeParkedBranch(inputState, chat, parks = [], options = {}) {
       ...state.checkpoints.filter(item => item.messageId <= base),
       ...next.checkpoints.filter(item => item.messageId > base),
     ];
+    next.rollbackJournal = [
+      ...state.rollbackJournal.filter(entry => entry.messageId <= base),
+      ...next.rollbackJournal.filter(entry => entry.messageId > base),
+    ].sort((a, b) => a.seq - b.seq);
+    next.rollbackJournalFloorMessageId = state.rollbackJournalFloorMessageId;
+    trimJournal(next, options.maxJournalEntries);
     trimCheckpoints(next, options.maxCheckpoints);
     next.rollbackJournalSequence = Math.max(
       Number(next.rollbackJournalSequence) || 0,

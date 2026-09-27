@@ -710,3 +710,69 @@ test('hiding or unhiding messages keeps World State; a real edit alongside a hid
   assert.equal(edited.action, 'rollback-journal');
   assert.deepEqual(summaries(edited.state), ['The mill burns.']);
 });
+
+test('a swipe reconciled together with a hide parks a branch that still resumes on swipe-back', () => {
+  const base = [
+    { name: 'Sera', is_user: false, is_system: false, mes: 'Greeting.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'Go to the mill.' },
+    { name: 'Sera', is_user: false, is_system: false, mes: 'The mill burns.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'Go to the gate.' },
+  ];
+  const withReply = (chat, mes) => [...chat, { name: 'Sera', is_user: false, is_system: false, mes }];
+  const capture = (state, chat, id) => {
+    const reconciled = reconcileBranch(state, chat).state;
+    const reduced = reduceMutations(reconciled, {
+      chatKey: reconciled.chatKey, messageId: id, lineageKey: reconciled.lineage[id].lineageKey,
+      mutations: [{ action: 'create', kind: 'fact', summary: chat[id].mes, anchors: [chat[id].mes.split(' ')[1]] }],
+    }).state;
+    reduced.lastCaptureMessage = id;
+    return commitMutationBoundary(reconciled, reduced, chat, id, 'capture', { lineage: reconciled.lineage });
+  };
+  let state = capture(seedRootCheckpoint(createState('hide-park')), base.slice(0, 3), 2);
+  const replyA = withReply(base, 'The gate is barred.');
+  state = capture(state, replyA, 4);
+  const stateA = state;
+
+  // /hide 1 fires no event; the next swipe reconciles both at once.
+  const hidden = base.map((message, index) => index === 1 ? { ...message, is_system: true } : message);
+  const toB = reconcileBranch(stateA, withReply(hidden, 'The gate is open.'));
+  assert.equal(toB.action, 'rollback-journal');
+  assert.equal(toB.divergence, 4);
+  const parkA = parkAbandonedBranch(stateA, toB);
+  assert.ok(parkA);
+  assert.ok(parkA.state.rollbackJournal.every(entry => entry.messageId > 3), 'park keeps only its own journal entries');
+  const stateB = capture(toB.state, withReply(hidden, 'The gate is open.'), 4);
+
+  const backToA = reconcileBranch(stateB, withReply(hidden, 'The gate is barred.'));
+  const resumed = resumeParkedBranch(backToA.state, withReply(hidden, 'The gate is barred.'), [parkA]);
+  assert.ok(resumed, 'the relinked park resumes after the hide');
+  assert.deepEqual(summaries(resumed.state), summaries(stateA));
+  assert.deepEqual(resumed.state.lineage.map(item => item.lineageKey), chatLineage(withReply(hidden, 'The gate is barred.')).map(item => item.lineageKey));
+  assert.ok(resumed.state.rollbackJournal.some(entry => entry.messageId === 2), 'live entries before the base are merged back');
+
+  // And the resumed branch still rolls back exactly.
+  const again = reconcileBranch(resumed.state, withReply(hidden, 'Fog.'));
+  assert.equal(again.failClosed, false);
+  assert.deepEqual(summaries(again.state), ['The mill burns.']);
+});
+
+test('emptying the journal by rollback keeps the floor so trimmed history is not advertised', () => {
+  const chat = [];
+  let state = seedRootCheckpoint(createState('floor'));
+  for (let id = 0; id < 12; id += 1) {
+    chat.push(id % 2 ? { role: 'user', content: 'u' + id } : { role: 'assistant', content: 'The Tower ' + id + ' falls.' });
+    if (id % 2) continue;
+    const lineage = chatLineage(chat);
+    state = reconcileBranch(state, chat).state;
+    const reduced = reduceMutations(state, {
+      chatKey: state.chatKey, messageId: id, lineageKey: lineage[id].lineageKey,
+      mutations: [{ action: 'create', kind: 'fact', summary: chat[id].content, anchors: ['tower' + id] }],
+    }).state;
+    state = commitMutationBoundary(state, reduced, chat, id, 'capture', { maxJournalEntries: 2 });
+  }
+  assert.equal(state.rollbackJournalFloorMessageId, 6);
+  const cut = reconcileBranch(state, chat.slice(0, 7), { maxJournalEntries: 2 });
+  assert.equal(cut.failClosed, false);
+  assert.equal(cut.state.rollbackJournal.length, 0);
+  assert.equal(cut.state.rollbackJournalFloorMessageId, 6);
+});

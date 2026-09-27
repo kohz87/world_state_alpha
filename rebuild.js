@@ -434,9 +434,12 @@ export async function runManualRebuild({
         failedBoundary: plan.metrics.startMessageId,
         receipts: [],
         errorCode: 'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE',
-        errorMessage: 'The exact World State before message ' + plan.metrics.startMessageId
-          + ' is no longer stored (only the most recent changes are kept). Start from message '
-          + earliestPartialRebuildStart(original) + ' or later, or use Full chat.',
+        errorMessage: plan.metrics.startMessageId < earliestPartialRebuildStart(original)
+          ? 'The exact World State before message ' + plan.metrics.startMessageId
+            + ' is no longer stored (only the most recent changes are kept). Start from message '
+            + earliestPartialRebuildStart(original) + ' or later, or use Full chat.'
+          : 'The exact World State before message ' + plan.metrics.startMessageId
+            + ' cannot be proven from the saved history. Use Full chat.',
       };
     }
     candidate = normalizeState(clone(restored.state), { strictSchema: true, chatKey: owner });
