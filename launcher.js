@@ -7,6 +7,9 @@ export const WORLD_STATE_LAUNCHER_ID = 'world_state_alpha_launcher';
 export const WORLD_STATE_LAUNCHER_STORAGE_KEY = 'world_state_alpha_launcher_position_v1';
 
 const DRAG_THRESHOLD_PX = 5;
+const DEFAULT_EDGE_PX = 18;
+const DEFAULT_BOTTOM_PX = 74;
+const NARROW_VIEWPORT_PX = 1100;
 const VIEWPORT_MARGIN_PX = 8;
 const CLICK_SUPPRESS_MS = 450;
 
@@ -27,6 +30,21 @@ export function clampLauncherPosition(position = {}, viewport = {}, size = {}, m
 
 function defaultStorage() {
   try { return globalThis.localStorage; } catch { return null; }
+}
+
+// Default spot in viewport pixels. It is computed here rather than left to CSS
+// percentages/bottom offsets: SillyTavern puts a transform on <html> (making it
+// the containing block for position:fixed) and, on narrow screens, fixes <body>
+// so <html> collapses to 0px tall. CSS "top: 50%" or "bottom: 74px" then
+// resolve against a 0px box and push the button off-screen.
+export function defaultLauncherPosition(viewport = {}, size = {}) {
+  const width = Math.max(0, finite(viewport.width));
+  const height = Math.max(0, finite(viewport.height));
+  const itemHeight = Math.max(0, finite(size.height));
+  const top = width <= NARROW_VIEWPORT_PX
+    ? (height - itemHeight) / 2
+    : height - DEFAULT_BOTTOM_PX - itemHeight;
+  return { left: DEFAULT_EDGE_PX, top: Math.round(top) };
 }
 
 export function readLauncherPosition(storage = defaultStorage()) {
@@ -107,8 +125,14 @@ export function mountWorldStateLauncher({
     return clamped;
   }
 
+  function placement() {
+    if (preferred) return preferred;
+    const rect = button.getBoundingClientRect();
+    return defaultLauncherPosition(viewport(), { width: rect.width, height: rect.height });
+  }
+
   function onResize() {
-    if (preferred) applyPosition(preferred);
+    applyPosition(placement());
   }
 
   function commitDraggedPosition() {
@@ -175,11 +199,9 @@ export function mountWorldStateLauncher({
   doc.body.appendChild(button);
 
   preferred = readLauncherPosition(storage);
-  if (preferred) {
-    const restore = () => applyPosition(preferred);
-    if (typeof win.requestAnimationFrame === 'function') win.requestAnimationFrame(restore);
-    else restore();
-  }
+  applyPosition(placement());
+  // Re-place once more after the host finishes its first layout pass.
+  if (typeof win.requestAnimationFrame === 'function') win.requestAnimationFrame(() => applyPosition(placement()));
 
   const controller = Object.freeze({
     element: button,

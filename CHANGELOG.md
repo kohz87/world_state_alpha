@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The floating World State button was off-screen on phones and tablets. SillyTavern puts a transform on `<html>` (a Chrome flicker fix), which makes `<html>` the containing block for `position: fixed` elements, and on screens up to 1000px it makes `<body>` `position: fixed`, so `<html>` collapses to 0px tall. The button's CSS `top: 50%` then resolved to 0 and its `translateY(-50%)` pushed it above the screen (y = -23). The default spot is now computed in viewport pixels by `launcher.js` (bottom-left above 1100px, left edge mid-height at or below) and re-placed on resize until the operator drags it.
+
+### Validation
+
+- Reproduced and verified in a real SillyTavern 1.19.0 install (Chromium): before the fix the button sat at y = -23 on tablet and phone; after it is on-screen and topmost at 1280x800, 820x1180, 1180x820 and 390x844, a touch drag moves it, the spot survives a reload, and a tap fires the open handler.
+- Added regressions for the pixel default and mount/resize placement.
+
+
 ## 0.9.0-alpha.30 - Floating World State button
 
 ### Added

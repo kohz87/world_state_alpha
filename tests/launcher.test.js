@@ -6,6 +6,7 @@ import {
   WORLD_STATE_LAUNCHER_ID,
   WORLD_STATE_LAUNCHER_STORAGE_KEY,
   clampLauncherPosition,
+  defaultLauncherPosition,
   mountWorldStateLauncher,
   readLauncherPosition,
   saveLauncherPosition,
@@ -144,4 +145,26 @@ test('launcher is World-State-owned, needs no other extension, and does not obse
   assert.match(index, /world_state_alpha_show_launcher/);
   assert.match(index, /settings\.showLauncher !== false && settings\.enabled !== false/, 'hidden when World State is disabled');
   assert.match(index, /floating button unavailable/, 'button failures cannot block hydration');
+});
+
+test('default spot is computed in viewport pixels (SillyTavern collapses <html> to 0px on narrow screens)', () => {
+  assert.deepEqual(defaultLauncherPosition({ width: 1280, height: 800 }, { width: 46, height: 46 }), { left: 18, top: 680 });
+  assert.deepEqual(defaultLauncherPosition({ width: 1180, height: 820 }, { width: 46, height: 46 }), { left: 18, top: 700 });
+  assert.deepEqual(defaultLauncherPosition({ width: 820, height: 1180 }, { width: 46, height: 46 }), { left: 18, top: 567 });
+  assert.deepEqual(defaultLauncherPosition({ width: 390, height: 844 }, { width: 46, height: 46 }), { left: 18, top: 399 });
+});
+
+test('without a saved spot the button is placed in pixels on mount and re-placed on resize', () => {
+  const { doc, win, element, winListeners } = fakeDom();
+  doc.documentElement.clientWidth = 390;
+  doc.documentElement.clientHeight = 844;
+  mountWorldStateLauncher({ onOpen() {}, doc, win, storage: memoryStorage() });
+  assert.equal(element.style.left, '18px');
+  assert.equal(element.style.top, '399px', 'narrow screens get an explicit mid-height top, not a CSS percentage');
+  assert.equal(element.dataset.positioned, 'true');
+
+  doc.documentElement.clientWidth = 1280;
+  doc.documentElement.clientHeight = 800;
+  winListeners.get('resize')();
+  assert.equal(element.style.top, '680px');
 });
