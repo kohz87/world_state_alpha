@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0-alpha.32 - Day-by-day time adds up
 
 ### Added
 
