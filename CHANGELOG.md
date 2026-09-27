@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.0-alpha.33 - World State survives swipes, deletes, regenerates and hidden messages
+
+### Fixed
+
+- **Delete and regenerate.** A local tail delete, including the delete half of Regenerate, left the chat a strict prefix of the stored lineage. That looked identical to "another device is ahead", so continuity failed closed. The regenerated reply was written without World State, the deleted reply's records stayed, and the new reply was not captured. The host now remembers the chat tail this session proved against its own loaded chat. A stored state ending at that tail, with the chat now shorter, rolls back normally before SillyTavern builds the next prompt. A tail this session never proved still fails closed as host-chat-behind, both in reconciliation and in the server refresh check.
+- **Swiping back.** Returning to an already captured reply dropped what it established, because an existing swipe fires no `MESSAGE_RECEIVED`. Abandoned captured branches are parked in memory (8 per chat, current chat only, never persisted). They resume through their own journal/checkpoints, with no model call, only when the returning messages reproduce the parked lineage keys on a byte-identical base state.
+- **Uncaptured swipes and edits.** A settled swipe to an existing reply that was never captured, a swipe deletion, or an edit of the latest reply is now captured after a 900 ms debounce. Browsing swipes cancels the pending capture, overswipe generation is left to `MESSAGE_RECEIVED`, and a change further back warns that later messages need Rebuild from chat.
+- **Deleting back past the first capture.** With nothing journaled this failed closed and froze continuity. An unjournaled state is now exact from the earliest on-branch checkpoint (root or import baseline) whose snapshot equals it. An unjournaled change with no matching checkpoint still fails closed.
+- **Hidden messages.** SillyTavern's hide/unhide flips only `is_system` and fires no event. The next full reconcile (reload, swipe, delete) treated every hidden user row as an edit and rolled back or failed closed from the first one, after which only Full chat rebuild worked. A row whose stored fingerprint is reproduced by flipping `is_system` back is now visibility-only and rebased with its state kept.
+- **Rollback start.** When a real change is reconciled together with visibility-only or narration-equivalent rows, rollback starts at the first real change and the proven prefix is rebased.
+- **Operations log.** The log lived only in browser memory and vanished on reload. The last 80 operations per chat now persist in a separate `world-state-alpha-ops-<chat hash>.json` server file, never the canonical sidecar. It is restored on chat activation and saved read-merge-write after a short quiet period, carried across rename and emptied on delete.
+- **Partial rebuild in long chats.** A partial rebuild that starts before the kept journal now names the earliest message it can prove, and the rebuild sheet shows that start in long chats.
+
+### Validation
+
+- Added branch regressions for delete-to-greeting, the imported-baseline cut, unjournaled fail-closed, swipe-back resume, park guards, hide/unhide, and hide combined with a real edit.
+- Added a seeded randomized swipe/delete/regenerate/evolution/hide test compared against a from-scratch replay. It uses a well-mixed generator, and its tests fail on both the previous branch code and the release.
+- Added host regressions for the local-truncation proof, parked-branch wiring, debounced branch capture and Operations log persistence.
+- Added a partial-rebuild earliest-start regression and a rebuild-sheet hint test.
+- Verified live in SillyTavern 1.19 with a stubbed model:
+  - Regenerate keeps World State injected, removes the deleted reply's record and captures the new reply.
+  - Deleting the last exchange rolls back.
+  - Swiping back resumes with zero calls, and a never-captured swipe is captured.
+  - A delete right after reload rolls back.
+  - After `/hide 0-4` plus a swipe, the release dropped all 5 records and failed closed; with this change the records survive, the Operations log survives reload, and Last messages / From message rebuilds complete.
+- Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+
 ## 0.9.0-alpha.32 - Day-by-day time adds up
 
 ### Added
