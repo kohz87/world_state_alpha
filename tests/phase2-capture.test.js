@@ -1823,3 +1823,54 @@ test('diagnostics retain bounded model response content but never prompt, story,
   assert.match(exported, /responseJson/);
   assert.match(exported, /mutations/);
 });
+
+test('a single extortion scene is captured as an attributed ongoing arrangement, never as the enforcer\'s claim', async () => {
+  assert.match(CAPTURE_SYSTEM_PROMPT, /single shown incident can establish a persistent arrangement/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /collects levies\/tolls\/fees\/protection payments/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Keep dialogue-borne claims attributed/);
+
+  const scene = [
+    'Three men in boiled leather jacks and grease-stained arming doublets had cornered a two-wheeled vegetable cart against the fieldstone base of a tallow chandler\'s shop.',
+    '"The ditch tax went up at sunrise. The bailiff signed the parchment yesterday. You settle the four Aon now. We take the cart wheels off the axle."',
+    '"I paid Master Varley on Marketday. He stamped my slate."',
+    '"Varley handles the timber gate. This lane belongs to the ditch watch. Pay the coin."',
+    'A score of villagers hurried past with heads down, steering their baskets away from the stones of the alley, eyes averted into the mud.',
+  ].join('\n\n');
+  const exchange = withLineage([
+    { role: 'user', content: 'I head down the alley toward the market.' },
+    { role: 'assistant', content: scene },
+  ]);
+  const run = mutations => runCaptureOperation({
+    ctx: ctxReturning(JSON.stringify({ mutations })),
+    state: existingState('ditch-watch'),
+    exchange,
+    chatKey: 'ditch-watch',
+    ...sourceBoundary(exchange),
+    isCurrent: () => true,
+  });
+
+  const attributed = await run([{
+    action: 'create',
+    kind: 'development',
+    trend: 'emerging',
+    summary: 'Armed men claiming ditch-watch authority are demanding a raised "ditch tax" from alley vendors and villagers steer clear of the lane.',
+    anchors: ['ditch watch', 'ditch tax', 'alley'],
+    evidence: [
+      { sourceMessageId: 1, claim: 'This lane belongs to the ditch watch. Pay the coin.' },
+      { sourceMessageId: 1, claim: 'A score of villagers hurried past with heads down, steering their baskets away from the stones of the alley' },
+    ],
+  }]);
+  assert.equal(attributed.outcome, 'applied');
+  assert.match(attributed.state.records[0].summary, /claiming ditch-watch authority are demanding/);
+
+  const unattributed = await run([{
+    action: 'create',
+    kind: 'development',
+    trend: 'rising',
+    summary: 'The ditch tax was raised at sunrise under a parchment signed by the bailiff.',
+    anchors: ['ditch tax', 'bailiff'],
+    evidence: [{ sourceMessageId: 1, claim: 'The ditch tax went up at sunrise. The bailiff signed the parchment yesterday.' }],
+  }]);
+  assert.equal(unattributed.outcome, 'no-change');
+  assert.equal(unattributed.state.records.length, 0);
+});
