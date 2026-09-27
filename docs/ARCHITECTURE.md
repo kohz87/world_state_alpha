@@ -268,7 +268,8 @@ On destructive lineage change:
 - compute first divergence
 - attempt exact journal rollback to divergence - 1
 - else exact checkpoint at divergence - 1
-- explicit known swipe sibling may restore exact sibling checkpoint
+- with no journaled mutation, the earliest on-branch checkpoint whose snapshot equals the current state proves every boundary from it onward
+- explicit known swipe sibling may restore exact sibling checkpoint: an abandoned captured suffix is parked in memory and resumes only when its lineage keys reappear on an identical base state
 - otherwise fail closed
 
 For World State, record-level undo is simpler than Delta's NPC/social/portrait-specific undo and should therefore be significantly smaller.
@@ -476,6 +477,8 @@ exact journal undo to D-1 available?
           yes -> restore
           no  -> known exact swipe sibling?
                    yes -> restore sibling
+                          (after any restore, a parked branch whose lineage
+                           reappears on an identical base resumes exactly)
                    no  -> FAIL CLOSED
                          keep canonical state
                          mark affected records/rebuild need

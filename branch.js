@@ -135,6 +135,10 @@ export function firstLineageDivergence(previous = [], current = []) {
   return previous.length === current.length ? -1 : limit;
 }
 
+function domainHash(state) {
+  return hashText(stableStringify(canonicalDomain(state)));
+}
+
 function checkpointSnapshot(state) {
   return canonicalDomain(state);
 }
@@ -151,6 +155,21 @@ function restoreCheckpoint(state, snapshot) {
     restored.spatial = createSpatialState();
   }
   return normalizeState(restored);
+}
+
+// Earliest boundary <= maxMessageId at which an on-branch checkpoint holds
+// exactly the current canonical state, or null. Only meaningful when nothing
+// is journaled: then the state provably held from that boundary onward.
+function unjournaledStateSince(state, lineage, maxMessageId) {
+  const rows = Array.isArray(lineage) ? lineage : [];
+  const candidates = (state.checkpoints || [])
+    .filter(item => Number.isInteger(item?.messageId) && item.messageId <= maxMessageId
+      && (item.messageId < 0 ? item.lineageKey === 'root' : rows[item.messageId]?.lineageKey === item.lineageKey))
+    .sort((a, b) => a.messageId - b.messageId);
+  if (!candidates.length) return null;
+  const current = domainHash(state);
+  const match = candidates.find(item => domainHash(restoreCheckpoint(state, item.snapshot || {})) === current);
+  return match ? match.messageId : null;
 }
 
 function trimJournal(state, maxEntries) {
@@ -247,11 +266,15 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
       }
     } else {
       seq = currentSequence + 1;
+      // With no head and no entries, undoing this first entry restores a
+      // state that may be provably exact further back than messageId - 1: from
+      // the earliest checkpoint on this branch whose snapshot it equals.
+      const provenBase = head || journal.length ? null : unjournaledStateSince(before, lineage, messageId - 1);
       journal.push({
         seq,
         prevSeq: Math.max(0, Number(head?.seq) || 0),
         messageId,
-        beforeMessageId: Number.isInteger(head?.messageId) ? head.messageId : messageId - 1,
+        beforeMessageId: Number.isInteger(head?.messageId) ? head.messageId : (provenBase ?? messageId - 1),
         lineageKey: boundary.lineageKey,
         parentLineageKey: boundary.parentLineageKey,
         reason: String(reason || 'mutation'),
@@ -301,6 +324,12 @@ function restoreByJournal(state, previousLineage, divergence) {
   const bySeq = new Map(state.rollbackJournal.map(entry => [entry.seq, entry]));
   let working = normalizeState(clone(state));
   let seq = Math.max(0, Number(state.rollbackHead?.seq) || 0);
+  // No head and no entries: the current state is exact at the target only if
+  // a checkpoint at or before it on this branch holds the very same state.
+  if (!state.rollbackHead && !state.rollbackJournal.length) {
+    const provenBase = unjournaledStateSince(state, previousLineage, targetMessageId);
+    return provenBase === null ? null : { state: normalizeState(clone(state)), headSeq: 0, targetMessageId };
+  }
   let headMessageId = Number.isInteger(state.rollbackHead?.messageId)
     ? state.rollbackHead.messageId
     : previousLineage.length - 1;
@@ -458,4 +487,68 @@ export function seedRootCheckpoint(inputState) {
   if (existing >= 0) state.checkpoints[existing] = checkpoint;
   else state.checkpoints.unshift(checkpoint);
   return state;
+}
+
+// Parked branches: when a rollback abandons a suffix (swipe, delete,
+// regenerate), the pre-rollback state is kept in memory so that returning to
+// exactly the same messages restores what those messages had established,
+// without another capture. Resume is exact-only: the current state must be
+// byte-identical to the base the branch was abandoned from, and the returning
+// messages must reproduce the parked lineage keys (same parent chain + content).
+
+// Checkpoints at or before the base are the same ones the current branch
+// keeps, so a parked branch holds only its own; resume merges them back.
+function compactParkedState(state, baseMessageId) {
+  const parked = normalizeState(clone(state));
+  parked.checkpoints = parked.checkpoints.filter(item => item.messageId > baseMessageId);
+  parked.recoveryRequired = null;
+  return parked;
+}
+
+export function parkAbandonedBranch(beforeState, result) {
+  if (!result || result.failClosed || !['rollback-journal', 'exact-checkpoint'].includes(result.action)) return null;
+  const before = normalizeState(beforeState);
+  const baseMessageId = Number(result.divergence) - 1;
+  const abandoned = before.lineage?.[baseMessageId + 1];
+  if (!Number.isInteger(baseMessageId) || baseMessageId < -1 || !abandoned?.lineageKey) return null;
+  if (domainHash(before) === domainHash(result.state)) return null;
+  return {
+    baseMessageId,
+    baseLineageKey: baseMessageId < 0 ? 'root' : String(result.state.lineage?.[baseMessageId]?.lineageKey || ''),
+    baseDomainHash: domainHash(result.state),
+    firstLineageKey: abandoned.lineageKey,
+    state: compactParkedState(before, baseMessageId),
+  };
+}
+
+export function resumeParkedBranch(inputState, chat, parks = [], options = {}) {
+  const state = normalizeState(inputState);
+  const lineage = Array.isArray(state.lineage) ? state.lineage : [];
+  if (!Array.isArray(parks) || !parks.length || state.recoveryRequired) return null;
+  const currentHash = domainHash(state);
+  const journalTop = state.rollbackJournal.reduce((max, entry) => Math.max(max, Number(entry?.messageId)), -1);
+
+  for (let index = parks.length - 1; index >= 0; index -= 1) {
+    const park = parks[index];
+    const base = Number(park?.baseMessageId);
+    if (!Number.isInteger(base) || base + 1 >= lineage.length) continue;
+    if (base >= 0 && lineage[base]?.lineageKey !== park.baseLineageKey) continue;
+    if (lineage[base + 1]?.lineageKey !== park.firstLineageKey) continue;
+    if (journalTop > base || park.baseDomainHash !== currentHash) continue;
+
+    const resumed = reconcileBranch(park.state, chat, options);
+    if (resumed.failClosed || !resumed.exactRestored) continue;
+    const next = normalizeState(resumed.state);
+    next.checkpoints = [
+      ...state.checkpoints.filter(item => item.messageId <= base),
+      ...next.checkpoints.filter(item => item.messageId > base),
+    ];
+    trimCheckpoints(next, options.maxCheckpoints);
+    next.rollbackJournalSequence = Math.max(
+      Number(next.rollbackJournalSequence) || 0,
+      Number(state.rollbackJournalSequence) || 0,
+    );
+    return { state: next, parkIndex: index, divergence: resumed.divergence };
+  }
+  return null;
 }

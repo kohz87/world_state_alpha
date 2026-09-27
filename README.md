@@ -77,6 +77,9 @@ Swipe, edit or delete that original reply, and the record goes away with it.
 
 ### Safe with swipes, edits and branches
 - Swipe, regenerate, edit, delete and branch all **roll the world back** to match. No state from abandoned branches is left behind.
+- **Swipe back freely:** returning to a reply you already had brings back exactly what it established, with no new model call. Settling on an older swipe that was never captured, or editing the latest reply, captures it after a short pause.
+- **Delete and regenerate:** the deleted reply's changes are rolled back before the new reply is written, so the regenerated reply still gets World State and is captured normally.
+- Editing or deleting a message further back rolls the world back to that point and tells you; use **Rebuild from chat → Last messages** to recapture the later messages.
 - **Fails safe:** if the state for a point in the chat can't be proven, it pauses instead of guessing.
 - **One source of truth:** state lives in a per-chat file on your SillyTavern server, so desktop, phone and multiple tabs stay in sync, and an out-of-date tab can't overwrite newer data.
 

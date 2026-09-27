@@ -83,7 +83,7 @@ for (const required of [
   'affectingEvidence: []',
   'resolveContinuityElapsedHint({',
   'cancelWorldStateRequests({ chatKey })',
-  'reconcileBranch(state, getContext().chat || [], {',
+  'let result = reconcileBranch(state, liveChat, {',
   'passiveCaptureMessageId:',
   "commitMutationBoundary(before, result.state, liveChat, messageId, 'capture'",
   "commitMutationBoundary(before, prepared.state, liveChat, messageId, 'evolution'",
