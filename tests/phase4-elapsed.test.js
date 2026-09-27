@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { chatLineage } from '../branch.js';
 import {
+  ACCUMULATED_ELAPSED_LIMITS,
+  detectAccumulatedDayStepHint,
   detectElapsedHintFromExchange,
   extractElapsedHint,
   normalizeElapsedHint,
@@ -141,4 +144,91 @@ test('exchange detector binds elapsed evidence to the exact message boundary', (
   assert.equal(hint.sourceMessageId, 11);
   assert.equal(hint.lineageKey, 'ln11');
   assert.equal(hint.meaningful, true);
+});
+
+function dayByDayChat(steps) {
+  // steps: [[userText, assistantText], ...]
+  return steps.flatMap(([user, assistant]) => [
+    { is_user: true, mes: user },
+    { is_user: false, mes: assistant },
+  ]);
+}
+
+test('narrated day steps accumulate across exchanges into one meaningful hint', () => {
+  const chat = dayByDayChat([
+    ['I help Malia load the wagon.', 'The next morning, the wagon rolls out of Farwick.'],
+    ['I scout ahead for game.', 'The following day, the track climbs toward High Ghyll.'],
+    ['I hunt at dusk.', 'The deer bolts into the pines.'],
+  ]);
+  const lineage = chatLineage(chat);
+  const hint = detectAccumulatedDayStepHint(chat, chat.length - 1, { lineage });
+  assert.equal(hint.meaningful, true);
+  assert.equal(hint.source, 'accumulated');
+  assert.equal(hint.unit, 'day');
+  assert.equal(hint.amount, ACCUMULATED_ELAPSED_LIMITS.thresholdDays);
+  assert.equal(hint.sourceMessageId, 3, 'fires on the message that completes the second day step');
+  assert.equal(hint.lineageKey, lineage[3].lineageKey);
+  assert.match(hint.context, /The next morning/);
+  assert.match(hint.context, /The following day/);
+
+  const oneStep = detectAccumulatedDayStepHint(chat, 2, { lineage });
+  assert.equal(oneStep, null, 'a single day step stays below the threshold');
+});
+
+test('one exchange contributes at most one day step', () => {
+  const chat = dayByDayChat([
+    ['The next morning, I pack up camp.', 'The next morning is grey; the next day promises rain.'],
+    ['I keep walking.', 'The road bends east.'],
+  ]);
+  assert.equal(detectAccumulatedDayStepHint(chat, chat.length - 1), null);
+});
+
+test('quoted, planned, hypothetical, hidden-planning and system day steps never count', () => {
+  const chat = [
+    { is_user: false, mes: 'Malia says, "We leave the next morning."' },
+    { is_user: true, mes: 'We will set out the next morning.' },
+    { is_user: false, mes: 'If the rain stops, the following day would be clear.' },
+    { is_user: true, mes: 'I wait.' },
+    { is_user: false, mes: '<writer_state>The next day: advance the beasts.</writer_state> Nothing changes.' },
+    { is_user: true, mes: 'I rest.' },
+    { is_user: false, is_system: true, mes: 'The next day arrives.' },
+    { is_user: true, mes: "I'll leave the day after tomorrow." },
+    { is_user: false, mes: 'The camp stays quiet.' },
+  ];
+  assert.equal(detectAccumulatedDayStepHint(chat, chat.length - 1), null);
+});
+
+test('the count restarts after the last recorded elapsed catch-up and after explicit skips', () => {
+  const chat = dayByDayChat([
+    ['I ride.', 'The next morning, fog lifts.'],
+    ['I ride on.', 'The following day, the pass opens.'],
+    ['I ride again.', 'The next morning, snow falls.'],
+    ['I camp.', 'The next day, the wind drops.'],
+  ]);
+  const last = chat.length - 1;
+  assert.equal(detectAccumulatedDayStepHint(chat, last).sourceMessageId, 7, 'fires again after two more steps');
+  assert.equal(detectAccumulatedDayStepHint(chat, last, { sinceMessageId: 3 }).sourceMessageId, 7);
+  assert.equal(detectAccumulatedDayStepHint(chat, last, { sinceMessageId: 5 }), null, 'only one step since the recorded catch-up');
+
+  const withSkip = dayByDayChat([
+    ['I ride.', 'The next morning, fog lifts.'],
+    ['I ride on.', 'Three days later, the caravan reaches the ford.'],
+    ['I cross.', 'The next morning, the river falls.'],
+  ]);
+  assert.equal(detectAccumulatedDayStepHint(withSkip, withSkip.length - 1), null, 'an explicit skip resets the count');
+});
+
+test('accumulation is deterministic across later boundaries and bounded by the lookback', () => {
+  const chat = dayByDayChat([
+    ['I ride.', 'The next morning, fog lifts.'],
+    ['I ride on.', 'The following day, the pass opens.'],
+    ['I rest.', 'Nothing moves.'],
+    ['I rest again.', 'Still nothing.'],
+  ]);
+  assert.equal(detectAccumulatedDayStepHint(chat, 3).sourceMessageId, 3);
+  assert.equal(detectAccumulatedDayStepHint(chat, chat.length - 1).sourceMessageId, 3, 'the same firing point is reported until a catch-up is recorded');
+
+  const padding = Array.from({ length: ACCUMULATED_ELAPSED_LIMITS.lookbackMessages }, (_, index) => ({ is_user: index % 2 === 0, mes: 'Talk continues.' }));
+  const old = [...chat.slice(0, 4), ...padding];
+  assert.equal(detectAccumulatedDayStepHint(old, old.length - 1), null, 'steps older than the lookback are ignored');
 });

@@ -245,3 +245,113 @@ export function detectElapsedHintFromExchange(exchange = []) {
   }
   return null;
 }
+
+// Accumulated day steps. Day-by-day narration ("The next morning…", "The
+// following day…") never states a meaningful span in one place, so each step
+// alone stays non-meaningful. When enough narrated day steps pile up since the
+// last recorded elapsed catch-up, they are combined into one meaningful hint.
+//
+// Firing points are a pure function of the current branch's messages: the walk
+// starts after the last persisted elapsed-evolution boundary (bounded by a
+// short lookback), counts at most one day per user->assistant exchange, resets
+// after each firing and on any explicit meaningful skip, and fires when the
+// running total reaches the threshold. Nothing is stored, so swipes, deletes,
+// and branches cannot leave a stale counter behind. Time remains permission to
+// evaluate, never evidence of change.
+export const ACCUMULATED_ELAPSED_LIMITS = Object.freeze({
+  lookbackMessages: 40,
+  thresholdDays: 2,
+});
+
+const DAY_STEP_PATTERNS = Object.freeze([
+  /\bthe\s+(?:next|following)\s+(?:day|morning|dawn|afternoon|evening|night)\b/iu,
+  /\bnext\s+morning\b/iu,
+  /\bthe\s+(?:morning|day)\s+after\b(?!\s+tomorrow)/iu,
+  /\b(?:a|one)\s+day\s+later\b/iu,
+  /\bafter\s+(?:a|one)\s+day\b/iu,
+  /\b(?:a|one|another)\s+(?:full\s+)?day\s+(?:has\s+|had\s+)?passed\b/iu,
+]);
+
+const DAY_STEP_PROSPECTIVE = /(?:\b(?:will|would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|tomorrow|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/u;
+
+function narratedDayStep(source) {
+  for (const pattern of DAY_STEP_PATTERNS) {
+    const match = source.match(pattern);
+    if (!match) continue;
+    if (phraseInsideQuotation(source, match[0])) continue;
+    const context = sentenceAround(source, match[0]);
+    const normalized = context.toLocaleLowerCase();
+    if (DAY_STEP_PROSPECTIVE.test(normalized)) continue;
+    if (/\bif\b/u.test(normalized)) continue;
+    return { phrase: match[0], context };
+  }
+  return null;
+}
+
+function explicitMeaningfulSkip(source) {
+  const found = extractElapsedHint(source);
+  if (!found?.meaningful) return false;
+  return Boolean(establishedElapsedContext(source, found));
+}
+
+export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
+  sinceMessageId = -1,
+  lineage = null,
+  lookbackMessages = ACCUMULATED_ELAPSED_LIMITS.lookbackMessages,
+  thresholdDays = ACCUMULATED_ELAPSED_LIMITS.thresholdDays,
+} = {}) {
+  const rows = Array.isArray(chat) ? chat : [];
+  if (!Number.isInteger(endMessageId) || endMessageId < 0 || endMessageId >= rows.length) return null;
+  const lookback = Math.max(1, Math.min(200, Math.trunc(Number(lookbackMessages)) || ACCUMULATED_ELAPSED_LIMITS.lookbackMessages));
+  const threshold = Math.max(2, Math.trunc(Number(thresholdDays)) || ACCUMULATED_ELAPSED_LIMITS.thresholdDays);
+  const since = Number.isInteger(sinceMessageId) ? sinceMessageId : -1;
+  const start = Math.max(0, since + 1, endMessageId - lookback + 1);
+
+  let steps = [];
+  let fired = null;
+  let exchangeCounted = false;
+  let previousRole = '';
+
+  for (let messageId = start; messageId <= endMessageId; messageId += 1) {
+    const raw = rows[messageId];
+    const role = messageRole(raw);
+    if (role === 'system') continue;
+    if (role === 'user' && previousRole === 'assistant') exchangeCounted = false;
+    previousRole = role;
+
+    const source = messageText(sanitizeExchangeMessage({ ...raw, messageId }));
+    if (!source.trim()) continue;
+
+    if (explicitMeaningfulSkip(source)) {
+      // The explicit detector owns this skip; restart the count after it.
+      steps = [];
+      fired = null;
+      exchangeCounted = true;
+      continue;
+    }
+    if (exchangeCounted) continue;
+
+    const step = narratedDayStep(source);
+    if (!step) continue;
+    exchangeCounted = true;
+    steps.push({ messageId, ...step });
+    if (steps.length >= threshold) {
+      fired = { messageId, steps };
+      steps = [];
+    }
+  }
+
+  if (!fired) return null;
+  const lineageKey = Array.isArray(lineage) && typeof lineage[fired.messageId]?.lineageKey === 'string'
+    ? lineage[fired.messageId].lineageKey
+    : '';
+  return hint(`${fired.steps.length} narrated day steps`, {
+    amount: fired.steps.length,
+    unit: 'day',
+    meaningful: true,
+    sourceMessageId: fired.messageId,
+    lineageKey,
+    source: 'accumulated',
+    context: fired.steps.map(step => step.context).join(' … '),
+  });
+}

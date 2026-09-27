@@ -10,7 +10,7 @@ import {
 import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintMessage, rebaseLineageMetadata, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { createDiagnosticStore } from './diagnostics.js';
-import { detectElapsedHintFromExchange } from './elapsed.js';
+import { detectAccumulatedDayStepHint, detectElapsedHintFromExchange } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
 import { stableStringify } from './hash.js';
 import { buildWorldStateChatKey, getWorldStateChatIdentity, getWorldStateChatKey, parseWorldStateChatKey } from './host-identity.js';
@@ -31,7 +31,7 @@ import {
 } from './manual.js';
 import { cancelWorldStateRequests, worldStateProfileOptions } from './provider-routing.js';
 import { planChronologicalRebuild, REBUILD_LIMITS, runManualRebuild } from './rebuild.js';
-import { buildRelevanceIndex, selectLifecycleCandidates, selectRelevantRecords, selectRelevantTombstones, updateRelevanceIndex } from './relevance.js';
+import { buildRelevanceIndex, latestElapsedEvolutionBoundary, selectLifecycleCandidates, selectRelevantRecords, selectRelevantTombstones, updateRelevanceIndex } from './relevance.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
@@ -2086,8 +2086,14 @@ async function handleUserMessage(messageId) {
     const currentState = stateCache.get(chatKey);
     const exchange = boundedExchange(liveChat, messageId, CAPTURE_LIMITS.exchangeMessages, currentState?.lineage);
     const sourceLineageKey = currentState?.lineage?.[messageId]?.lineageKey || '';
-    const elapsedHint = detectElapsedHintFromExchange(exchange);
     const before = stateCache.get(chatKey);
+    // An explicit skip ("two days later") wins; otherwise narrated day steps
+    // since the last recorded elapsed catch-up may add up to a meaningful span.
+    const elapsedHint = detectElapsedHintFromExchange(exchange)
+      || detectAccumulatedDayStepHint(liveChat, messageId, {
+        sinceMessageId: latestElapsedEvolutionBoundary(before),
+        lineage: before?.lineage,
+      });
     const index = getRelevanceIndex(chatKey, before);
     const isCurrent = operationGuard(chatKey, messageId);
 

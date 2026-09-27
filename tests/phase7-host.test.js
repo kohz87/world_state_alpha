@@ -1033,3 +1033,8 @@ test('browser-safe host helpers contain no Node-only imports', () => {
     assert.doesNotMatch(source, /from\s+['"]node:|require\(['"]node:/);
   }
 });
+
+test('host falls back to accumulated day steps only when no explicit skip is detected', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  assert.match(source, /detectElapsedHintFromExchange\(exchange\)\s*\|\|\s*detectAccumulatedDayStepHint\(liveChat, messageId, \{\s*sinceMessageId: latestElapsedEvolutionBoundary\(before\)/);
+});

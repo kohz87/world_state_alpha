@@ -315,7 +315,7 @@ function ensureTombstoneIndex(index) {
   return index.tombstones;
 }
 
-function latestElapsedEvolutionBoundary(state) {
+export function latestElapsedEvolutionBoundary(state) {
   let latest = -1;
   for (const evidence of Object.values(state?.evidence || {})) {
     if (evidence?.sourceClass !== 'elapsed_hint') continue;

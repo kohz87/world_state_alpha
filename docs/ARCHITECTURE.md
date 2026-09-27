@@ -203,6 +203,8 @@ Phase 4 implements this host-neutral preparation flow:
 9. re-run local relevance against the resulting canonical state
 10. inject compact current summaries
 
+An explicit meaningful skip in the current exchange wins. Otherwise, narrated day steps since the last persisted elapsed catch-up (at most one per exchange, 40-message lookback, recomputed from the current branch) combine into one meaningful hint once they reach two days (`detectAccumulatedDayStepHint`).
+
 Elapsed time never forces motion. It opens an evaluation window. The evaluator does not inherit Writer's Mind/Ukiyo story-driving incentives and cannot create events merely to avoid stagnation.
 
 Opaque fictional time strings are supported directly. A small local recognizer handles obvious relative intervals such as weeks/months/years without becoming a calendar engine.

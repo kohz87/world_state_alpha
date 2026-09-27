@@ -317,3 +317,4 @@ Performance/injection:
 111. Main header contains the trusted continuity icon + `World continuity` title and does not render the old `World State Alpha` eyebrow.
 112. Rebuild status is absolutely positioned outside layout flow, can be dismissed independently of cancellation, and does not shift the tab/navigation row.
 113. Scoped WebKit scrollbar buttons are suppressed while normal scrolling remains available.
+114. Narrated day steps accumulate into a meaningful elapsed hint at two days: at most one step per exchange; quoted/planned/hypothetical/hidden/system text never counts; the count restarts after the last persisted elapsed catch-up and at explicit skips; firing points are deterministic from the current branch within a 40-message lookback; an explicit skip in the current exchange takes precedence.

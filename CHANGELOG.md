@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Day-by-day narration now adds up for background catch-up. Previously a single "two days later" woke off-scene developments, but the same two days told as "The next morning…" then "The following day…" never did, because each step alone is under the 2-day threshold and steps did not accumulate.
+- When no explicit skip is present, `detectAccumulatedDayStepHint` walks the current branch's messages after the last recorded elapsed catch-up (40-message lookback) and counts at most one narrated day step per exchange. Recognised steps include "the next/following day/morning/dawn/evening/night", "next morning", "the morning/day after", "a day later", "after a day" and "a day passed". Quoted dialogue, plans ("will", "'ll", "tomorrow"), hypotheticals ("if"), hidden planning blocks and system messages never count.
+- At two days it produces one meaningful hint bound to the message that completed the second day, then restarts the count. An explicit skip resets it too. Firing points are recomputed from the messages rather than stored, so swipes, deletes and branches cannot leave a stale counter.
+
+### Architecture
+
+- Accumulated time has exactly the authority of an explicit skip: permission to evaluate (up to 4 relevant + 3 background developments, one call), never evidence of change. Core contract C13, architecture and test plan are updated.
+
+### Validation
+
+- Added regressions for accumulation, the per-exchange cap, the quoted/planned/hypothetical/hidden/system filters, restart after the recorded catch-up and after explicit skips, determinism across later boundaries, the lookback bound, host wiring, and an end-to-end case. In that case three narrated mornings wake background catch-up for an unrelated extortion record, a "stable" result is recorded at the firing message, and the count then restarts.
+
+
 ## 0.9.0-alpha.31 - Mobile button placement and arrangement capture
 
 ### Fixed
