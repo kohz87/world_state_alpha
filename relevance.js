@@ -315,7 +315,7 @@ function ensureTombstoneIndex(index) {
   return index.tombstones;
 }
 
-function latestElapsedEvolutionBoundary(state) {
+export function latestElapsedEvolutionBoundary(state) {
   let latest = -1;
   for (const evidence of Object.values(state?.evidence || {})) {
     if (evidence?.sourceClass !== 'elapsed_hint') continue;
@@ -341,6 +341,10 @@ export function buildRelevanceIndex(state) {
     backgroundDevelopmentSet: new Set(),
     backgroundCursor: 0,
     backgroundElapsedBoundary: latestElapsedEvolutionBoundary(state),
+    // Latest persisted elapsed_hint evidence boundary. Computed once during the
+    // already-authorized full build, then advanced from reducer deltas so the
+    // per-turn accumulated-time walk never scans the evidence map.
+    elapsedEvidenceBoundary: latestElapsedEvolutionBoundary(state),
     tombstones: createTombstoneIndex(),
     corpusRecords: Array.isArray(state?.records) ? state.records.length : 0,
     activeCount: records.length,
@@ -379,6 +383,10 @@ export function updateRelevanceIndex(index, delta = {}) {
   if (!Array.isArray(index.backgroundDevelopmentIds)) index.backgroundDevelopmentIds = [];
   if (!Number.isInteger(index.backgroundCursor) || index.backgroundCursor < 0) index.backgroundCursor = 0;
   if (!Number.isInteger(index.backgroundElapsedBoundary)) index.backgroundElapsedBoundary = -1;
+  if (!Number.isInteger(index.elapsedEvidenceBoundary)) index.elapsedEvidenceBoundary = -1;
+  if (Number.isInteger(delta.elapsedEvidenceBoundary)) {
+    index.elapsedEvidenceBoundary = Math.max(index.elapsedEvidenceBoundary, delta.elapsedEvidenceBoundary);
+  }
 
   for (const id of removedIds) {
     index.byId.delete(id);

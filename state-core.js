@@ -357,6 +357,9 @@ function addEvidence(state, record, mutation, context, counter) {
       throw new Error(`deterministic evidence id collision: ${id}`);
     }
     if (!existing) state.evidence[id] = evidence;
+    if (evidence.sourceClass === 'elapsed_hint' && Number.isInteger(evidence.sourceMessageId)) {
+      counter.elapsedBoundary = Math.max(counter.elapsedBoundary ?? -1, evidence.sourceMessageId);
+    }
     added.push(id);
   }
   record.evidenceIds = boundedEvidenceRefs([...record.evidenceIds, ...added]);
@@ -548,6 +551,7 @@ export function reduceMutations(inputState, batch) {
       upsertedRecords,
       appendedLinks,
       corpusRecords: state.records.length,
+      elapsedEvidenceBoundary: Number.isInteger(evidenceCounter.elapsedBoundary) ? evidenceCounter.elapsedBoundary : null,
     },
   };
 }

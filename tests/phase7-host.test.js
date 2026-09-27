@@ -341,7 +341,7 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
   assert.match(source, /selectRelevantRecords\([\s\S]*maxRecords:\s*CAPTURE_LIMITS\.visibleRecords/);
   assert.match(source, /const visibleById = new Map\(\)[\s\S]*lifecycleVisible[\s\S]*tombstones[\s\S]*activeVisible/);
   assert.match(source, /prepareWorldStateContinuity\(\{[\s\S]*affectingEvidence:\s*\[\]/);
-  assert.match(source, /detectElapsedHintFromExchange\(exchange\)/);
+  assert.match(source, /resolveContinuityElapsedHint\(\{\s*exchange,/);
   assert.match(source, /cancelWorldStateRequests\(\{\s*chatKey\s*\}\)/);
   assert.match(source, /function invalidateChatOperations\(chatKey = currentChatKey\(\)\)/);
   assert.match(source, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, payload, chatKey\)\)/);
@@ -1032,4 +1032,15 @@ test('browser-safe host helpers contain no Node-only imports', () => {
     const source = fs.readFileSync(path, 'utf8');
     assert.doesNotMatch(source, /from\s+['"]node:|require\(['"]node:/);
   }
+});
+
+test('host resolves continuity elapsed time through the shared precedence helper with incremental, lineage-bound inputs', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  // Behaviour (precedence, freshness, filters) is covered in tests/phase4-elapsed.test.js;
+  // this only pins the host inputs that must not regress to scans.
+  assert.match(source, /resolveContinuityElapsedHint\(\{/);
+  assert.match(source, /index\.elapsedEvidenceBoundary/);
+  assert.match(source, /hasActiveDevelopments: Boolean\(index\?\.backgroundDevelopmentSet\?\.size\)/);
+  assert.doesNotMatch(source, /latestElapsedEvolutionBoundary\(/, 'no per-turn evidence scan in the host');
+  assert.doesNotMatch(source, /detectElapsedHintFromExchange\(exchange\)\s*\|\|/, 'no bare || precedence that a non-meaningful hint could short-circuit');
 });

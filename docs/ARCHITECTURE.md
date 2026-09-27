@@ -203,6 +203,8 @@ Phase 4 implements this host-neutral preparation flow:
 9. re-run local relevance against the resulting canonical state
 10. inject compact current summaries
 
+An explicit meaningful skip in the current exchange wins. Otherwise, narrated day steps since the last persisted elapsed catch-up (at most one per exchange, 40-message lookback, recomputed from the current branch) combine into one meaningful hint once they reach two days (`detectAccumulatedDayStepHint`).
+
 Elapsed time never forces motion. It opens an evaluation window. The evaluator does not inherit Writer's Mind/Ukiyo story-driving incentives and cannot create events merely to avoid stagnation.
 
 Opaque fictional time strings are supported directly. A small local recognizer handles obvious relative intervals such as weeks/months/years without becoming a calendar engine.
@@ -657,7 +659,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.31`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
+Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.32`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

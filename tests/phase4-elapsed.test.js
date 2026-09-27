@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { chatLineage } from '../branch.js';
 import {
+  ACCUMULATED_ELAPSED_LIMITS,
+  detectAccumulatedDayStepHint,
   detectElapsedHintFromExchange,
+  resolveContinuityElapsedHint,
   extractElapsedHint,
   normalizeElapsedHint,
 } from '../elapsed.js';
@@ -141,4 +145,179 @@ test('exchange detector binds elapsed evidence to the exact message boundary', (
   assert.equal(hint.sourceMessageId, 11);
   assert.equal(hint.lineageKey, 'ln11');
   assert.equal(hint.meaningful, true);
+});
+
+function dayByDayChat(steps) {
+  // steps: [[userText, assistantText], ...]
+  return steps.flatMap(([user, assistant]) => [
+    { is_user: true, mes: user },
+    { is_user: false, mes: assistant },
+  ]);
+}
+
+function accumulate(chat, end, options = {}) {
+  return detectAccumulatedDayStepHint(chat, end, { lineage: chatLineage(chat), ...options });
+}
+
+test('narrated day steps accumulate across exchanges into one meaningful hint', () => {
+  const chat = dayByDayChat([
+    ['I help Malia load the wagon.', 'The next morning, the wagon rolls out of Farwick.'],
+    ['I scout ahead for game.', 'The following day, the track climbs toward High Ghyll.'],
+    ['I hunt at dusk.', 'The deer bolts into the pines.'],
+  ]);
+  const lineage = chatLineage(chat);
+  const hint = detectAccumulatedDayStepHint(chat, chat.length - 1, { lineage });
+  assert.equal(hint.meaningful, true);
+  assert.equal(hint.source, 'accumulated');
+  assert.equal(hint.unit, 'day');
+  assert.equal(hint.amount, ACCUMULATED_ELAPSED_LIMITS.thresholdDays);
+  assert.equal(hint.sourceMessageId, 3, 'fires on the message that completes the second day step');
+  assert.equal(hint.lineageKey, lineage[3].lineageKey);
+  assert.match(hint.context, /The next morning/);
+  assert.match(hint.context, /The following day/);
+
+  const oneStep = detectAccumulatedDayStepHint(chat, 2, { lineage });
+  assert.equal(oneStep, null, 'a single day step stays below the threshold');
+});
+
+test('one exchange contributes at most one day step', () => {
+  const chat = dayByDayChat([
+    ['The next morning, I pack up camp.', 'The next morning is grey; the next day promises rain.'],
+    ['I keep walking.', 'The road bends east.'],
+  ]);
+  assert.equal(accumulate(chat, chat.length - 1), null);
+});
+
+test('quoted, planned, hypothetical, hidden-planning and system day steps never count', () => {
+  const chat = [
+    { is_user: false, mes: 'Malia says, "We leave the next morning."' },
+    { is_user: true, mes: 'We will set out the next morning.' },
+    { is_user: false, mes: 'If the rain stops, the following day would be clear.' },
+    { is_user: true, mes: 'I wait.' },
+    { is_user: false, mes: '<writer_state>The next day: advance the beasts.</writer_state> Nothing changes.' },
+    { is_user: true, mes: 'I rest.' },
+    { is_user: false, is_system: true, mes: 'The next day arrives.' },
+    { is_user: true, mes: "I'll leave the day after tomorrow." },
+    { is_user: false, mes: 'The camp stays quiet.' },
+  ];
+  assert.equal(accumulate(chat, chat.length - 1), null);
+});
+
+test('the count restarts after the last recorded elapsed catch-up and after explicit skips', () => {
+  const chat = dayByDayChat([
+    ['I ride.', 'The next morning, fog lifts.'],
+    ['I ride on.', 'The following day, the pass opens.'],
+    ['I ride again.', 'The next morning, snow falls.'],
+    ['I camp.', 'The next day, the wind drops.'],
+  ]);
+  const last = chat.length - 1;
+  assert.equal(accumulate(chat, last).sourceMessageId, 7, 'fires again after two more steps');
+  assert.equal(accumulate(chat, last, { sinceMessageId: 3 }).sourceMessageId, 7);
+  assert.equal(accumulate(chat, last, { sinceMessageId: 5 }), null, 'only one step since the recorded catch-up');
+
+  const withSkip = dayByDayChat([
+    ['I ride.', 'The next morning, fog lifts.'],
+    ['I ride on.', 'Three days later, the caravan reaches the ford.'],
+    ['I cross.', 'The next morning, the river falls.'],
+  ]);
+  assert.equal(accumulate(withSkip, withSkip.length - 1), null, 'an explicit skip resets the count');
+});
+
+test('accumulation is deterministic across later boundaries and bounded by the lookback', () => {
+  const chat = dayByDayChat([
+    ['I ride.', 'The next morning, fog lifts.'],
+    ['I ride on.', 'The following day, the pass opens.'],
+    ['I rest.', 'Nothing moves.'],
+    ['I rest again.', 'Still nothing.'],
+  ]);
+  assert.equal(accumulate(chat, 3).sourceMessageId, 3);
+  assert.equal(accumulate(chat, chat.length - 1).sourceMessageId, 3, 'the same firing point is reported until a catch-up is recorded');
+
+  const padding = Array.from({ length: ACCUMULATED_ELAPSED_LIMITS.lookbackMessages }, (_, index) => ({ is_user: index % 2 === 0, mes: 'Talk continues.' }));
+  const old = [...chat.slice(0, 4), ...padding];
+  assert.equal(accumulate(old, old.length - 1), null, 'steps older than the lookback are ignored');
+});
+
+test('hidden rows, restated days, and dialogue never inflate the count', () => {
+  const hidden = [
+    { is_user: true, is_system: true, mes: 'The next morning I set out.' },
+    { is_user: false, mes: 'The road is empty.' },
+    { is_user: true, is_system: true, mes: 'The following day I reach the ford.' },
+    { is_user: false, mes: 'The ford is shallow.' },
+  ];
+  assert.equal(accumulate(hidden, hidden.length - 1), null, 'hidden user rows are excluded');
+
+  const restated = [
+    { is_user: true, mes: 'I sleep by the fire.' },
+    { is_user: false, mes: 'The next morning, the fog lifts over Farwick.' },
+    { is_user: true, mes: 'The next morning, I walk to the market.' },
+    { is_user: false, mes: 'Stalls open one by one.' },
+  ];
+  assert.equal(accumulate(restated, restated.length - 1), null, 'a user repeating the narrated morning is the same day');
+
+  const singleQuoted = [
+    { is_user: true, mes: 'I ask Malia about the plan.' },
+    { is_user: false, mes: "'We ride out the next morning,' Malia said." },
+    { is_user: true, mes: 'I nod.' },
+    { is_user: false, mes: "'And the following day we reach the pass,' she adds." },
+  ];
+  assert.equal(accumulate(singleQuoted, singleQuoted.length - 1), null, 'single-quoted dialogue is not narration');
+
+  const quotedThenNarrated = [
+    { is_user: true, mes: 'I say goodnight.' },
+    { is_user: false, mes: '"See you the next morning," he said. The next morning, the gate opened.' },
+    { is_user: true, mes: 'I go through the gate.' },
+    { is_user: false, mes: 'The following day, the road forks.' },
+  ];
+  assert.equal(accumulate(quotedThenNarrated, quotedThenNarrated.length - 1)?.sourceMessageId, 3, 'narration after a quoted mention still counts');
+});
+
+test('accumulated hints fail closed without lineage and are only offered while fresh', () => {
+  const chat = [
+    { is_user: true, mes: 'I ride.' },
+    { is_user: false, mes: 'The next morning, fog lifts.' },
+    { is_user: true, mes: 'I ride on.' },
+    { is_user: false, mes: 'The following day, the pass opens.' },
+    { is_user: true, mes: 'I rest.' },
+    { is_user: false, mes: 'Nothing moves.' },
+    { is_user: true, mes: 'I rest again.' },
+  ];
+  assert.equal(detectAccumulatedDayStepHint(chat, chat.length - 1), null, 'no lineage, no automatic elapsed evidence');
+  assert.equal(accumulate(chat, chat.length - 1)?.sourceMessageId, 3);
+  assert.equal(accumulate(chat, chat.length - 1, { minFiringMessageId: 4 }), null, 'a firing point outside the current exchange window is not re-offered');
+});
+
+test('continuity precedence: explicit meaningful skip wins, non-meaningful phrases never block accumulation', () => {
+  const chat = [
+    { is_user: true, mes: 'I ride.' },
+    { is_user: false, mes: 'The next morning, the wagon rolls out.' },
+    { is_user: true, mes: 'I ride on.' },
+    { is_user: false, mes: 'A day later, the pass opens. Twenty minutes later the mules rest.' },
+    { is_user: true, mes: 'I keep going.' },
+  ];
+  const lineage = chatLineage(chat);
+  const exchange = chat.map((message, messageId) => ({
+    role: message.is_user ? 'user' : 'assistant',
+    content: message.mes,
+    messageId,
+    lineageKey: lineage[messageId].lineageKey,
+  })).slice(-4);
+  const hint = resolveContinuityElapsedHint({ exchange, chat, messageId: 4, lineage });
+  assert.equal(hint?.source, 'accumulated', 'a non-meaningful "a day later" does not short-circuit accumulation');
+  assert.equal(hint.sourceMessageId, 3);
+
+  const none = resolveContinuityElapsedHint({ exchange, chat, messageId: 4, lineage, hasActiveDevelopments: false });
+  assert.equal(none?.meaningful, false, 'with nothing to evaluate the walk is skipped and the explicit hint passes through');
+
+  const explicitChat = [...chat.slice(0, 4), { is_user: true, mes: 'Three weeks later, I return to Farwick.' }];
+  const explicitLineage = chatLineage(explicitChat);
+  const explicitExchange = explicitChat.map((message, messageId) => ({
+    role: message.is_user ? 'user' : 'assistant',
+    content: message.mes,
+    messageId,
+    lineageKey: explicitLineage[messageId].lineageKey,
+  })).slice(-4);
+  const explicit = resolveContinuityElapsedHint({ exchange: explicitExchange, chat: explicitChat, messageId: 4, lineage: explicitLineage });
+  assert.equal(explicit.meaningful, true);
+  assert.notEqual(explicit.source, 'accumulated', 'an explicit meaningful skip wins');
 });

@@ -107,19 +107,19 @@ export function normalizeElapsedHint(input, defaults = {}) {
   });
 }
 
+const AMOUNT_WORD = '(\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|couple|few|several|many)(?:\\s+of)?';
+const UNIT_WORD = '(minutes?|hours?|days?|weeks?|months?|years?|terms?|semesters?|seasons?|cycles?)';
+const ELAPSED_PATTERNS = Object.freeze([
+  new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:later|afterwards?|on)\\b`, 'iu'),
+  new RegExp(`\\bafter\\s+${AMOUNT_WORD}\\s+${UNIT_WORD}\\b`, 'iu'),
+  new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:have\\s+)?passed\\b`, 'iu'),
+]);
+
 export function extractElapsedHint(textValue, defaults = {}) {
   const source = String(textValue ?? '');
   if (!source.trim()) return null;
 
-  const amountWord = '(\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|couple|few|several|many)(?:\\s+of)?';
-  const unitWord = '(minutes?|hours?|days?|weeks?|months?|years?|terms?|semesters?|seasons?|cycles?)';
-  const patterns = [
-    new RegExp(`\\b${amountWord}\\s+${unitWord}\\s+(?:later|afterwards?|on)\\b`, 'iu'),
-    new RegExp(`\\bafter\\s+${amountWord}\\s+${unitWord}\\b`, 'iu'),
-    new RegExp(`\\b${amountWord}\\s+${unitWord}\\s+(?:have\\s+)?passed\\b`, 'iu'),
-  ];
-
-  for (const pattern of patterns) {
+  for (const pattern of ELAPSED_PATTERNS) {
     const match = source.match(pattern);
     if (!match) continue;
     const amount = amountValue(match[1]);
@@ -244,4 +244,176 @@ export function detectElapsedHintFromExchange(exchange = []) {
     return { ...found, context };
   }
   return null;
+}
+
+// Accumulated day steps. Day-by-day narration ("The next morning…", "The
+// following day…") never states a meaningful span in one place, so each step
+// alone stays non-meaningful. When enough narrated day steps pile up since the
+// last recorded elapsed catch-up, they are combined into one meaningful hint.
+//
+// Firing points are a pure function of the current branch's messages: the walk
+// starts after the last persisted elapsed-evolution boundary (bounded by a
+// short lookback), counts at most one day per user->assistant exchange, treats
+// a user message that repeats the day step the narrator just gave as the same
+// day, resets after each firing and on any explicit meaningful skip, and fires
+// when the running total reaches the threshold. Nothing is stored, so swipes,
+// deletes, and branches cannot leave a stale counter behind. A firing point is
+// only offered while it is inside the current exchange window, exactly like an
+// explicit skip. Time remains permission to evaluate, never evidence of change.
+export const ACCUMULATED_ELAPSED_LIMITS = Object.freeze({
+  lookbackMessages: 40,
+  thresholdDays: 2,
+});
+
+const DAY_STEP_PATTERNS = Object.freeze([
+  /\bthe\s+(?:next|following)\s+(?:day|morning|dawn|afternoon|evening|night)\b/iu,
+  /\bnext\s+morning\b/iu,
+  /\bthe\s+(?:morning|day)\s+after\b(?!\s+tomorrow)/iu,
+  /\b(?:a|one)\s+day\s+later\b/iu,
+  /\bafter\s+(?:a|one)\s+day\b/iu,
+  /\b(?:a|one|another)\s+(?:full\s+)?day\s+(?:has\s+|had\s+)?passed\b/iu,
+]);
+
+const DAY_STEP_PROSPECTIVE = /(?:\b(?:will|would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|tomorrow|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/u;
+
+// Dialogue is removed before matching, so a spoken plan never counts and a
+// quoted first mention cannot hide real narration later in the same message.
+const QUOTED_SPANS = Object.freeze([
+  /"[^"\n]{0,600}"/gu,
+  /“[^”\n]{0,600}”/gu,
+  /‘[^’\n]{0,600}’/gu,
+  /(^|[\s(\[—–-])'[^'\n]{1,600}?[.,!?;:…—–-]'(?=[\s)\],.;:!?—–-]|$)/gu,
+]);
+
+function narrationOnly(source) {
+  let out = String(source || '');
+  for (const pattern of QUOTED_SPANS) out = out.replace(pattern, (match, lead) => (typeof lead === 'string' ? lead : '') + ' ');
+  return out;
+}
+
+function narratedDayStep(source) {
+  const narration = narrationOnly(source);
+  for (const pattern of DAY_STEP_PATTERNS) {
+    const match = narration.match(pattern);
+    if (!match) continue;
+    const context = sentenceAround(narration, match[0]);
+    const normalized = context.toLocaleLowerCase();
+    if (DAY_STEP_PROSPECTIVE.test(normalized)) continue;
+    if (/\bif\b/u.test(normalized)) continue;
+    return { phrase: match[0], context };
+  }
+  return null;
+}
+
+function explicitMeaningfulSkip(source) {
+  const found = extractElapsedHint(source);
+  if (!found?.meaningful) return false;
+  return Boolean(establishedElapsedContext(source, found));
+}
+
+// Hidden SillyTavern rows carry is_system even when is_user is true.
+function walkRole(message) {
+  if (message?.is_system === true) return 'system';
+  return messageRole(message);
+}
+
+export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
+  sinceMessageId = -1,
+  lineage = null,
+  minFiringMessageId = -1,
+  lookbackMessages = ACCUMULATED_ELAPSED_LIMITS.lookbackMessages,
+  thresholdDays = ACCUMULATED_ELAPSED_LIMITS.thresholdDays,
+} = {}) {
+  const rows = Array.isArray(chat) ? chat : [];
+  if (!Number.isInteger(endMessageId) || endMessageId < 0 || endMessageId >= rows.length) return null;
+  const lookback = Math.max(1, Math.min(200, Math.trunc(Number(lookbackMessages)) || ACCUMULATED_ELAPSED_LIMITS.lookbackMessages));
+  const threshold = Math.max(2, Math.trunc(Number(thresholdDays)) || ACCUMULATED_ELAPSED_LIMITS.thresholdDays);
+  const since = Number.isInteger(sinceMessageId) ? sinceMessageId : -1;
+  const start = Math.max(0, since + 1, endMessageId - lookback + 1);
+
+  let steps = [];
+  let fired = null;
+  let exchangeCounted = false;
+  let previousRole = '';
+  let previousAssistantHadStep = false;
+
+  for (let messageId = start; messageId <= endMessageId; messageId += 1) {
+    const raw = rows[messageId];
+    const role = walkRole(raw);
+    if (role === 'system') continue;
+    if (role === 'user' && previousRole === 'assistant') exchangeCounted = false;
+    const followsAssistantStep = role === 'user' && previousRole === 'assistant' && previousAssistantHadStep;
+    previousRole = role;
+
+    const source = messageText(sanitizeExchangeMessage({ ...raw, messageId }));
+    if (role === 'assistant') previousAssistantHadStep = false;
+    if (!source.trim()) continue;
+
+    if (explicitMeaningfulSkip(source)) {
+      // The explicit detector owns this skip; restart the count after it.
+      steps = [];
+      fired = null;
+      exchangeCounted = true;
+      continue;
+    }
+
+    const step = narratedDayStep(source);
+    if (!step) continue;
+    if (role === 'assistant') previousAssistantHadStep = true;
+    if (followsAssistantStep) {
+      // The user is acting on the day the narrator just opened, not a new one.
+      exchangeCounted = true;
+      continue;
+    }
+    if (exchangeCounted) continue;
+    exchangeCounted = true;
+    steps.push({ messageId, ...step });
+    if (steps.length >= threshold) {
+      fired = { messageId, steps };
+      steps = [];
+    }
+  }
+
+  if (!fired || fired.messageId < minFiringMessageId) return null;
+  const lineageKey = Array.isArray(lineage) && typeof lineage[fired.messageId]?.lineageKey === 'string'
+    ? lineage[fired.messageId].lineageKey
+    : '';
+  // Automatic elapsed evidence must stay traceable to raw-message lineage.
+  if (!lineageKey) return null;
+  return hint(`${fired.steps.length} narrated day steps`, {
+    amount: fired.steps.length,
+    unit: 'day',
+    meaningful: true,
+    sourceMessageId: fired.messageId,
+    lineageKey,
+    source: 'accumulated',
+    context: fired.steps.map(step => step.context).join(' … '),
+  });
+}
+
+// Continuity-boundary precedence: an explicit meaningful skip in the current
+// exchange wins; otherwise accumulated day steps may supply one; a
+// non-meaningful explicit phrase ("an hour later") never blocks accumulation.
+export function resolveContinuityElapsedHint({
+  exchange = [],
+  chat = [],
+  messageId = null,
+  sinceMessageId = -1,
+  lineage = null,
+  hasActiveDevelopments = true,
+} = {}) {
+  const explicit = detectElapsedHintFromExchange(exchange);
+  if (explicit?.meaningful) return explicit;
+  if (hasActiveDevelopments) {
+    const window = (Array.isArray(exchange) ? exchange : [])
+      .map(row => row?.messageId)
+      .filter(Number.isInteger);
+    const accumulated = detectAccumulatedDayStepHint(chat, messageId, {
+      sinceMessageId,
+      lineage,
+      minFiringMessageId: window.length ? Math.min(...window) : messageId,
+    });
+    if (accumulated) return accumulated;
+  }
+  return explicit || null;
 }

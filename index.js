@@ -10,7 +10,7 @@ import {
 import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintMessage, rebaseLineageMetadata, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { createDiagnosticStore } from './diagnostics.js';
-import { detectElapsedHintFromExchange } from './elapsed.js';
+import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
 import { stableStringify } from './hash.js';
 import { buildWorldStateChatKey, getWorldStateChatIdentity, getWorldStateChatKey, parseWorldStateChatKey } from './host-identity.js';
@@ -41,7 +41,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.31';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.32';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -2086,9 +2086,19 @@ async function handleUserMessage(messageId) {
     const currentState = stateCache.get(chatKey);
     const exchange = boundedExchange(liveChat, messageId, CAPTURE_LIMITS.exchangeMessages, currentState?.lineage);
     const sourceLineageKey = currentState?.lineage?.[messageId]?.lineageKey || '';
-    const elapsedHint = detectElapsedHintFromExchange(exchange);
     const before = stateCache.get(chatKey);
     const index = getRelevanceIndex(chatKey, before);
+    // An explicit meaningful skip ("two days later") wins; otherwise narrated
+    // day steps since the last recorded elapsed catch-up may add up to one.
+    const elapsedHint = resolveContinuityElapsedHint({
+      exchange,
+      chat: liveChat,
+      messageId,
+      sinceMessageId: Number.isInteger(index?.elapsedEvidenceBoundary) ? index.elapsedEvidenceBoundary : -1,
+      // Saved lineage only: without it the detector fails closed (no chat scan).
+      lineage: before?.lineage,
+      hasActiveDevelopments: Boolean(index?.backgroundDevelopmentSet?.size),
+    });
     const isCurrent = operationGuard(chatKey, messageId);
 
     const prepared = await prepareWorldStateContinuity({

@@ -12,7 +12,8 @@ import {
   processEvolutionResponse,
   runLazyEvolution,
 } from '../evolution.js';
-import { buildRelevanceIndex, selectBackgroundDevelopments } from '../relevance.js';
+import { buildRelevanceIndex, latestElapsedEvolutionBoundary, selectBackgroundDevelopments } from '../relevance.js';
+import { detectAccumulatedDayStepHint } from '../elapsed.js';
 import { createState, reduceMutations } from '../state-core.js';
 
 function withLineage(chat) {
@@ -1317,4 +1318,61 @@ test('evolution mutation is reversible through the same branch journal contract'
   assert.equal(rolled.failClosed, false);
   assert.equal(rolled.state.records[0].summary, 'The freight dispute is active.');
   assert.equal(rolled.state.records[0].lastEvaluatedMessage, 0);
+});
+
+test('accumulated day steps wake background catch-up for an unrelated development, then reset', async () => {
+  const seeded = seedDevelopments('accumulated-days', [
+    { summary: 'Men claiming ditch-watch authority are extorting alley vendors in Farwick.', anchors: ['Farwick', 'ditch watch'] },
+  ]);
+  const chat = [
+    ...seeded.chat,
+    { role: 'user', content: 'I leave Farwick with the wagon.' },
+    { role: 'assistant', content: 'The next morning, the wagon climbs into the hills.' },
+    { role: 'user', content: 'I hunt for deer.' },
+    { role: 'assistant', content: 'The following day, a stag crosses the ridge.' },
+    { role: 'user', content: 'I track the stag.' },
+  ];
+  const exchange = withLineage(chat);
+  const current = exchange.length - 1;
+  const lineage = exchange.map(message => ({ lineageKey: message.lineageKey }));
+
+  const hint = detectAccumulatedDayStepHint(exchange, current, {
+    sinceMessageId: latestElapsedEvolutionBoundary(seeded.state),
+    lineage,
+  });
+  assert.equal(hint?.meaningful, true);
+  assert.equal(hint.sourceMessageId, 4);
+
+  const recordId = seeded.state.records[0].id;
+  const response = JSON.stringify({
+    evaluations: [{ recordId, outcome: 'stable', reason: 'Two days pass without evidence of change.', supportIds: ['t0'] }],
+    derived: [],
+  });
+  const calls = { count: 0 };
+  const index = buildRelevanceIndex(seeded.state);
+  assert.equal(index.elapsedEvidenceBoundary, -1);
+  const result = await prepareWorldStateContinuity({
+    ctx: provider(response, calls),
+    state: seeded.state,
+    index,
+    recentText: 'I track the stag.',
+    currentMessageId: current,
+    exchange: exchange.slice(-2),
+    elapsedHint: hint,
+    chatKey: 'accumulated-days',
+    ...sourceBoundary(exchange),
+    isCurrent: () => true,
+  });
+
+  assert.equal(calls.count, 1, 'one bounded evolution call');
+  assert.equal(result.evolution.backgroundSelection.selected, 1, 'the off-scene extortion is re-checked');
+  assert.equal(result.state.records[0].status, 'active');
+  assert.equal(result.state.records[0].lastEvaluatedMessage, current, 'evaluated at the boundary where the check ran');
+  assert.equal(latestElapsedEvolutionBoundary(result.state), 4, 'the catch-up is recorded at the firing message');
+  assert.equal(index.elapsedEvidenceBoundary, 4, 'the index advances incrementally from the reducer delta, without an evidence scan');
+  assert.equal(buildRelevanceIndex(result.state).elapsedEvidenceBoundary, 4, 'a full rebuild agrees with the incremental value');
+  assert.equal(detectAccumulatedDayStepHint(exchange, current, {
+    sinceMessageId: latestElapsedEvolutionBoundary(result.state),
+    lineage,
+  }), null, 'the count restarts after the recorded catch-up');
 });
