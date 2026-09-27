@@ -7,12 +7,12 @@ import {
   saveSettings,
 } from '../../../../script.js';
 
-import { chatLineage, commitMutationBoundary, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
-import { createDiagnosticStore } from './diagnostics.js';
+import { createDiagnosticStore, mergeOperationRows } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
-import { stableStringify } from './hash.js';
+import { hashText, stableStringify } from './hash.js';
 import { buildWorldStateChatKey, getWorldStateChatIdentity, getWorldStateChatKey, parseWorldStateChatKey } from './host-identity.js';
 import { createSillyTavernWorldStateStorageAdapter } from './host-storage.js';
 import { storeBaseMapSource, loadBaseMapSource } from './host-base-map.js';
@@ -94,7 +94,11 @@ const chatCacheTouches = new Map();
 const baseMapCacheTouches = new Map();
 const pendingCharacterRenames = new Map();
 const deleteRetryTimers = new Map();
-const diagnosticStore = createDiagnosticStore({ limit: 80 });
+const OPERATION_LOG_LIMIT = 80;
+const diagnosticStore = createDiagnosticStore({
+  limit: OPERATION_LOG_LIMIT,
+  onRecord: chatKey => scheduleOperationLogSave(chatKey),
+});
 const rebuildStatuses = new Map();
 const rebuildAbortControllers = new Map();
 
@@ -129,6 +133,115 @@ const hostStorage = createSillyTavernWorldStateStorageAdapter({
   fetchFn: (...args) => globalThis.fetch(...args),
   headersFn: () => getRequestHeaders(),
 });
+
+// Operations log persistence. The log is non-canonical telemetry, so it lives
+// in its own small per-chat server file (never the World State sidecar) and is
+// written read-merge-write after a short quiet period, so reloads and other
+// devices keep it without two browsers overwriting each other's entries.
+const OPERATION_LOG_FORMAT = 'world_state_alpha_operations';
+const OPERATION_LOG_VERSION = 1;
+const OPERATION_LOG_SAVE_DELAY_MS = 1500;
+const OPERATION_LOG_TEXT_CHARS = 6000;
+const operationLogLoads = new Map();
+const operationLogTimers = new Map();
+const operationLogWrites = new Map();
+
+function operationLogFile(chatKey) {
+  return 'world-state-alpha-ops-' + hashText(String(chatKey)) + '.json';
+}
+
+async function readOperationLog(chatKey) {
+  const raw = await hostStorage.fetchJsonFile(hostStorage.deterministicPath(operationLogFile(chatKey)));
+  if (!raw || raw.format !== OPERATION_LOG_FORMAT || raw.version !== OPERATION_LOG_VERSION
+    || raw.chatKey !== chatKey || !Array.isArray(raw.operations)) return [];
+  return raw.operations;
+}
+
+function hydrateOperationLog(chatKey) {
+  if (!chatKey || chatKey === 'no-chat') return Promise.resolve();
+  if (!operationLogLoads.has(chatKey)) {
+    operationLogLoads.set(chatKey, readOperationLog(chatKey)
+      .then(rows => {
+        if (rows.length) {
+          diagnosticStore.merge(chatKey, rows);
+          if (panelChatKey === chatKey) refreshPanel();
+        }
+      })
+      .catch(error => {
+        console.warn('[World State Alpha] saved Operations log could not be loaded; new operations are still recorded.', error);
+      }));
+  }
+  return operationLogLoads.get(chatKey);
+}
+
+function queueOperationLogWrite(chatKey, task) {
+  const previous = operationLogWrites.get(chatKey) || Promise.resolve();
+  const next = previous.catch(() => {}).then(task);
+  operationLogWrites.set(chatKey, next);
+  void next.finally(() => {
+    if (operationLogWrites.get(chatKey) === next) operationLogWrites.delete(chatKey);
+  }).catch(() => {});
+  return next;
+}
+
+function operationLogBody(chatKey, operations) {
+  return {
+    format: OPERATION_LOG_FORMAT,
+    version: OPERATION_LOG_VERSION,
+    chatKey,
+    updatedAt: new Date().toISOString(),
+    operations: operations.map(row => ({
+      ...row,
+      responseJson: String(row.responseJson || '').slice(0, OPERATION_LOG_TEXT_CHARS),
+      rejectionsJson: String(row.rejectionsJson || '').slice(0, OPERATION_LOG_TEXT_CHARS),
+    })),
+  };
+}
+
+function saveOperationLog(chatKey) {
+  return queueOperationLogWrite(chatKey, async () => {
+    try {
+      await hydrateOperationLog(chatKey);
+      const server = await readOperationLog(chatKey).catch(() => []);
+      const rows = mergeOperationRows(server, diagnosticStore.records(chatKey), OPERATION_LOG_LIMIT);
+      await hostStorage.uploadJsonFile(operationLogFile(chatKey), operationLogBody(chatKey, rows));
+    } catch (error) {
+      console.warn('[World State Alpha] Operations log could not be saved; it remains available in this session.', error);
+    }
+  });
+}
+
+function scheduleOperationLogSave(chatKey) {
+  if (!hostHydrationReady || !chatKey || chatKey === 'no-chat') return;
+  clearTimeout(operationLogTimers.get(chatKey));
+  operationLogTimers.set(chatKey, setTimeout(() => {
+    operationLogTimers.delete(chatKey);
+    void saveOperationLog(chatKey);
+  }, OPERATION_LOG_SAVE_DELAY_MS));
+}
+
+// Rename carries the log to the new owner; delete leaves an empty log so a
+// later chat reusing the same identity never shows the retired history.
+function retireOperationLog(chatKey, successorKey = '') {
+  clearTimeout(operationLogTimers.get(chatKey));
+  operationLogTimers.delete(chatKey);
+  return queueOperationLogWrite(chatKey, async () => {
+    try {
+      const rows = mergeOperationRows(
+        await readOperationLog(chatKey).catch(() => []),
+        diagnosticStore.records(chatKey),
+        OPERATION_LOG_LIMIT,
+      );
+      if (successorKey && rows.length) {
+        diagnosticStore.merge(successorKey, rows);
+        scheduleOperationLogSave(successorKey);
+      }
+      await hostStorage.uploadJsonFile(operationLogFile(chatKey), operationLogBody(chatKey, []));
+    } catch (error) {
+      console.warn('[World State Alpha] retired Operations log could not be cleared.', error);
+    }
+  });
+}
 
 function notify(level, message) {
   const toast = globalThis.toastr?.[level];
@@ -287,6 +400,7 @@ function forgetCachedChat(chatKey) {
   forgetBranchContinuations(key);
   chatCacheTouches.delete(key);
   diagnosticStore.clear(key);
+  operationLogLoads.delete(key);
   rebuildStatuses.delete(key);
   return true;
 }
@@ -691,6 +805,7 @@ function clearChatRuntimeState(chatKey) {
   forgetBranchContinuations(chatKey);
   chatCacheTouches.delete(chatKey);
   diagnosticStore.clear(chatKey);
+  operationLogLoads.delete(chatKey);
   rebuildStatuses.delete(chatKey);
 }
 async function migrateWorldStateChatKey(oldKey, newKey) {
@@ -770,6 +885,7 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
   await persistCriticalHostSettings('renamed World State ownership');
 
   const wasLoaded = loadedChats.has(oldKey);
+  await retireOperationLog(oldKey, newKey);
   clearChatRuntimeState(oldKey);
   setCachedState(newKey, migrated);
   if (wasLoaded) loadedChats.add(newKey);
@@ -1119,6 +1235,7 @@ async function removeWorldStateChatOwnership(chatKey, reason = 'chat-deleted') {
   delete settings.dataFiles[chatKey];
   await persistCriticalHostSettings('retired World State ownership');
 
+  await retireOperationLog(chatKey);
   clearChatRuntimeState(chatKey);
   if (activeChatKey === chatKey) {
     activeChatKey = 'no-chat';
@@ -1907,7 +2024,7 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
       outcome: 'rebased',
       code: semanticRebase ? 'WORLD_STATE_SEMANTIC_LINEAGE_REBASE' : 'WORLD_STATE_PASSIVE_CAPTURE_REBASE',
       detail: semanticRebase
-        ? 'Preserved canonical state while rebasing ' + count + ' narration-equivalent assistant lineage rewrite' + (count === 1 ? '.' : 's.')
+        ? 'Preserved canonical state while rebasing ' + count + ' narration-equivalent or hidden/unhidden message' + (count === 1 ? '.' : 's.')
         : 'Preserved canonical state while rebasing a passively rewritten latest captured assistant boundary.',
       providerCalls: 0,
     });
@@ -2327,6 +2444,7 @@ async function activateCurrentChat() {
     }
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey) return;
+    void hydrateOperationLog(chatKey);
     await refreshChatStateFromServer(chatKey, { reason: 'chat-activation' });
     if (currentChatKey() !== chatKey) return;
     if (bootstrapRequiredChats.has(chatKey)) {
@@ -3891,6 +4009,7 @@ export async function openWorldStatePanel() {
       const chat = getContext().chat || [];
       return {
         chatMessages: chat.length,
+        earliestPartialStart: earliestPartialRebuildStart(stateCache.get(chatKey)),
         assistantBoundaries: chat.filter(message => messageRole(message) === 'assistant' && messageText(message).trim()).length,
         defaultRebuildBoundaries: REBUILD_LIMITS.maxBoundaries,
         maxRebuildBoundaries: 4096,

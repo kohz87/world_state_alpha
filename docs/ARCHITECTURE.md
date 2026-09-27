@@ -266,7 +266,8 @@ Multiple writes on the same raw message coalesce into one earliest-before -> lat
 On destructive lineage change:
 
 - compute first divergence
-- attempt exact journal rollback to divergence - 1
+- skip past rows whose change is visibility-only (hide/unhide) or narration-equivalent; the first real change is the rollback cut, and the proven prefix is rebased
+- attempt exact journal rollback to cut - 1
 - else exact checkpoint at divergence - 1
 - with no journaled mutation, the earliest on-branch checkpoint whose snapshot equals the current state proves every boundary from it onward
 - explicit known swipe sibling may restore exact sibling checkpoint: an abandoned captured suffix is parked in memory and resumes only when its lineage keys reappear on an identical base state

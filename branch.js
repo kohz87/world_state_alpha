@@ -346,19 +346,28 @@ function restoreByJournal(state, previousLineage, divergence) {
   return { state: working, headSeq: seq, targetMessageId };
 }
 
-function semanticRewritePlan(previousLineage, currentLineage) {
-  if (currentLineage.length < previousLineage.length) {
-    return { kind: 'destructive', changedMessageIds: [] };
-  }
+// SillyTavern's hide/unhide flips only `is_system`. The message still happened
+// in the story (rebuild includes hidden roleplay), so a row whose stored
+// fingerprint is reproduced by flipping that flag back is not a semantic change.
+function visibilityToggleOnly(previous, message) {
+  if (!message || typeof message !== 'object' || !previous?.fingerprint) return false;
+  return fingerprintMessage({ ...message, is_system: !message.is_system }) === previous.fingerprint;
+}
 
+// Classifies a lineage change. `firstSemantic` is the first row whose story
+// content really changed (or where the chat got shorter); rows before it that
+// differ only by narration-equivalent rewrites or hide/unhide can be rebased.
+function semanticRewritePlan(previousLineage, currentLineage, chat = []) {
+  const shared = Math.min(previousLineage.length, currentLineage.length);
   const changedMessageIds = [];
-  let semanticChange = false;
+  let firstSemantic = null;
 
-  for (let index = 0; index < previousLineage.length; index += 1) {
+  for (let index = 0; index < shared; index += 1) {
     const previous = previousLineage[index];
     const current = currentLineage[index];
     if (previous?.fingerprint === current?.fingerprint) continue;
     changedMessageIds.push(index);
+    if (visibilityToggleOnly(previous, chat[index])) continue;
 
     const previousRole = String(previous?.role || '');
     const previousNarration = String(previous?.narrationFingerprint || '');
@@ -373,11 +382,13 @@ function semanticRewritePlan(previousLineage, currentLineage) {
       continue;
     }
 
-    semanticChange = true;
+    firstSemantic = index;
+    break;
   }
 
+  if (firstSemantic === null && currentLineage.length < previousLineage.length) firstSemantic = currentLineage.length;
+  if (firstSemantic !== null) return { kind: 'destructive', changedMessageIds, firstSemantic };
   if (!changedMessageIds.length) return { kind: 'none', changedMessageIds };
-  if (semanticChange) return { kind: 'destructive', changedMessageIds };
   return { kind: 'semantic-rebase', changedMessageIds };
 }
 
@@ -399,7 +410,7 @@ export function reconcileBranch(inputState, chat, options = {}) {
     };
   }
 
-  const semanticPlan = semanticRewritePlan(previousLineage, currentLineage);
+  const semanticPlan = semanticRewritePlan(previousLineage, currentLineage, Array.isArray(chat) ? chat : []);
   if (semanticPlan.kind === 'semantic-rebase') {
     const rebasedPrefix = rebaseLineageMetadata(
       state,
@@ -422,8 +433,11 @@ export function reconcileBranch(inputState, chat, options = {}) {
     };
   }
 
-  const targetMessageId = divergence - 1;
-  const journalRestore = restoreByJournal(state, previousLineage, divergence);
+  // Roll back only from the first real change. Visibility-only or
+  // narration-equivalent rows before it keep their state and are rebased.
+  const cut = Math.max(divergence, Number.isInteger(semanticPlan.firstSemantic) ? semanticPlan.firstSemantic : divergence);
+  const targetMessageId = cut - 1;
+  const journalRestore = restoreByJournal(state, previousLineage, cut);
   let restored = null;
   let action = '';
 
@@ -431,7 +445,7 @@ export function reconcileBranch(inputState, chat, options = {}) {
     restored = journalRestore.state;
     action = 'rollback-journal';
   } else {
-    const checkpoint = exactCheckpoint(state, currentLineage, targetMessageId);
+    const checkpoint = exactCheckpoint(state, previousLineage, targetMessageId);
     if (checkpoint) {
       restored = restoreCheckpoint(state, checkpoint.snapshot);
       action = 'exact-checkpoint';
@@ -441,26 +455,30 @@ export function reconcileBranch(inputState, chat, options = {}) {
   if (!restored) {
     state.recoveryRequired = {
       reason: 'exact-boundary-unavailable',
-      divergence,
+      divergence: cut,
       targetMessageId,
     };
     return {
       state,
-      divergence,
+      divergence: cut,
       action: 'fail-closed',
       exactRestored: false,
       failClosed: true,
     };
   }
 
-  restored.rollbackJournal = state.rollbackJournal.filter(entry => entry.messageId < divergence);
+  restored.rollbackJournal = state.rollbackJournal.filter(entry => entry.messageId < cut);
   const retainedSeqs = new Set(restored.rollbackJournal.map(entry => entry.seq));
   const lastEntry = restored.rollbackJournal.at(-1) || null;
   restored.rollbackHead = lastEntry
     ? { seq: lastEntry.seq, messageId: lastEntry.messageId, lineageKey: lastEntry.lineageKey }
     : null;
   if (restored.rollbackHead && !retainedSeqs.has(restored.rollbackHead.seq)) restored.rollbackHead = null;
-  restored.checkpoints = state.checkpoints.filter(item => item.messageId < divergence);
+  restored.checkpoints = state.checkpoints.filter(item => item.messageId < cut);
+  if (cut > divergence) {
+    restored.lineage = previousLineage.slice(0, cut);
+    restored = rebaseLineageMetadata(restored, previousLineage.slice(0, cut), currentLineage.slice(0, cut));
+  }
   restored.lineage = currentLineage;
   restored.recoveryRequired = null;
   trimJournal(restored, options.maxJournalEntries);
@@ -468,11 +486,19 @@ export function reconcileBranch(inputState, chat, options = {}) {
 
   return {
     state: normalizeState(restored),
-    divergence,
+    divergence: cut,
     action,
     exactRestored: true,
     failClosed: false,
   };
+}
+
+// First message a partial rebuild can start from: the journal proves every
+// boundary at or after its floor (it keeps the most recent entries only).
+// Earlier starts need Full chat.
+export function earliestPartialRebuildStart(inputState) {
+  const floor = Number.isInteger(inputState?.rollbackJournalFloorMessageId) ? inputState.rollbackJournalFloorMessageId : -1;
+  return Math.max(1, floor + 1);
 }
 
 export function seedRootCheckpoint(inputState) {

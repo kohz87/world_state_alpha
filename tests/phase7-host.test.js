@@ -1130,3 +1130,17 @@ test('a local tail delete or regenerate rolls back instead of being mistaken for
   const behindAt = body.indexOf("action: 'host-chat-behind'");
   assert.ok(behindAt >= 0 && body.indexOf('reconcileBranch(') > behindAt);
 });
+
+test('the Operations log is kept in its own per-chat server file, merged on save and carried across rename', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  assert.match(source, /createDiagnosticStore\(\{\s*limit: OPERATION_LOG_LIMIT,\s*onRecord: chatKey => scheduleOperationLogSave\(chatKey\),\s*\}\)/);
+  assert.match(source, /return 'world-state-alpha-ops-' \+ hashText\(String\(chatKey\)\) \+ '\.json';/);
+  assert.match(source, /raw\.format !== OPERATION_LOG_FORMAT[\s\S]{0,120}raw\.chatKey !== chatKey/);
+  assert.match(source, /const server = await readOperationLog\(chatKey\)\.catch\(\(\) => \[\]\);\s*const rows = mergeOperationRows\(server, diagnosticStore\.records\(chatKey\), OPERATION_LOG_LIMIT\);/);
+  assert.match(source, /void hydrateOperationLog\(chatKey\);\s*await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation' \}\);/);
+  assert.match(source, /await retireOperationLog\(oldKey, newKey\);\s*clearChatRuntimeState\(oldKey\);/);
+  assert.match(source, /await retireOperationLog\(chatKey\);\s*clearChatRuntimeState\(chatKey\);/);
+  // Operation telemetry never enters the canonical sidecar payload.
+  const storage = fs.readFileSync('storage.js', 'utf8');
+  assert.doesNotMatch(storage, /diagnostic|operations/i);
+});

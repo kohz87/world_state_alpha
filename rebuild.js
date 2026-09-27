@@ -1,4 +1,4 @@
-import { chatLineage, commitMutationBoundary, reconcileBranch, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
@@ -434,7 +434,9 @@ export async function runManualRebuild({
         failedBoundary: plan.metrics.startMessageId,
         receipts: [],
         errorCode: 'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE',
-        errorMessage: 'Exact canonical state before the selected start message is unavailable. Use Full chat or choose a later proven boundary.',
+        errorMessage: 'The exact World State before message ' + plan.metrics.startMessageId
+          + ' is no longer stored (only the most recent changes are kept). Start from message '
+          + earliestPartialRebuildStart(original) + ' or later, or use Full chat.',
       };
     }
     candidate = normalizeState(clone(restored.state), { strictSchema: true, chatKey: owner });

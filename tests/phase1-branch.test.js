@@ -361,8 +361,14 @@ test('passive capture rebase refuses to mask a second changed owned message', ()
   const reconciled = reconcileBranch(state, changed, {
     passiveCaptureMessageId: 0,
   });
+  // The edited user turn is a real change and rolls back from there; the
+  // narration-equivalent captured reply before it keeps its state and is rebased.
   assert.notEqual(reconciled.action, 'passive-capture-rebase');
-  assert.equal(reconciled.state.records.length, 0);
+  assert.equal(reconciled.action, 'rollback-journal');
+  assert.equal(reconciled.divergence, 1);
+  assert.deepEqual(reconciled.state.records.map(record => record.summary), ['The bridge is closed.']);
+  assert.deepEqual(reconciled.state.lineage.map(item => item.lineageKey), chatLineage(changed).map(item => item.lineageKey));
+  assert.ok(reconciled.state.checkpoints.every(item => item.messageId < 0 || item.lineageKey === chatLineage(changed)[item.messageId].lineageKey));
 });
 
 test('passive capture rebase refuses a silent semantic rewrite of the captured assistant boundary', () => {
@@ -557,7 +563,7 @@ test('a parked branch never resumes onto a changed base or different messages', 
   assert.equal(parkAbandonedBranch(toB.state, reconcileBranch(toB.state, swipeB)), null);
 });
 
-test('randomized swipe/delete/regenerate/evolution sequences match a from-scratch replay and never fail closed', () => {
+test('randomized swipe/delete/regenerate/evolution/hide sequences match a from-scratch replay and never fail closed', () => {
   const worldChange = (prefix, content, kind, modulus) => {
     let hash = 0;
     for (const char of prefix + content) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
@@ -576,7 +582,9 @@ test('randomized swipe/delete/regenerate/evolution sequences match a from-scratc
     if (reason === 'capture') reduced.lastCaptureMessage = messageId;
     return commitMutationBoundary(state, reduced, chat, messageId, reason, { lineage: state.lineage });
   };
-  const replay = chat => {
+  const replay = liveChat => {
+    // Hidden rows still happened in the story: replay the unhidden chat.
+    const chat = liveChat.map(message => ({ ...message, is_system: false }));
     let state = seedRootCheckpoint(createState('fuzz'));
     for (let id = 0; id < chat.length; id += 1) {
       state = reconcileBranch(state, chat.slice(0, id + 1)).state;
@@ -586,8 +594,16 @@ test('randomized swipe/delete/regenerate/evolution sequences match a from-scratc
   };
 
   for (const seed of [3, 11, 29, 47]) {
-    let rng = seed;
-    const rand = n => { rng = (rng * 1103515245 + 12345) % 2147483648; return rng % n; };
+    // mulberry32: a small seeded generator whose low bits are well mixed.
+    let rng = seed >>> 0;
+    const rand = n => {
+      rng = (rng + 0x6D2B79F5) >>> 0;
+      let t = rng;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return (((t ^ (t >>> 14)) >>> 0) % n);
+    };
+    const ops = new Set();
     let chat = [];
     let state = seedRootCheckpoint(createState('fuzz'));
     let parks = [];
@@ -608,8 +624,24 @@ test('randomized swipe/delete/regenerate/evolution sequences match a from-scratc
     chat = [reply('Greeting.')];
     settle(true);
     for (let step = 0; step < 40; step += 1) {
-      const op = rand(10);
+      const op = rand(12);
+      ops.add(op);
       const last = chat.length - 1;
+      if (op >= 10) {
+        // Hide or unhide a random earlier range, then maybe swipe in the same reconcile.
+        const from = rand(chat.length);
+        const to = Math.min(chat.length - 1, from + rand(4));
+        const hide = rand(2) === 0;
+        chat = chat.map((message, index) => index >= from && index <= to ? { ...message, is_system: hide } : message);
+        if (op === 11 && chat.length > 2) chat = [...chat.slice(0, -1), reply('r' + rand(100000))];
+        settle(op === 11 && chat.length > 2);
+        const tailAfterHide = chat.length - 1;
+        const hideKey = tailAfterHide + ':' + (chatLineage(chat)[tailAfterHide - 1]?.lineageKey || 'root');
+        if (!seen.has(hideKey)) seen.set(hideKey, new Set());
+        seen.get(hideKey).add(chat[tailAfterHide].content);
+        assert.equal(summaries(state).join('|'), replay(chat), 'seed ' + seed + ' step ' + step + ' (hide)');
+        continue;
+      }
       const siblingKey = last + ':' + (chatLineage(chat)[last - 1]?.lineageKey || 'root');
       if (op < 3 || chat.length < 3) {
         chat = [...chat, user('u' + rand(50))];
@@ -635,5 +667,46 @@ test('randomized swipe/delete/regenerate/evolution sequences match a from-scratc
       seen.get(key).add(chat[tail].content);
       assert.equal(summaries(state).join('|'), replay(chat), 'seed ' + seed + ' step ' + step);
     }
+    assert.ok(ops.size >= 10, 'seed ' + seed + ' exercised ' + ops.size + ' operation kinds');
   }
+});
+
+test('hiding or unhiding messages keeps World State; a real edit alongside a hide still rolls back', () => {
+  let chat = [
+    { name: 'Sera', is_user: false, is_system: false, mes: 'Greeting.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'Go to the mill.' },
+    { name: 'Sera', is_user: false, is_system: false, mes: 'The mill burns.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'Go to the bridge.' },
+    { name: 'Sera', is_user: false, is_system: false, mes: 'The bridge falls.' },
+  ];
+  let state = seedRootCheckpoint(createState('hide'));
+  for (const id of [2, 4]) {
+    const lineageKey = chatLineage(chat.slice(0, id + 1))[id].lineageKey;
+    state = reconcileBranch(state, chat.slice(0, id + 1)).state;
+    const reduced = reduceMutations(state, {
+      chatKey: state.chatKey, messageId: id, lineageKey,
+      mutations: [{ action: 'create', kind: 'fact', summary: chat[id].mes, anchors: [chat[id].mes.split(' ')[1]] }],
+    }).state;
+    reduced.lastCaptureMessage = id;
+    state = commitMutationBoundary(state, reduced, chat.slice(0, id + 1), id, 'capture', { lineage: state.lineage });
+  }
+
+  const hideRange = ids => chat.map((message, index) => ids.includes(index) ? { ...message, is_system: true } : message);
+  for (const ids of [[1], [2], [0, 1, 2, 3]]) {
+    const hidden = reconcileBranch(state, hideRange(ids));
+    assert.equal(hidden.failClosed, false);
+    assert.equal(hidden.action, 'semantic-lineage-rebase', 'hide ' + ids.join(','));
+    assert.deepEqual(summaries(hidden.state), ['The bridge falls.', 'The mill burns.']);
+    assert.deepEqual(hidden.state.lineage.map(item => item.lineageKey), chatLineage(hideRange(ids)).map(item => item.lineageKey));
+
+    // Unhiding again is also visibility-only.
+    const unhidden = reconcileBranch(hidden.state, chat);
+    assert.equal(unhidden.action, 'semantic-lineage-rebase');
+    assert.equal(unhidden.state.records.length, 2);
+  }
+
+  const hiddenAndEdited = hideRange([1]).map((message, index) => index === 3 ? { ...message, mes: 'Go to the harbor.' } : message);
+  const edited = reconcileBranch(state, hiddenAndEdited);
+  assert.equal(edited.action, 'rollback-journal');
+  assert.deepEqual(summaries(edited.state), ['The mill burns.']);
 });

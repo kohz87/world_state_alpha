@@ -677,6 +677,7 @@ export function buildWorldStateUiModel(state, {
       actions: WORLD_STATE_UI_MAINTENANCE_ACTIONS.map(item => ({ ...item })),
       rebuild: {
         chatMessages: integer(runtimeInfo?.chatMessages) ?? 0,
+        earliestPartialStart: Math.max(1, integer(runtimeInfo?.earliestPartialStart) ?? 1),
         assistantBoundaries: integer(runtimeInfo?.assistantBoundaries) ?? 0,
         defaultMaxBoundaries: integer(runtimeInfo?.defaultRebuildBoundaries) ?? 1024,
         maxAllowedBoundaries: integer(runtimeInfo?.maxRebuildBoundaries) ?? 4096,
@@ -1481,6 +1482,9 @@ function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
       '<label class="wsa-inline-field"><span>Last N messages</span><input type="number" min="1" max="' + Math.max(1, rebuild.chatMessages) + '" value="' + lastMessages + '" data-wsa-rebuild-last></label>' +
       '<label class="wsa-radio"><input type="radio" name="wsa-rebuild-mode" value="from" data-wsa-rebuild-mode' + (mode === 'from' ? ' checked' : '') + (rebuild.bootstrapRequired ? ' disabled' : '') + '><span><strong>From message</strong><small>Fails closed if the exact prior canonical boundary is unavailable.</small></span></label>' +
       '<label class="wsa-inline-field"><span>Start message</span><input type="number" min="0" max="' + Math.max(0, rebuild.chatMessages - 1) + '" value="' + startMessageId + '" data-wsa-rebuild-start></label>' +
+      (rebuild.earliestPartialStart > 1 && !rebuild.bootstrapRequired
+        ? '<p class="wsa-muted wsa-rebuild-earliest">Last messages / From message can start at message ' + rebuild.earliestPartialStart + ' or later. Earlier starts need Full chat, because only the most recent changes are kept.</p>'
+        : '') +
       '</fieldset>' +
       '<fieldset><legend>Safety &amp; limits</legend>' +
       '<label class="wsa-radio"><input type="checkbox" data-wsa-rebuild-hidden' + (includeHiddenMessages ? ' checked' : '') + '><span><strong>Include hidden chat messages</strong><small>Virtually scans eligible hidden roleplay messages without changing chat visibility or lineage.</small></span></label>' +

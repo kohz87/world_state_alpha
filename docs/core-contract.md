@@ -178,6 +178,8 @@ On swipe/delete/edit/truncation/branch:
 - abandoned suffix mutations are removed
 - narration-equivalent rewrites of one or more previously assistant-owned messages may rebase lineage metadata without undo replay only when durable sanitized narration fingerprints prove every changed owned row semantically equivalent; raw lineage keys are still rewritten to the live branch
 - no older approximate checkpoint may substitute for a missing parent
+- SillyTavern hide/unhide flips only `is_system`; a row whose stored fingerprint is reproduced by flipping that flag back is visibility-only, not a story change, and is rebased like a narration-equivalent rewrite (hidden messages still happened; rebuild includes hidden roleplay by default)
+- when a real change and visibility-only/narration-equivalent rows are reconciled together, rollback starts at the first row whose story content really changed (or where the chat got shorter); rows before it keep their state and have their lineage metadata rebased to the live keys
 - a state with no journaled mutation is exact at a boundary only from the earliest on-branch checkpoint (including the root/import baseline) whose snapshot equals it; this lets deleting back past the first capture restore the baseline instead of failing closed
 - an abandoned captured suffix may be parked in memory; if the live branch later reproduces its exact lineage keys (same parent chain and content, e.g. swiping back to an earlier reply) while the current canonical state is identical to the base it was abandoned from, the parked branch resumes by its own exact journal/checkpoints without a provider call; parked branches are never persisted, never cross chats, and a changed base or unproven restore simply declines to resume
 - if exact recovery cannot be proven, fail closed and preserve canonical state while marking targeted rebuild/rescan need
@@ -292,7 +294,7 @@ They may record:
 - stale/cancelled/failure outcome
 - retrieval/injection counts
 
-Diagnostics never become canonical state and never store credentials, private prompts, story transcripts, transport headers, hidden/reasoning content, session identifiers, or other connection secrets. The explicit operator-only Operations inspector may retain a bounded slice of the model's extracted text response and bounded rejection JSON for debugging; this is ephemeral telemetry, never evidence/canonical authority, and is escaped before rendering.
+Diagnostics never become canonical state and never store credentials, private prompts, story transcripts, transport headers, hidden/reasoning content, session identifiers, or other connection secrets. The explicit operator-only Operations inspector may retain a bounded slice of the model's extracted text response and bounded rejection JSON for debugging; this is non-canonical telemetry, never evidence/canonical authority, and is escaped before rendering. The host keeps the last 80 sanitized operations per chat in a separate World-State-owned server file (`world-state-alpha-ops-<chat hash>.json`, response/rejection text further capped), never in the canonical sidecar. It is loaded when the chat activates, written read-merge-write after a short quiet period so sessions do not erase each other's rows, carried to the new owner on rename, and emptied on chat deletion.
 
 ## C18. Performance
 
