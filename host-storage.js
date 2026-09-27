@@ -28,6 +28,12 @@ async function withWriterLock(key, task) {
   return withInProcessWriterLock(lockName, task);
 }
 
+// Serializes read-modify-write of one World State file across tabs (Web Locks)
+// and within this page.
+export function withWorldStateFileLock(path, task) {
+  return withWriterLock(path, task);
+}
+
 function text(value) {
   return String(value ?? '').trim();
 }

@@ -4,11 +4,14 @@ import assert from 'node:assert/strict';
 import {
   chatLineage,
   commitMutationBoundary,
+  parkAbandonedBranch,
   rebaseLineageMetadata,
   reconcileBranch,
+  resumeParkedBranch,
   seedRootCheckpoint,
 } from '../branch.js';
 import { createState, reduceMutations } from '../state-core.js';
+import { exportBundle, importBundle } from '../transfer.js';
 import { buildWorldStateInjection, continuityInjectionBlocked } from '../injection.js';
 
 function apply(state, chat, mutation, options = {}) {
@@ -358,8 +361,14 @@ test('passive capture rebase refuses to mask a second changed owned message', ()
   const reconciled = reconcileBranch(state, changed, {
     passiveCaptureMessageId: 0,
   });
+  // The edited user turn is a real change and rolls back from there; the
+  // narration-equivalent captured reply before it keeps its state and is rebased.
   assert.notEqual(reconciled.action, 'passive-capture-rebase');
-  assert.equal(reconciled.state.records.length, 0);
+  assert.equal(reconciled.action, 'rollback-journal');
+  assert.equal(reconciled.divergence, 1);
+  assert.deepEqual(reconciled.state.records.map(record => record.summary), ['The bridge is closed.']);
+  assert.deepEqual(reconciled.state.lineage.map(item => item.lineageKey), chatLineage(changed).map(item => item.lineageKey));
+  assert.ok(reconciled.state.checkpoints.every(item => item.messageId < 0 || item.lineageKey === chatLineage(changed)[item.messageId].lineageKey));
 });
 
 test('passive capture rebase refuses a silent semantic rewrite of the captured assistant boundary', () => {
@@ -416,4 +425,354 @@ test('cosmetic character-name rewrite can rebase branch ownership without rollin
   assert.equal(reconciled.action, 'same');
   assert.equal(reconciled.state.records.length, 1);
   assert.equal(reconciled.state.records[0].summary, 'The East Gate is collapsed.');
+});
+
+// Host-shaped capture: every capture marks its boundary (lastCaptureMessage),
+// with or without a world change, exactly like runCaptureOperation.
+function captureAt(state, chat, messageId, summary = '') {
+  const reconciled = reconcileBranch(state, chat);
+  assert.equal(reconciled.failClosed, false, 'capture boundary must reconcile');
+  const before = reconciled.state;
+  const lineageKey = before.lineage[messageId].lineageKey;
+  const reduced = summary
+    ? reduceMutations(before, {
+      chatKey: before.chatKey,
+      messageId,
+      lineageKey,
+      mutations: [{ action: 'create', kind: 'fact', summary, anchors: [summary.split(' ')[1] || 'anchor'] }],
+    }).state
+    : structuredClone(before);
+  reduced.lastCaptureMessage = messageId;
+  return commitMutationBoundary(before, reduced, chat, messageId, 'capture', { lineage: before.lineage });
+}
+
+const user = content => ({ role: 'user', is_user: true, content });
+const reply = content => ({ role: 'assistant', is_user: false, content });
+const summaries = state => state.records.map(record => record.summary).sort();
+
+test('deleting back past the first capture restores the pre-capture state instead of failing closed', () => {
+  let chat = [reply('Greeting.'), user('Hello.'), reply('The mill burns.')];
+  let state = seedRootCheckpoint(createState('delete-to-greeting'));
+  state = captureAt(state, chat, 2, 'The mill is burning.');
+  chat = [...chat, user('Run.'), reply('The bridge falls.')];
+  state = captureAt(state, chat, 4, 'The bridge is down.');
+
+  const reconciled = reconcileBranch(state, chat.slice(0, 1));
+  assert.equal(reconciled.failClosed, false);
+  assert.equal(reconciled.action, 'rollback-journal');
+  assert.deepEqual(reconciled.state.records, []);
+  assert.equal(reconciled.state.lastCaptureMessage, null);
+
+  // Branching again from the greeting keeps working.
+  const regrown = [reply('Greeting.'), user('Wave.'), reply('The inn opens.')];
+  const next = captureAt(reconciled.state, regrown, 2, 'The inn is open.');
+  assert.deepEqual(summaries(next), ['The inn is open.']);
+});
+
+test('an imported baseline stays exact when the chat is cut back before its first capture', () => {
+  const source = captureAt(seedRootCheckpoint(createState('source')), [reply('The harbor closes.')], 0, 'The harbor is closed.');
+  let state = seedRootCheckpoint(importBundle(exportBundle(source), { targetChatKey: 'imported' }));
+  assert.equal(state.lineage.length, 0);
+
+  let chat = [reply('Greeting.'), user('Look.'), reply('Gulls.'), user('Walk.'), reply('The tower cracks.')];
+  state = captureAt(state, chat, 4, 'The tower is cracked.');
+  const reconciled = reconcileBranch(state, chat.slice(0, 2));
+  assert.equal(reconciled.failClosed, false);
+  assert.deepEqual(summaries(reconciled.state), ['The harbor is closed.']);
+});
+
+test('an unjournaled state change without a matching checkpoint still fails closed', () => {
+  const chat = [reply('Greeting.'), user('Look.'), reply('Gulls.')];
+  let state = seedRootCheckpoint(createState('unjournaled'));
+  state.lineage = chatLineage(chat);
+  state = reduceMutations(state, {
+    chatKey: state.chatKey,
+    messageId: 2,
+    lineageKey: state.lineage[2].lineageKey,
+    mutations: [{ action: 'create', kind: 'fact', summary: 'An unproven change.', anchors: ['unproven'] }],
+  }).state;
+  assert.equal(state.rollbackJournal.length, 0);
+
+  const reconciled = reconcileBranch(state, [...chat.slice(0, 2), reply('Crows.')]);
+  assert.equal(reconciled.failClosed, true);
+});
+
+test('swiping back to a captured reply resumes its exact parked state without a new capture', () => {
+  const prefix = [reply('Greeting.'), user('Hello.'), reply('Rain.'), user('Go to town.')];
+  let state = seedRootCheckpoint(createState('swipe-back'));
+  state = captureAt(state, prefix.slice(0, 3), 2, 'Rain floods the road.');
+
+  const swipeA = [...prefix, reply('Guards demand a toll.')];
+  state = captureAt(state, swipeA, 4, 'Guards levy a toll.');
+  const stateA = state;
+
+  const swipeB = [...prefix, reply('The gate is empty.')];
+  const toB = reconcileBranch(state, swipeB);
+  assert.equal(toB.action, 'rollback-journal');
+  const parkA = parkAbandonedBranch(stateA, toB);
+  assert.ok(parkA, 'the abandoned captured swipe is parked');
+  assert.equal(parkA.baseMessageId, 3);
+  assert.ok(parkA.state.checkpoints.every(item => item.messageId > 3));
+  const stateB = captureAt(toB.state, swipeB, 4, 'The gate is unguarded.');
+
+  const backToA = reconcileBranch(stateB, swipeA);
+  const parkB = parkAbandonedBranch(stateB, backToA);
+  const resumed = resumeParkedBranch(backToA.state, swipeA, [parkA, parkB]);
+  assert.ok(resumed, 'the parked branch resumes');
+  assert.equal(resumed.parkIndex, 0);
+  assert.deepEqual(summaries(resumed.state), summaries(stateA));
+  assert.equal(resumed.state.lastCaptureMessage, 4);
+  assert.ok(resumed.state.rollbackJournalSequence >= stateB.rollbackJournalSequence);
+  assert.ok(resumed.state.checkpoints.some(item => item.messageId === -1), 'root checkpoint is merged back');
+
+  // The resumed branch still rolls back exactly.
+  const swipeC = [...prefix, reply('Fog.')];
+  const toC = reconcileBranch(resumed.state, swipeC);
+  assert.equal(toC.failClosed, false);
+  assert.deepEqual(summaries(toC.state), ['Rain floods the road.']);
+  assert.equal(toC.state.lastCaptureMessage, 2);
+});
+
+test('a parked branch never resumes onto a changed base or different messages', () => {
+  const prefix = [reply('Greeting.'), user('Hello.'), reply('Rain.'), user('Go to town.')];
+  let state = seedRootCheckpoint(createState('park-guard'));
+  state = captureAt(state, prefix.slice(0, 3), 2, 'Rain floods the road.');
+  const swipeA = [...prefix, reply('Guards demand a toll.')];
+  state = captureAt(state, swipeA, 4, 'Guards levy a toll.');
+
+  const swipeB = [...prefix, reply('The gate is empty.')];
+  const toB = reconcileBranch(state, swipeB);
+  const parkA = parkAbandonedBranch(state, toB);
+
+  // Different content at the parked position: no resume.
+  assert.equal(resumeParkedBranch(toB.state, swipeB, [parkA]), null);
+
+  // Same messages, but the base changed after the rollback (for example an
+  // evolution commit at the user boundary): no resume.
+  const changedBase = reduceMutations(toB.state, {
+    chatKey: toB.state.chatKey,
+    messageId: 3,
+    lineageKey: toB.state.lineage[3].lineageKey,
+    mutations: [{ action: 'create', kind: 'development', summary: 'Floodwater keeps rising.', anchors: ['floodwater'] }],
+  }).state;
+  const committed = commitMutationBoundary(toB.state, changedBase, swipeB, 3, 'evolution', { lineage: toB.state.lineage });
+  const backToA = reconcileBranch(committed, swipeA);
+  assert.equal(resumeParkedBranch(backToA.state, swipeA, [parkA]), null);
+
+  // No park for a rollback that changed nothing.
+  assert.equal(parkAbandonedBranch(toB.state, reconcileBranch(toB.state, swipeB)), null);
+});
+
+test('randomized swipe/delete/regenerate/evolution/hide sequences match a from-scratch replay and never fail closed', () => {
+  const worldChange = (prefix, content, kind, modulus) => {
+    let hash = 0;
+    for (const char of prefix + content) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    return hash % modulus === 0 ? null : { action: 'create', kind, summary: prefix + ' ' + content, anchors: ['a' + content] };
+  };
+  const commitAt = (state, chat, messageId, reason) => {
+    const content = chat[messageId].content;
+    const mutation = reason === 'capture'
+      ? worldChange('Fact', content, 'fact', 3)
+      : worldChange('Trend', content, 'development', 2);
+    if (reason === 'capture' && state.lastCaptureMessage === messageId) return state;
+    if (reason === 'evolution' && !mutation) return state;
+    const reduced = mutation
+      ? reduceMutations(state, { chatKey: state.chatKey, messageId, lineageKey: state.lineage[messageId].lineageKey, mutations: [mutation] }).state
+      : structuredClone(state);
+    if (reason === 'capture') reduced.lastCaptureMessage = messageId;
+    return commitMutationBoundary(state, reduced, chat, messageId, reason, { lineage: state.lineage });
+  };
+  const replay = liveChat => {
+    // Hidden rows still happened in the story: replay the unhidden chat.
+    const chat = liveChat.map(message => ({ ...message, is_system: false }));
+    let state = seedRootCheckpoint(createState('fuzz'));
+    for (let id = 0; id < chat.length; id += 1) {
+      state = reconcileBranch(state, chat.slice(0, id + 1)).state;
+      state = commitAt(state, chat.slice(0, id + 1), id, chat[id].role === 'user' ? 'evolution' : 'capture');
+    }
+    return summaries(state).join('|');
+  };
+
+  for (const seed of [3, 11, 29, 47]) {
+    // mulberry32: a small seeded generator whose low bits are well mixed.
+    let rng = seed >>> 0;
+    const rand = n => {
+      rng = (rng + 0x6D2B79F5) >>> 0;
+      let t = rng;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return (((t ^ (t >>> 14)) >>> 0) % n);
+    };
+    const ops = new Set();
+    let chat = [];
+    let state = seedRootCheckpoint(createState('fuzz'));
+    let parks = [];
+    const seen = new Map();
+    const settle = captureLatest => {
+      const reconciled = reconcileBranch(state, chat);
+      assert.equal(reconciled.failClosed, false, 'seed ' + seed + ' failed closed');
+      const park = parkAbandonedBranch(state, reconciled);
+      state = reconciled.state;
+      const resumed = resumeParkedBranch(state, chat, parks);
+      if (resumed) {
+        state = resumed.state;
+        parks.splice(resumed.parkIndex, 1);
+      }
+      if (park) parks = [...parks, park].slice(-8);
+      if (captureLatest && chat.length) state = commitAt(state, chat, chat.length - 1, 'capture');
+    };
+    chat = [reply('Greeting.')];
+    settle(true);
+    for (let step = 0; step < 40; step += 1) {
+      const op = rand(12);
+      ops.add(op);
+      const last = chat.length - 1;
+      if (op >= 10) {
+        // Hide or unhide a random earlier range, then maybe swipe in the same reconcile.
+        const from = rand(chat.length);
+        const to = Math.min(chat.length - 1, from + rand(4));
+        const hide = rand(2) === 0;
+        chat = chat.map((message, index) => index >= from && index <= to ? { ...message, is_system: hide } : message);
+        if (op === 11 && chat.length > 2) chat = [...chat.slice(0, -1), reply('r' + rand(100000))];
+        settle(op === 11 && chat.length > 2);
+        const tailAfterHide = chat.length - 1;
+        const hideKey = tailAfterHide + ':' + (chatLineage(chat)[tailAfterHide - 1]?.lineageKey || 'root');
+        if (!seen.has(hideKey)) seen.set(hideKey, new Set());
+        seen.get(hideKey).add(chat[tailAfterHide].content);
+        assert.equal(summaries(state).join('|'), replay(chat), 'seed ' + seed + ' step ' + step + ' (hide)');
+        continue;
+      }
+      const siblingKey = last + ':' + (chatLineage(chat)[last - 1]?.lineageKey || 'root');
+      if (op < 3 || chat.length < 3) {
+        chat = [...chat, user('u' + rand(50))];
+        settle(false);
+        state = commitAt(state, chat, chat.length - 1, 'evolution');
+        chat = [...chat, reply('r' + rand(100000))];
+        settle(true);
+      } else if (op < 5 || op === 9) {
+        chat = [...chat.slice(0, -1), reply('r' + rand(100000))];
+        settle(true);
+      } else if (op < 7) {
+        const siblings = [...(seen.get(siblingKey) || [])];
+        if (!siblings.length) continue;
+        chat = [...chat.slice(0, -1), reply(siblings[rand(siblings.length)])];
+        settle(true);
+      } else {
+        chat = chat.slice(0, Math.max(1, chat.length - 2 * (1 + rand(2))));
+        settle(false);
+      }
+      const tail = chat.length - 1;
+      const key = tail + ':' + (chatLineage(chat)[tail - 1]?.lineageKey || 'root');
+      if (!seen.has(key)) seen.set(key, new Set());
+      seen.get(key).add(chat[tail].content);
+      assert.equal(summaries(state).join('|'), replay(chat), 'seed ' + seed + ' step ' + step);
+    }
+    assert.ok(ops.size >= 10, 'seed ' + seed + ' exercised ' + ops.size + ' operation kinds');
+  }
+});
+
+test('hiding or unhiding messages keeps World State; a real edit alongside a hide still rolls back', () => {
+  let chat = [
+    { name: 'Sera', is_user: false, is_system: false, mes: 'Greeting.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'Go to the mill.' },
+    { name: 'Sera', is_user: false, is_system: false, mes: 'The mill burns.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'Go to the bridge.' },
+    { name: 'Sera', is_user: false, is_system: false, mes: 'The bridge falls.' },
+  ];
+  let state = seedRootCheckpoint(createState('hide'));
+  for (const id of [2, 4]) {
+    const lineageKey = chatLineage(chat.slice(0, id + 1))[id].lineageKey;
+    state = reconcileBranch(state, chat.slice(0, id + 1)).state;
+    const reduced = reduceMutations(state, {
+      chatKey: state.chatKey, messageId: id, lineageKey,
+      mutations: [{ action: 'create', kind: 'fact', summary: chat[id].mes, anchors: [chat[id].mes.split(' ')[1]] }],
+    }).state;
+    reduced.lastCaptureMessage = id;
+    state = commitMutationBoundary(state, reduced, chat.slice(0, id + 1), id, 'capture', { lineage: state.lineage });
+  }
+
+  const hideRange = ids => chat.map((message, index) => ids.includes(index) ? { ...message, is_system: true } : message);
+  for (const ids of [[1], [2], [0, 1, 2, 3]]) {
+    const hidden = reconcileBranch(state, hideRange(ids));
+    assert.equal(hidden.failClosed, false);
+    assert.equal(hidden.action, 'semantic-lineage-rebase', 'hide ' + ids.join(','));
+    assert.deepEqual(summaries(hidden.state), ['The bridge falls.', 'The mill burns.']);
+    assert.deepEqual(hidden.state.lineage.map(item => item.lineageKey), chatLineage(hideRange(ids)).map(item => item.lineageKey));
+
+    // Unhiding again is also visibility-only.
+    const unhidden = reconcileBranch(hidden.state, chat);
+    assert.equal(unhidden.action, 'semantic-lineage-rebase');
+    assert.equal(unhidden.state.records.length, 2);
+  }
+
+  const hiddenAndEdited = hideRange([1]).map((message, index) => index === 3 ? { ...message, mes: 'Go to the harbor.' } : message);
+  const edited = reconcileBranch(state, hiddenAndEdited);
+  assert.equal(edited.action, 'rollback-journal');
+  assert.deepEqual(summaries(edited.state), ['The mill burns.']);
+});
+
+test('a swipe reconciled together with a hide parks a branch that still resumes on swipe-back', () => {
+  const base = [
+    { name: 'Sera', is_user: false, is_system: false, mes: 'Greeting.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'Go to the mill.' },
+    { name: 'Sera', is_user: false, is_system: false, mes: 'The mill burns.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'Go to the gate.' },
+  ];
+  const withReply = (chat, mes) => [...chat, { name: 'Sera', is_user: false, is_system: false, mes }];
+  const capture = (state, chat, id) => {
+    const reconciled = reconcileBranch(state, chat).state;
+    const reduced = reduceMutations(reconciled, {
+      chatKey: reconciled.chatKey, messageId: id, lineageKey: reconciled.lineage[id].lineageKey,
+      mutations: [{ action: 'create', kind: 'fact', summary: chat[id].mes, anchors: [chat[id].mes.split(' ')[1]] }],
+    }).state;
+    reduced.lastCaptureMessage = id;
+    return commitMutationBoundary(reconciled, reduced, chat, id, 'capture', { lineage: reconciled.lineage });
+  };
+  let state = capture(seedRootCheckpoint(createState('hide-park')), base.slice(0, 3), 2);
+  const replyA = withReply(base, 'The gate is barred.');
+  state = capture(state, replyA, 4);
+  const stateA = state;
+
+  // /hide 1 fires no event; the next swipe reconciles both at once.
+  const hidden = base.map((message, index) => index === 1 ? { ...message, is_system: true } : message);
+  const toB = reconcileBranch(stateA, withReply(hidden, 'The gate is open.'));
+  assert.equal(toB.action, 'rollback-journal');
+  assert.equal(toB.divergence, 4);
+  const parkA = parkAbandonedBranch(stateA, toB);
+  assert.ok(parkA);
+  assert.ok(parkA.state.rollbackJournal.every(entry => entry.messageId > 3), 'park keeps only its own journal entries');
+  const stateB = capture(toB.state, withReply(hidden, 'The gate is open.'), 4);
+
+  const backToA = reconcileBranch(stateB, withReply(hidden, 'The gate is barred.'));
+  const resumed = resumeParkedBranch(backToA.state, withReply(hidden, 'The gate is barred.'), [parkA]);
+  assert.ok(resumed, 'the relinked park resumes after the hide');
+  assert.deepEqual(summaries(resumed.state), summaries(stateA));
+  assert.deepEqual(resumed.state.lineage.map(item => item.lineageKey), chatLineage(withReply(hidden, 'The gate is barred.')).map(item => item.lineageKey));
+  assert.ok(resumed.state.rollbackJournal.some(entry => entry.messageId === 2), 'live entries before the base are merged back');
+
+  // And the resumed branch still rolls back exactly.
+  const again = reconcileBranch(resumed.state, withReply(hidden, 'Fog.'));
+  assert.equal(again.failClosed, false);
+  assert.deepEqual(summaries(again.state), ['The mill burns.']);
+});
+
+test('emptying the journal by rollback keeps the floor so trimmed history is not advertised', () => {
+  const chat = [];
+  let state = seedRootCheckpoint(createState('floor'));
+  for (let id = 0; id < 12; id += 1) {
+    chat.push(id % 2 ? { role: 'user', content: 'u' + id } : { role: 'assistant', content: 'The Tower ' + id + ' falls.' });
+    if (id % 2) continue;
+    const lineage = chatLineage(chat);
+    state = reconcileBranch(state, chat).state;
+    const reduced = reduceMutations(state, {
+      chatKey: state.chatKey, messageId: id, lineageKey: lineage[id].lineageKey,
+      mutations: [{ action: 'create', kind: 'fact', summary: chat[id].content, anchors: ['tower' + id] }],
+    }).state;
+    state = commitMutationBoundary(state, reduced, chat, id, 'capture', { maxJournalEntries: 2 });
+  }
+  assert.equal(state.rollbackJournalFloorMessageId, 6);
+  const cut = reconcileBranch(state, chat.slice(0, 7), { maxJournalEntries: 2 });
+  assert.equal(cut.failClosed, false);
+  assert.equal(cut.state.rollbackJournal.length, 0);
+  assert.equal(cut.state.rollbackJournalFloorMessageId, 6);
 });

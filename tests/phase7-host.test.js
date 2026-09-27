@@ -347,7 +347,7 @@ test('host lifecycle wires capture continuity injection and exact branch reconci
   assert.match(source, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, payload, chatKey\)\)/);
   assert.match(source, /return queueChatWork\(chatKey, \(\) => applySpatialActionNow\(actionId, payload, chatKey\)\)/);
   assert.match(source, /const baseMap = await getChatBaseMap\(chatKey, state\);\s*if \(currentChatKey\(\) !== chatKey \|\| hydrationErrors\.has\(chatKey\)\) return;/);
-  assert.match(source, /reconcileBranch\(state, getContext\(\)\.chat \|\| \[\], \{/);
+  assert.match(source, /const liveChat = getContext\(\)\.chat \|\| \[\];\n  let result = reconcileBranch\(state, liveChat, \{/);
   assert.match(source, /passiveCaptureMessageId:/);
   assert.match(source, /commitMutationBoundary\(before, result\.state, liveChat, messageId, 'capture'(?:,|\))/);
   assert.match(source, /commitMutationBoundary\(before, prepared\.state, liveChat, messageId, 'evolution'(?:,|\))/);
@@ -1043,4 +1043,112 @@ test('host resolves continuity elapsed time through the shared precedence helper
   assert.match(source, /hasActiveDevelopments: Boolean\(index\?\.backgroundDevelopmentSet\?\.size\)/);
   assert.doesNotMatch(source, /latestElapsedEvolutionBoundary\(/, 'no per-turn evidence scan in the host');
   assert.doesNotMatch(source, /detectElapsedHintFromExchange\(exchange\)\s*\|\|/, 'no bare || precedence that a non-meaningful hint could short-circuit');
+});
+
+test('branch changes resume parked branches and capture a settled swipe or edited reply once', async () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const reconcileStart = source.indexOf('async function reconcileCurrentBranch(');
+  const reconcileBody = source.slice(reconcileStart, source.indexOf('async function handleAssistantMessage(', reconcileStart));
+  assert.match(reconcileBody, /abandonedBranch = parkAbandonedBranch\(state, result\);/);
+  assert.match(reconcileBody, /const resumed = resumeParkedBranch\(result\.state, liveChat, parks\);/);
+  // The park list changes only after a non-stale durable result.
+  const staleAt = reconcileBody.indexOf("action: 'stale-persist'");
+  const consumeAt = reconcileBody.indexOf('if (resumedPark) parkedBranches.set(');
+  const rememberAt = reconcileBody.indexOf('rememberParkedBranch(chatKey, abandonedBranch);');
+  assert.ok(staleAt > 0 && consumeAt > staleAt && rememberAt > staleAt);
+  assert.match(reconcileBody, /'parked-branch-resume', 'fail-closed'/);
+  assert.match(reconcileBody, /WORLD_STATE_BRANCH_RESUMED/);
+  assert.match(reconcileBody, /result\.divergence < liveChat\.length - 1/);
+
+  const branchStart = source.indexOf('async function handleBranchChange(');
+  const branchBody = source.slice(branchStart, source.indexOf('async function activateCurrentChat(', branchStart));
+  assert.ok(branchBody.indexOf('clearBranchCaptureTimer(chatKey);') < branchBody.indexOf('branchDirtyChats.add(chatKey);'));
+  assert.match(branchBody, /BRANCH_CAPTURE_REASONS\.has\(reason\)[\s\S]*branch\.divergence >= latestMessageId\)\) \{\n\s*scheduleBranchCapture\(chatKey\)/);
+  assert.match(source, /new Set\(\['MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED', 'MESSAGE_EDITED'\]\)/);
+  for (const marker of ['setCachedState(chatKey, next);\n    passiveCaptureRebaseCandidates.delete(chatKey);\n    forgetBranchContinuations(chatKey);']) {
+    assert.equal(source.split(marker).length - 1, 2, 'import and reset drop parked branches');
+  }
+
+  const start = source.indexOf('function scheduleBranchCapture(chatKey) {');
+  const body = source.slice(start, source.indexOf('\n}\n', start) + 2);
+  const run = ({ chat, liveChat = chat }) => {
+    const timers = new Map();
+    const captured = [];
+    let pending = null;
+    const schedule = new Function(
+      'clearBranchCaptureTimer', 'getContext', 'messageRole', 'messageText', 'fingerprintMessage',
+      'branchCaptureTimers', 'setTimeout', 'currentChatKey', 'handleAssistantMessage', 'BRANCH_CAPTURE_DELAY_MS', 'console',
+      'return (' + body + ');',
+    )(
+      key => timers.delete(key),
+      () => ({ chat: pending ? liveChat : chat }),
+      message => message.role,
+      message => message.content,
+      message => message.content,
+      timers,
+      callback => { pending = callback; return 1; },
+      () => 'chat:test',
+      async messageId => { captured.push(messageId); },
+      900,
+      console,
+    );
+    schedule('chat:test');
+    if (pending) pending();
+    return { scheduled: Boolean(pending), captured };
+  };
+
+  const existing = { role: 'assistant', content: 'An older swipe.', swipes: ['An older swipe.', 'Newer.'], swipe_id: 0 };
+  assert.deepEqual(run({ chat: [{ role: 'user', content: 'Hi.' }, existing] }).captured, [1]);
+
+  const overswipe = { role: 'assistant', content: 'Old text while generating.', swipes: ['Old text while generating.'], swipe_id: 1 };
+  assert.equal(run({ chat: [{ role: 'user', content: 'Hi.' }, overswipe] }).scheduled, false);
+
+  assert.equal(run({ chat: [{ role: 'assistant', content: 'Reply.' }, { role: 'user', content: 'Edited.' }] }).scheduled, false);
+
+  const moved = run({
+    chat: [{ role: 'user', content: 'Hi.' }, existing],
+    liveChat: [{ role: 'user', content: 'Hi.' }, { ...existing, content: 'Swiped again.' }],
+  });
+  assert.equal(moved.scheduled, true);
+  assert.deepEqual(moved.captured, [], 'a reply that changed before the delay is not captured');
+});
+
+test('a local tail delete or regenerate rolls back instead of being mistaken for a newer server sidecar', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const reconcileStart = source.indexOf('async function reconcileCurrentBranch(');
+  const body = source.slice(reconcileStart, source.indexOf('async function handleAssistantMessage(', reconcileStart));
+  assert.match(body, /const locallyTruncated = storedLineage\.length > 0\s*&& locallyProvenTails\.get\(chatKey\) === lineageTailKey\(storedLineage\);/);
+  assert.match(body, /lineageIsPrefix\(currentLineage, storedLineage\) && !locallyTruncated\) \{/);
+  assert.match(body, /if \(!result\.failClosed\) locallyProvenTails\.set\(chatKey, lineageTailKey\(result\.state\?\.lineage\)\);/);
+
+  const fastStart = source.indexOf('function extendCurrentBranchFast(');
+  const fastBody = source.slice(fastStart, source.indexOf('async function reconcileCurrentBranch(', fastStart));
+  assert.match(fastBody, /if \(appended === null\) return null;[\s\S]*locallyProvenTails\.set\(chatKey, lineageTailKey\(state\.lineage\)\);/);
+
+  assert.match(source, /localChatIsBehindState\(recoveredState\)\s*&& locallyProvenTails\.get\(chatKey\) !== lineageTailKey\(recoveredState\.lineage\);/);
+
+  const forgetStart = source.indexOf('function forgetBranchContinuations(');
+  assert.match(source.slice(forgetStart, forgetStart + 300), /locallyProvenTails\.delete\(chatKey\)/);
+
+  // A stored tail this session never proved (another device wrote ahead)
+  // still fails closed before any rollback.
+  const behindAt = body.indexOf("action: 'host-chat-behind'");
+  assert.ok(behindAt >= 0 && body.indexOf('reconcileBranch(') > behindAt);
+});
+
+test('the Operations log is kept in its own per-chat server file, merged on save and carried across rename', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  assert.match(source, /createDiagnosticStore\(\{\s*limit: OPERATION_LOG_LIMIT,\s*onRecord: chatKey => scheduleOperationLogSave\(chatKey\),\s*\}\)/);
+  assert.match(source, /return 'world-state-alpha-ops-' \+ hashText\(String\(chatKey\)\) \+ '\.json';/);
+  assert.match(source, /raw\.format !== OPERATION_LOG_FORMAT[\s\S]{0,120}raw\.chatKey !== chatKey/);
+  assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.records\(chatKey\), OPERATION_LOG_LIMIT\);/);
+  assert.match(source, /return withWorldStateFileLock\(operationLogFile\(chatKey\), task\);/);
+  assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return;/);
+  assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);
+  assert.match(source, /void hydrateOperationLog\(chatKey\);\s*await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation' \}\);/);
+  assert.match(source, /await retireOperationLog\(oldKey, newKey\);\s*clearChatRuntimeState\(oldKey\);/);
+  assert.match(source, /await retireOperationLog\(chatKey\);\s*clearChatRuntimeState\(chatKey\);/);
+  // Operation telemetry never enters the canonical sidecar payload.
+  const storage = fs.readFileSync('storage.js', 'utf8');
+  assert.doesNotMatch(storage, /diagnostic|operations/i);
 });

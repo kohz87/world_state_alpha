@@ -11,7 +11,7 @@ It is the world-level sibling of [NPC State Delta](https://github.com/kohz87/npc
 | NPC State Delta | "What is true about *this character* right now?" |
 | **World State Alpha** | "What is true about *the wider world* right now?" |
 
-> **Status:** `0.9.0-alpha.32`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
+> **Status:** `0.9.0-alpha.33`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
 
 ---
 
@@ -77,12 +77,17 @@ Swipe, edit or delete that original reply, and the record goes away with it.
 
 ### Safe with swipes, edits and branches
 - Swipe, regenerate, edit, delete and branch all **roll the world back** to match. No state from abandoned branches is left behind.
+- **Swipe back freely:** returning to a reply you already had brings back exactly what it established, with no new model call. Settling on an older swipe that was never captured, or editing the latest reply, captures it after a short pause.
+- **Delete and regenerate:** the deleted reply's changes are rolled back before the new reply is written, so the regenerated reply still gets World State and is captured normally.
+- **Hiding messages is safe:** hiding or unhiding messages (for example `/hide 0-200` to trim context) keeps the world as it is. Hidden messages still happened in the story.
+- Editing or deleting a message further back rolls the world back to that point and tells you; use **Rebuild from chat → Last messages** to recapture the later messages.
 - **Fails safe:** if the state for a point in the chat can't be proven, it pauses instead of guessing.
 - **One source of truth:** state lives in a per-chat file on your SillyTavern server, so desktop, phone and multiple tabs stay in sync, and an out-of-date tab can't overwrite newer data.
 
 ### Recovery and maintenance
 - **Rebuild from chat:**
   - Covers the full chat, the last N messages, or starting from a given message.
+  - Last N / From message need the exact state just before the start. Only the most recent 256 changes are kept, so in a long chat the rebuild sheet shows the earliest message you can start from; earlier starts need Full chat.
   - Can include hidden roleplay messages without changing the chat itself.
   - Shows progress and can be cancelled.
   - The current state is only replaced after the whole rebuild succeeds.
@@ -239,7 +244,7 @@ A fuller example is in [`tests/fixtures/cartesian-base-map-sample.json`](tests/f
 
 - **Which model:** calls go to your main API or the Connection Profile you choose. World State never changes your roleplay connection settings.
 - **Where data lives:** state is stored as per-chat files in your SillyTavern user files (`world-state-alpha-*`). Nothing is sent anywhere else, and there is no telemetry.
-- **What's logged:** the Operations log holds a bounded, sanitised summary of recent operations. It never records prompts, hidden reasoning, headers or credentials.
+- **What's logged:** the Operations log holds a bounded, sanitised summary of the last 80 operations per chat. It is saved on your SillyTavern server next to the state (`world-state-alpha-ops-*`), so it survives reloads and follows you across devices. It never records prompts, hidden reasoning, headers or credentials.
 
 ---
 

@@ -223,6 +223,7 @@ Deliverables:
 - v0.9.0-alpha.30 floating World State button: one opener-only, draggable, per-browser-positioned `launcher.js` button with a left-side default, hidden when World State or the setting is off, stacked below host drawers/popups, and isolated from hydration failures
 - v0.9.0-alpha.31 mobile placement and arrangement capture: compute the floating button's default spot in viewport pixels (SillyTavern's transformed, zero-height <html> broke CSS percentages on phones/tablets), and add capture guidance for ongoing arrangements shown through one incident with attributed dialogue-borne claims
 - v0.9.0-alpha.32 accumulated day steps: narrated day steps since the last persisted elapsed catch-up (one per exchange, hidden/quoted/planned/hypothetical excluded, lineage-bound, fresh-window only) combine into one meaningful elapsed hint at two days; last elapsed boundary tracked incrementally on the relevance index
+- v0.9.0-alpha.33 branch continuity through ordinary editing: local tail delete/regenerate rolls back instead of failing closed as host-chat-behind, parked swipe branches resume exactly, settled existing swipes and edited latest replies are captured, unjournaled states are exact from an equal on-branch checkpoint, hide/unhide is visibility-only with rollback from the first real change, the Operations log persists in its own per-chat server file, and partial rebuild names the earliest provable start; durable formats unchanged
 
 Acceptance:
 

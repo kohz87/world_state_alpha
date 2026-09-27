@@ -891,3 +891,13 @@ test('an archived campaign override stays reachable so the base-map place can be
   assert.match(renderWorldStatePanel(selected, { activeTab: 'spatial' }), /wsa-archived">Archived/);
   assert.match(renderWorldStatePanel(selected, { activeTab: 'spatial', spatialEditing: true }), /data-wsa-spatial-action="delete_location"/);
 });
+
+test('rebuild sheet names the earliest message a partial rebuild can start from', async () => {
+  const { buildWorldStateUiModel, renderWorldStatePanel } = await import('../ui.js');
+  const state = createState('chat:test:earliest');
+  const long = buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 600, earliestPartialStart: 212 } });
+  assert.equal(long.maintenance.rebuild.earliestPartialStart, 212);
+  assert.match(renderWorldStatePanel(long, { rebuildOpen: true }), /can start at message 212 or later\. Earlier starts need Full chat/);
+  const fresh = buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 12, earliestPartialStart: 1 } });
+  assert.doesNotMatch(renderWorldStatePanel(fresh, { rebuildOpen: true }), /can start at message/);
+});

@@ -266,9 +266,11 @@ Multiple writes on the same raw message coalesce into one earliest-before -> lat
 On destructive lineage change:
 
 - compute first divergence
-- attempt exact journal rollback to divergence - 1
+- skip past rows whose change is visibility-only (hide/unhide) or narration-equivalent; the first real change is the rollback cut, and the proven prefix is rebased
+- attempt exact journal rollback to cut - 1
 - else exact checkpoint at divergence - 1
-- explicit known swipe sibling may restore exact sibling checkpoint
+- with no journaled mutation, the earliest on-branch checkpoint whose snapshot equals the current state proves every boundary from it onward
+- explicit known swipe sibling may restore exact sibling checkpoint: an abandoned captured suffix is parked in memory and resumes only when its lineage keys reappear on an identical base state
 - otherwise fail closed
 
 For World State, record-level undo is simpler than Delta's NPC/social/portrait-specific undo and should therefore be significantly smaller.
@@ -476,6 +478,8 @@ exact journal undo to D-1 available?
           yes -> restore
           no  -> known exact swipe sibling?
                    yes -> restore sibling
+                          (after any restore, a parked branch whose lineage
+                           reappears on an identical base resumes exactly)
                    no  -> FAIL CLOSED
                          keep canonical state
                          mark affected records/rebuild need
@@ -659,7 +663,7 @@ The record-level `evidenceIds` bound therefore also bounds live canonical eviden
 
 ### D. Deterministic release packaging
 
-Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.32`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
+Application release history is maintained in `CHANGELOG.md`. The current candidate is `0.9.0-alpha.33`. Canonical schema is version 2 while sidecar, bundle, and rollback-journal envelope formats remain version 1; application-version bumps do not imply durable-format changes.
 
 `scripts/package-design.mjs` creates a real extension ZIP from the runtime inventory using:
 

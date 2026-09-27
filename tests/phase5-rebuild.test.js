@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { chatLineage, commitMutationBoundary, seedRootCheckpoint } from '../branch.js';
+import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, seedRootCheckpoint } from '../branch.js';
 import { assistantBoundaryExchange, runCaptureOperation } from '../capture.js';
 import { createDiagnosticStore } from '../diagnostics.js';
 import {
@@ -1315,4 +1315,84 @@ test('empty/no-assistant chat rebuild is local and does not require a provider g
   assert.equal(result.providerCalls, 0);
   assert.deepEqual(result.state.records, []);
   assert.equal(result.state.lineage.length, 1);
+});
+
+test('partial rebuild before the kept journal names the earliest start it can prove', async () => {
+  const chat = [
+    { role: 'assistant', content: 'Greeting.' },
+    { role: 'user', content: 'Walk.' },
+    { role: 'assistant', content: 'The mill burns.' },
+    { role: 'user', content: 'Run.' },
+    { role: 'assistant', content: 'The bridge falls.' },
+    { role: 'user', content: 'Rest.' },
+    { role: 'assistant', content: 'The harbor closes.' },
+  ];
+  const lineage = chatLineage(chat);
+  let state = seedRootCheckpoint(createState('trimmed-journal'));
+  for (const messageId of [2, 4, 6]) {
+    const reduced = reduceMutations(state, {
+      chatKey: state.chatKey,
+      messageId,
+      lineageKey: lineage[messageId].lineageKey,
+      mutations: [{ action: 'create', kind: 'fact', summary: chat[messageId].content, anchors: [chat[messageId].content.split(' ')[1]] }],
+    }).state;
+    // Keep one journal entry and only the root checkpoint, like a long chat.
+    state = commitMutationBoundary(state, reduced, chat.slice(0, messageId + 1), messageId, 'capture', { maxJournalEntries: 1, maxCheckpoints: 1 });
+  }
+  assert.equal(earliestPartialRebuildStart(state), 5);
+
+  let calls = 0;
+  const result = await runManualRebuild({
+    ctx: {},
+    dispatcher: async () => { calls += 1; return { text: '{"mutations":[]}', receipt: { dispatched: true, outcome: 'success' } }; },
+    state,
+    chat,
+    chatKey: 'trimmed-journal',
+    startMessageId: 2,
+    isCurrent: () => true,
+  });
+  assert.equal(result.errorCode, 'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE');
+  assert.match(result.errorMessage, /before message 2 is no longer stored.*Start from message 5 or later, or use Full chat/);
+  assert.equal(calls, 0);
+
+  const later = await runManualRebuild({
+    ctx: {},
+    dispatcher: async () => ({ text: '{"mutations":[]}', receipt: { dispatched: true, outcome: 'success' } }),
+    state,
+    chat,
+    chatKey: 'trimmed-journal',
+    startMessageId: 5,
+    isCurrent: () => true,
+  });
+  assert.equal(later.outcome, 'completed');
+});
+
+test('partial rebuild that fails for another reason does not blame journal trimming', async () => {
+  const chat = [
+    { role: 'assistant', content: 'Greeting.' },
+    { role: 'user', content: 'Walk.' },
+    { role: 'assistant', content: 'The mill burns.' },
+    { role: 'user', content: 'Run.' },
+    { role: 'assistant', content: 'The bridge falls.' },
+  ];
+  const lineage = chatLineage(chat);
+  let state = seedRootCheckpoint(createState('unjournaled-rebuild'));
+  state.lineage = lineage;
+  // An unjournaled change with no matching checkpoint.
+  state = reduceMutations(state, {
+    chatKey: state.chatKey, messageId: 2, lineageKey: lineage[2].lineageKey,
+    mutations: [{ action: 'create', kind: 'fact', summary: 'The mill burns.', anchors: ['mill'] }],
+  }).state;
+  const result = await runManualRebuild({
+    ctx: {},
+    dispatcher: async () => ({ text: '{"mutations":[]}', receipt: { dispatched: true, outcome: 'success' } }),
+    state,
+    chat,
+    chatKey: 'unjournaled-rebuild',
+    startMessageId: 3,
+    isCurrent: () => true,
+  });
+  assert.equal(result.errorCode, 'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE');
+  assert.match(result.errorMessage, /cannot be proven from the saved history\. Use Full chat\./);
+  assert.doesNotMatch(result.errorMessage, /no longer stored/);
 });

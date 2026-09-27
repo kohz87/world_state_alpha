@@ -135,6 +135,23 @@ export function firstLineageDivergence(previous = [], current = []) {
   return previous.length === current.length ? -1 : limit;
 }
 
+function domainHash(state) {
+  return hashText(stableStringify(canonicalDomain(state)));
+}
+
+// Hash of the canonical domain a checkpoint snapshot restores, without cloning
+// the whole state (its journal and every other checkpoint) to find out.
+function snapshotDomainHash(state, snapshot = {}) {
+  return domainHash({
+    chatKey: state?.chatKey || '',
+    records: snapshot?.records || [],
+    evidence: snapshot?.evidence || {},
+    links: snapshot?.links || [],
+    lastCaptureMessage: Number.isInteger(snapshot?.lastCaptureMessage) ? snapshot.lastCaptureMessage : null,
+    spatial: snapshot?.spatial || createSpatialState(),
+  });
+}
+
 function checkpointSnapshot(state) {
   return canonicalDomain(state);
 }
@@ -153,11 +170,29 @@ function restoreCheckpoint(state, snapshot) {
   return normalizeState(restored);
 }
 
+// Earliest boundary <= maxMessageId at which an on-branch checkpoint holds
+// exactly the current canonical state, or null. Only meaningful when nothing
+// is journaled: then the state provably held from that boundary onward.
+function unjournaledStateSince(state, lineage, maxMessageId) {
+  const rows = Array.isArray(lineage) ? lineage : [];
+  const candidates = (state.checkpoints || [])
+    .filter(item => Number.isInteger(item?.messageId) && item.messageId <= maxMessageId
+      && (item.messageId < 0 ? item.lineageKey === 'root' : rows[item.messageId]?.lineageKey === item.lineageKey))
+    .sort((a, b) => a.messageId - b.messageId);
+  if (!candidates.length) return null;
+  const current = domainHash(state);
+  const match = candidates.find(item => snapshotDomainHash(state, item.snapshot) === current);
+  return match ? match.messageId : null;
+}
+
 function trimJournal(state, maxEntries) {
   const cap = Math.max(1, Number(maxEntries) || LIMITS.rollbackEntries);
   if (state.rollbackJournal.length <= cap) {
     const first = state.rollbackJournal[0];
-    state.rollbackJournalFloorMessageId = first ? Math.max(-1, first.beforeMessageId) : state.rollbackHead?.messageId ?? -1;
+    // An emptied journal keeps the floor it had: the remaining state is exact
+    // only from there, and older trimmed history must not be advertised.
+    const keptFloor = Number.isInteger(state.rollbackJournalFloorMessageId) ? Math.max(-1, state.rollbackJournalFloorMessageId) : -1;
+    state.rollbackJournalFloorMessageId = first ? Math.max(-1, first.beforeMessageId) : state.rollbackHead?.messageId ?? keptFloor;
     return;
   }
   state.rollbackJournal = state.rollbackJournal.slice(-cap);
@@ -247,11 +282,15 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
       }
     } else {
       seq = currentSequence + 1;
+      // With no head and no entries, undoing this first entry restores a
+      // state that may be provably exact further back than messageId - 1: from
+      // the earliest checkpoint on this branch whose snapshot it equals.
+      const provenBase = head || journal.length ? null : unjournaledStateSince(before, lineage, messageId - 1);
       journal.push({
         seq,
         prevSeq: Math.max(0, Number(head?.seq) || 0),
         messageId,
-        beforeMessageId: Number.isInteger(head?.messageId) ? head.messageId : messageId - 1,
+        beforeMessageId: Number.isInteger(head?.messageId) ? head.messageId : (provenBase ?? messageId - 1),
         lineageKey: boundary.lineageKey,
         parentLineageKey: boundary.parentLineageKey,
         reason: String(reason || 'mutation'),
@@ -301,6 +340,12 @@ function restoreByJournal(state, previousLineage, divergence) {
   const bySeq = new Map(state.rollbackJournal.map(entry => [entry.seq, entry]));
   let working = normalizeState(clone(state));
   let seq = Math.max(0, Number(state.rollbackHead?.seq) || 0);
+  // No head and no entries: the current state is exact at the target only if
+  // a checkpoint at or before it on this branch holds the very same state.
+  if (!state.rollbackHead && !state.rollbackJournal.length) {
+    const provenBase = unjournaledStateSince(state, previousLineage, targetMessageId);
+    return provenBase === null ? null : { state: normalizeState(clone(state)), headSeq: 0, targetMessageId };
+  }
   let headMessageId = Number.isInteger(state.rollbackHead?.messageId)
     ? state.rollbackHead.messageId
     : previousLineage.length - 1;
@@ -317,19 +362,28 @@ function restoreByJournal(state, previousLineage, divergence) {
   return { state: working, headSeq: seq, targetMessageId };
 }
 
-function semanticRewritePlan(previousLineage, currentLineage) {
-  if (currentLineage.length < previousLineage.length) {
-    return { kind: 'destructive', changedMessageIds: [] };
-  }
+// SillyTavern's hide/unhide flips only `is_system`. The message still happened
+// in the story (rebuild includes hidden roleplay), so a row whose stored
+// fingerprint is reproduced by flipping that flag back is not a semantic change.
+function visibilityToggleOnly(previous, message) {
+  if (!message || typeof message !== 'object' || !previous?.fingerprint) return false;
+  return fingerprintMessage({ ...message, is_system: !message.is_system }) === previous.fingerprint;
+}
 
+// Classifies a lineage change. `firstSemantic` is the first row whose story
+// content really changed (or where the chat got shorter); rows before it that
+// differ only by narration-equivalent rewrites or hide/unhide can be rebased.
+function semanticRewritePlan(previousLineage, currentLineage, chat = []) {
+  const shared = Math.min(previousLineage.length, currentLineage.length);
   const changedMessageIds = [];
-  let semanticChange = false;
+  let firstSemantic = null;
 
-  for (let index = 0; index < previousLineage.length; index += 1) {
+  for (let index = 0; index < shared; index += 1) {
     const previous = previousLineage[index];
     const current = currentLineage[index];
     if (previous?.fingerprint === current?.fingerprint) continue;
     changedMessageIds.push(index);
+    if (visibilityToggleOnly(previous, chat[index])) continue;
 
     const previousRole = String(previous?.role || '');
     const previousNarration = String(previous?.narrationFingerprint || '');
@@ -344,11 +398,13 @@ function semanticRewritePlan(previousLineage, currentLineage) {
       continue;
     }
 
-    semanticChange = true;
+    firstSemantic = index;
+    break;
   }
 
+  if (firstSemantic === null && currentLineage.length < previousLineage.length) firstSemantic = currentLineage.length;
+  if (firstSemantic !== null) return { kind: 'destructive', changedMessageIds, firstSemantic };
   if (!changedMessageIds.length) return { kind: 'none', changedMessageIds };
-  if (semanticChange) return { kind: 'destructive', changedMessageIds };
   return { kind: 'semantic-rebase', changedMessageIds };
 }
 
@@ -370,7 +426,7 @@ export function reconcileBranch(inputState, chat, options = {}) {
     };
   }
 
-  const semanticPlan = semanticRewritePlan(previousLineage, currentLineage);
+  const semanticPlan = semanticRewritePlan(previousLineage, currentLineage, Array.isArray(chat) ? chat : []);
   if (semanticPlan.kind === 'semantic-rebase') {
     const rebasedPrefix = rebaseLineageMetadata(
       state,
@@ -393,8 +449,11 @@ export function reconcileBranch(inputState, chat, options = {}) {
     };
   }
 
-  const targetMessageId = divergence - 1;
-  const journalRestore = restoreByJournal(state, previousLineage, divergence);
+  // Roll back only from the first real change. Visibility-only or
+  // narration-equivalent rows before it keep their state and are rebased.
+  const cut = Math.max(divergence, Number.isInteger(semanticPlan.firstSemantic) ? semanticPlan.firstSemantic : divergence);
+  const targetMessageId = cut - 1;
+  const journalRestore = restoreByJournal(state, previousLineage, cut);
   let restored = null;
   let action = '';
 
@@ -402,7 +461,7 @@ export function reconcileBranch(inputState, chat, options = {}) {
     restored = journalRestore.state;
     action = 'rollback-journal';
   } else {
-    const checkpoint = exactCheckpoint(state, currentLineage, targetMessageId);
+    const checkpoint = exactCheckpoint(state, previousLineage, targetMessageId);
     if (checkpoint) {
       restored = restoreCheckpoint(state, checkpoint.snapshot);
       action = 'exact-checkpoint';
@@ -412,26 +471,34 @@ export function reconcileBranch(inputState, chat, options = {}) {
   if (!restored) {
     state.recoveryRequired = {
       reason: 'exact-boundary-unavailable',
-      divergence,
+      divergence: cut,
       targetMessageId,
     };
     return {
       state,
-      divergence,
+      divergence: cut,
       action: 'fail-closed',
       exactRestored: false,
       failClosed: true,
     };
   }
 
-  restored.rollbackJournal = state.rollbackJournal.filter(entry => entry.messageId < divergence);
+  restored.rollbackJournal = state.rollbackJournal.filter(entry => entry.messageId < cut);
   const retainedSeqs = new Set(restored.rollbackJournal.map(entry => entry.seq));
   const lastEntry = restored.rollbackJournal.at(-1) || null;
   restored.rollbackHead = lastEntry
     ? { seq: lastEntry.seq, messageId: lastEntry.messageId, lineageKey: lastEntry.lineageKey }
     : null;
   if (restored.rollbackHead && !retainedSeqs.has(restored.rollbackHead.seq)) restored.rollbackHead = null;
-  restored.checkpoints = state.checkpoints.filter(item => item.messageId < divergence);
+  restored.checkpoints = state.checkpoints.filter(item => item.messageId < cut);
+  // A checkpoint restore with no retained entries is exact from its own boundary.
+  if (action === 'exact-checkpoint' && !restored.rollbackJournal.length) {
+    restored.rollbackJournalFloorMessageId = targetMessageId;
+  }
+  if (cut > divergence) {
+    restored.lineage = previousLineage.slice(0, cut);
+    restored = rebaseLineageMetadata(restored, previousLineage.slice(0, cut), currentLineage.slice(0, cut));
+  }
   restored.lineage = currentLineage;
   restored.recoveryRequired = null;
   trimJournal(restored, options.maxJournalEntries);
@@ -439,11 +506,19 @@ export function reconcileBranch(inputState, chat, options = {}) {
 
   return {
     state: normalizeState(restored),
-    divergence,
+    divergence: cut,
     action,
     exactRestored: true,
     failClosed: false,
   };
+}
+
+// First message a partial rebuild can start from: the journal proves every
+// boundary at or after its floor (it keeps the most recent entries only).
+// Earlier starts need Full chat.
+export function earliestPartialRebuildStart(inputState) {
+  const floor = Number.isInteger(inputState?.rollbackJournalFloorMessageId) ? inputState.rollbackJournalFloorMessageId : -1;
+  return Math.max(1, floor + 1);
 }
 
 export function seedRootCheckpoint(inputState) {
@@ -458,4 +533,109 @@ export function seedRootCheckpoint(inputState) {
   if (existing >= 0) state.checkpoints[existing] = checkpoint;
   else state.checkpoints.unshift(checkpoint);
   return state;
+}
+
+// Parked branches: when a rollback abandons a suffix (swipe, delete,
+// regenerate), the pre-rollback state is kept in memory so that returning to
+// exactly the same messages restores what those messages had established,
+// without another capture. Resume is exact-only: the current state must be
+// byte-identical to the base the branch was abandoned from, and the returning
+// messages must reproduce the parked lineage keys (same parent chain + content).
+
+// Journal entries and checkpoints at or before the base are the same ones the
+// current branch keeps, so a parked branch holds only its own; resume merges
+// the live ones back.
+function compactParkedState(state, baseMessageId) {
+  const parked = normalizeState(clone(state));
+  parked.checkpoints = parked.checkpoints.filter(item => item.messageId > baseMessageId);
+  parked.rollbackJournal = parked.rollbackJournal.filter(entry => entry.messageId > baseMessageId);
+  parked.recoveryRequired = null;
+  return parked;
+}
+
+// Re-derive lineage keys after the live prefix changed (for example rows
+// before the cut were hidden and rebased): each later key chains from the new
+// parent with the row's own unchanged fingerprint.
+function relinkLineage(previous, prefix) {
+  const out = [];
+  let parent = 'root';
+  for (let index = 0; index < previous.length; index += 1) {
+    if (index < prefix.length) {
+      out.push(clone(prefix[index]));
+      parent = prefix[index].lineageKey;
+      continue;
+    }
+    const entry = previous[index];
+    const lineageKey = deterministicId('ln', [parent, entry.fingerprint]);
+    out.push({ ...clone(entry), parentLineageKey: parent, lineageKey });
+    parent = lineageKey;
+  }
+  return out;
+}
+
+export function parkAbandonedBranch(beforeState, result) {
+  if (!result || result.failClosed || !['rollback-journal', 'exact-checkpoint'].includes(result.action)) return null;
+  const before = normalizeState(beforeState);
+  const baseMessageId = Number(result.divergence) - 1;
+  const abandoned = before.lineage?.[baseMessageId + 1];
+  if (!Number.isInteger(baseMessageId) || baseMessageId < -1 || !abandoned?.lineageKey) return null;
+  const baseDomainHash = domainHash(result.state);
+  if (domainHash(before) === baseDomainHash) return null;
+
+  let source = before;
+  const livePrefix = (result.state.lineage || []).slice(0, baseMessageId + 1);
+  if (livePrefix.some((entry, index) => entry?.lineageKey !== before.lineage[index]?.lineageKey)) {
+    try {
+      source = rebaseLineageMetadata(before, before.lineage, relinkLineage(before.lineage, livePrefix));
+    } catch {
+      return null;
+    }
+  }
+  return {
+    baseMessageId,
+    baseLineageKey: baseMessageId < 0 ? 'root' : String(livePrefix[baseMessageId]?.lineageKey || ''),
+    baseDomainHash,
+    firstLineageKey: source.lineage[baseMessageId + 1].lineageKey,
+    state: compactParkedState(source, baseMessageId),
+  };
+}
+
+export function resumeParkedBranch(inputState, chat, parks = [], options = {}) {
+  const state = normalizeState(inputState);
+  const lineage = Array.isArray(state.lineage) ? state.lineage : [];
+  if (!Array.isArray(parks) || !parks.length || state.recoveryRequired) return null;
+  let currentHash = null;
+  const journalTop = state.rollbackJournal.reduce((max, entry) => Math.max(max, Number(entry?.messageId)), -1);
+
+  for (let index = parks.length - 1; index >= 0; index -= 1) {
+    const park = parks[index];
+    const base = Number(park?.baseMessageId);
+    if (!Number.isInteger(base) || base + 1 >= lineage.length) continue;
+    if (base >= 0 && lineage[base]?.lineageKey !== park.baseLineageKey) continue;
+    if (lineage[base + 1]?.lineageKey !== park.firstLineageKey) continue;
+    if (journalTop > base) continue;
+    currentHash ??= domainHash(state);
+    if (park.baseDomainHash !== currentHash) continue;
+
+    const resumed = reconcileBranch(park.state, chat, options);
+    if (resumed.failClosed || !resumed.exactRestored) continue;
+    const next = normalizeState(resumed.state);
+    next.checkpoints = [
+      ...state.checkpoints.filter(item => item.messageId <= base),
+      ...next.checkpoints.filter(item => item.messageId > base),
+    ];
+    next.rollbackJournal = [
+      ...state.rollbackJournal.filter(entry => entry.messageId <= base),
+      ...next.rollbackJournal.filter(entry => entry.messageId > base),
+    ].sort((a, b) => a.seq - b.seq);
+    next.rollbackJournalFloorMessageId = state.rollbackJournalFloorMessageId;
+    trimJournal(next, options.maxJournalEntries);
+    trimCheckpoints(next, options.maxCheckpoints);
+    next.rollbackJournalSequence = Math.max(
+      Number(next.rollbackJournalSequence) || 0,
+      Number(state.rollbackJournalSequence) || 0,
+    );
+    return { state: next, parkIndex: index, divergence: resumed.divergence };
+  }
+  return null;
 }
