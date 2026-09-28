@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.0-alpha.34 - Stable catch-up no longer rejected for missing support
+
+### Fixed
+
+- **Lazy and background evolution rejected all-stable answers.** The evolution prompt said only a *changed* outcome must cite supportIds, but the response check required every evaluation, stable included, to cite its elapsed/current trigger. A correct answer such as three `stable` evaluations with `supportIds: []` therefore failed as `WORLD_STATE_EVOLUTION_WIRE_INVALID`. The provider call was wasted, nothing was recorded, and because `lastEvaluatedMessage` never advanced, the same targets could be re-requested on the following turns.
+- The prompt now asks every evaluation, stable included, to cite the trigger supportId shown for its target.
+- When a `stable` evaluation still omits it, the host records that target's own trigger support (the elapsed hint or the current evidence it was selected for) as the evaluation provenance. The summary and `lastChangedMessage` stay unchanged, `lastEvaluatedMessage` advances, and the target is not re-offered at the same boundary.
+- Changed outcomes (update/resolve/supersede) must still cite their own trigger and causal support, and an unknown or foreign supportId still invalidates the whole response.
+
+### Architecture
+
+- Core contract C13: a stable evaluation's provenance may be its target's own trigger; changed outcomes are unchanged. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- Added regressions:
+  - the live all-stable `supportIds: []` response, with no repeat evaluation at the same boundary;
+  - a stable result on a direct-evidence trigger;
+  - changed outcomes with empty support and a stable result citing foreign support, both still rejected;
+  - the prompt wording.
+- The three behaviour/prompt regressions fail on the previous `evolution.js`; the strictness regression passes both ways.
+
+
 ## 0.9.0-alpha.33 - World State survives swipes, deletes, regenerates and hidden messages
 
 ### Fixed
