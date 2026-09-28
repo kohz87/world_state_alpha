@@ -31,7 +31,7 @@ export const EVOLUTION_SYSTEM_PROMPT = [
   'Existing World State is current campaign authority. Lore is baseline context/causal possibility only and cannot establish that an event occurred.',
   'Prefer stable when the supplied state and support do not causally justify a change.',
   'Do not invent new actors, negotiations, attacks, discoveries, decisions, outcomes, or chance events merely to make the world move.',
-  'A changed outcome must cite supplied supportIds. Use only supportIds shown for that target.',
+  'Every evaluation, including stable, must cite the elapsed/current trigger supportId shown for that target; a changed outcome must also cite the supportIds that justify the change. Use only supportIds shown for that target.',
   'At most one derived development may be proposed. It must be a strongly grounded consequence of at least two supplied target developments, or one target plus grounded CURRENT affecting evidence.',
   'Never create an episode merely because static lore still describes an old pressure.',
 ].join(' ');
@@ -370,8 +370,19 @@ function newEvidenceFromSupports(supports, currentTimeAnchor) {
   return out;
 }
 
+function triggerSupportIds(context, recordId) {
+  return (context.targetSupportIds[recordId] || [])
+    .filter(id => ['time', 'current'].includes(context.supportCatalog[id]?.type));
+}
+
 function evaluationMutation(evaluation, context) {
-  const supports = supportRows(evaluation.supportIds, context, evaluation.recordId);
+  let supports = supportRows(evaluation.supportIds, context, evaluation.recordId);
+  // A stable result changes nothing, and the target was only offered because
+  // of its own trigger, so record that trigger as the evaluation provenance
+  // when the model left it out. Changed outcomes must still cite it themselves.
+  if (evaluation.outcome === 'stable' && !supports.some(item => item.type === 'time' || item.type === 'current')) {
+    supports = supportRows([...evaluation.supportIds, ...triggerSupportIds(context, evaluation.recordId)], context, evaluation.recordId);
+  }
   if (supports.length === 0) {
     throw new EvolutionWireError(`evaluation for ${evaluation.recordId} requires at least one supportId`);
   }

@@ -240,7 +240,7 @@ Background candidate discovery must remain bounded and non-global. The ephemeral
 
 Elapsed time is permission to evaluate, not evidence that change occurred. `stable` is a first-class outcome. A changed outcome requires either grounded current affecting evidence, or meaningful elapsed time plus prior accepted evidence from that same development.
 
-A stable evaluation may advance `lastEvaluatedMessage` and retain elapsed/evaluation provenance, but must not advance `lastChangedMessage` when current world truth did not change.
+A stable evaluation may advance `lastEvaluatedMessage` and retain elapsed/evaluation provenance, but must not advance `lastChangedMessage` when current world truth did not change. Every evaluation is asked to cite its target's elapsed/current trigger support; when a `stable` evaluation omits it, the host records that target's own trigger support as the evaluation provenance instead of rejecting the batch (the target was offered only because of that trigger, and nothing changes). Changed outcomes (update/resolve/supersede) must still cite their own trigger and causal support, and any unknown or foreign supportId still invalidates the response.
 
 At most one derived development may be proposed per batch. It requires either at least two supplied causal target developments, or one target plus grounded current affecting evidence. Each declared cause must contribute its own non-time support; support cannot be borrowed from undeclared records. Duplicate/resolved-episode checks apply before admission.
 

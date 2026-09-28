@@ -1376,3 +1376,126 @@ test('accumulated day steps wake background catch-up for an unrelated developmen
     lineage,
   }), null, 'the count restarts after the recorded catch-up');
 });
+
+test('stable evaluations without supportIds record their own trigger instead of rejecting the batch', async () => {
+  // Shape of a live Lazy Evolution response: three stable outcomes, each with
+  // supportIds: [], on a meaningful elapsed-time trigger.
+  const seeded = seedDevelopments('stable-empty-support', [
+    { summary: 'The Harrow & Spindle operates under new management.', anchors: ['Harrow & Spindle'] },
+    { summary: "Farwick's fall leaves the district in disarray.", anchors: ['Farwick'] },
+    { summary: 'The watch fractured after a mutiny.', anchors: ['watch mutiny'] },
+  ]);
+  const exchange = withLineage([
+    ...seeded.chat,
+    { role: 'user', content: 'Five weeks later, I return to Farwick.' },
+  ]);
+  const response = JSON.stringify({
+    evaluations: seeded.state.records.map(record => ({
+      recordId: record.id,
+      outcome: 'stable',
+      reason: 'No new direct evidence; elapsed time alone does not warrant change.',
+      supportIds: [],
+    })),
+    derived: [],
+  });
+  const calls = { count: 0 };
+  const diagnostics = createDiagnosticStore();
+  const result = await runLazyEvolution({
+    ctx: provider(response, calls),
+    state: seeded.state,
+    selectedEntries: selected(seeded.state),
+    exchange,
+    chatKey: 'stable-empty-support',
+    diagnostics,
+    isCurrent: () => true,
+    ...sourceBoundary(exchange),
+  });
+  assert.equal(calls.count, 1);
+  assert.equal(result.outcome, 'stable');
+  assert.doesNotMatch(JSON.stringify(diagnostics.records('stable-empty-support')), /WORLD_STATE_EVOLUTION_WIRE_INVALID/);
+  for (const before of seeded.state.records) {
+    const after = result.state.records.find(record => record.id === before.id);
+    assert.equal(after.summary, before.summary);
+    assert.equal(after.lastChangedMessage, before.lastChangedMessage);
+    assert.equal(after.lastEvaluatedMessage, 1);
+  }
+  const elapsedEvidence = Object.values(result.state.evidence).filter(item => item.sourceClass === 'elapsed_hint');
+  assert.ok(elapsedEvidence.length >= 1);
+  assert.match(elapsedEvidence[0].claim, /Five weeks later/);
+
+  // The same boundary is no longer due, so the next turn makes no repeat call.
+  const replan = planLazyEvolution(result.state, {
+    selectedEntries: selected(result.state),
+    exchange,
+    ...sourceBoundary(exchange),
+  });
+  assert.equal(replan.targets.length, 0);
+});
+
+test('a stable evaluation on a direct-evidence trigger records that current evidence when support is omitted', async () => {
+  const seeded = seedDevelopments('stable-direct-empty', [{
+    summary: 'The freight dispute is active.',
+    anchors: ['freight dispute'],
+  }]);
+  const record = seeded.state.records[0];
+  const exchange = withLineage([
+    ...seeded.chat,
+    { role: 'user', content: 'Hadrik mentions the freight dispute again today.' },
+  ]);
+  const response = JSON.stringify({
+    evaluations: [{ recordId: record.id, outcome: 'stable', reason: 'Mentioned, not changed.', supportIds: [] }],
+    derived: [],
+  });
+  const result = await runLazyEvolution({
+    ctx: provider(response),
+    state: seeded.state,
+    selectedEntries: selected(seeded.state),
+    exchange,
+    affectingEvidence: [{ recordId: record.id, sourceMessageId: 1, claim: 'Hadrik mentions the freight dispute again today.' }],
+    chatKey: 'stable-direct-empty',
+    isCurrent: () => true,
+    ...sourceBoundary(exchange),
+  });
+  assert.equal(result.outcome, 'stable');
+  const after = result.state.records[0];
+  assert.equal(after.summary, record.summary);
+  assert.equal(after.lastChangedMessage, record.lastChangedMessage);
+  assert.equal(after.lastEvaluatedMessage, 1);
+  assert.ok(Object.values(result.state.evidence).some(item => item.sourceMessageId === 1 && /mentions the freight dispute/.test(item.claim)));
+});
+
+test('changed outcomes still must cite their own support, and stable may not cite foreign support', async () => {
+  const seeded = seedDevelopments('changed-empty-support', [{
+    summary: 'The reactor output is degrading.',
+    anchors: ['reactor'],
+    evidenceClaim: 'The reactor output is degrading because coolant pumps are failing.',
+  }]);
+  const record = seeded.state.records[0];
+  const exchange = withLineage([
+    ...seeded.chat,
+    { role: 'user', content: 'Five weeks later, I return to the reactor.' },
+  ]);
+  const run = evaluation => runLazyEvolution({
+    ctx: provider(JSON.stringify({ evaluations: [{ recordId: record.id, reason: 'test', ...evaluation }], derived: [] })),
+    state: seeded.state,
+    selectedEntries: selected(seeded.state),
+    exchange,
+    chatKey: 'changed-empty-support',
+    isCurrent: () => true,
+    ...sourceBoundary(exchange),
+  });
+
+  for (const outcome of ['update', 'resolve', 'supersede']) {
+    const result = await run({ outcome, summary: 'The reactor has failed.', supportIds: [] });
+    assert.equal(result.outcome, 'invalid-response', outcome + ' with no support must be rejected');
+    assert.equal(result.state.records[0].summary, record.summary);
+    assert.equal(result.state.records[0].lastEvaluatedMessage, 0);
+  }
+  const foreign = await run({ outcome: 'stable', supportIds: ['c99'] });
+  assert.equal(foreign.outcome, 'invalid-response');
+});
+
+test('evolution prompt asks every evaluation, stable included, to cite its trigger support', () => {
+  assert.match(EVOLUTION_SYSTEM_PROMPT, /Every evaluation, including stable, must cite the elapsed\/current trigger supportId/);
+  assert.match(EVOLUTION_SYSTEM_PROMPT, /a changed outcome must also cite the supportIds that justify the change/);
+});
