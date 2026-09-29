@@ -12,6 +12,14 @@
   - replacement stays atomic: canonical state changes only after every boundary succeeds;
   - the resume point is never persisted and is dropped by a new rebuild, import, reset, a completed rebuild or leaving the chat.
 - Cancelled or stale rebuilds offer no resume.
+- Hardening from code review:
+  - the resume point binds the rebuild plan, and its processed count is derived rather than trusted;
+  - a Resume must name the failed message, and repeat clicks are ignored while it runs, so a later failure always needs a fresh decision;
+  - a stale snapshot or a changed connection profile is refused before any reconcile, status or provider side effect, so a rebuild never mixes models;
+  - the point is consumed only when the resumed run actually starts, so a temporary refusal such as a missing base map keeps it;
+  - any new canonical state drops it and hides the button;
+  - the resumed run gets its own operation id;
+  - totals cover the whole rebuild.
 
 ### Architecture
 

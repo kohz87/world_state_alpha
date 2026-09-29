@@ -1432,7 +1432,8 @@ function tabLabel(tab) {
 
 function resumeRebuildButtonHtml(resume) {
   if (!resume) return '';
-  return '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-primary" data-wsa-resume-rebuild title="Re-send the failed message and continue; earlier messages are not redone">Resume from message ' +
+  return '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-primary" data-wsa-resume-rebuild data-wsa-resume-message="' +
+    escapeHtml(String(resume.messageId)) + '" title="Re-send the failed message and continue; earlier messages are not redone">Resume from message ' +
     escapeHtml(String(resume.messageId)) + '</button>';
 }
 
@@ -1933,9 +1934,20 @@ export function createWorldStateUiController({
       return;
     }
 
-    if (closest(event.target, '[data-wsa-resume-rebuild]')) {
-      if (typeof onMaintenanceAction === 'function') {
-        await onMaintenanceAction('rebuild', { rebuild: { resume: true } });
+    const resumeButton = closest(event.target, '[data-wsa-resume-rebuild]');
+    if (resumeButton) {
+      // One press answers one failure: ignore repeat clicks while it runs, and
+      // name the failed message so a later failure needs its own decision.
+      if (ui.resumePending) return;
+      const fromMessageId = Number.parseInt(resumeButton.dataset?.wsaResumeMessage ?? resumeButton.getAttribute?.('data-wsa-resume-message'), 10);
+      if (!Number.isInteger(fromMessageId)) return;
+      ui.resumePending = true;
+      try {
+        if (typeof onMaintenanceAction === 'function') {
+          await onMaintenanceAction('rebuild', { rebuild: { resume: true, fromMessageId } });
+        }
+      } finally {
+        ui.resumePending = false;
       }
       refresh();
       return;

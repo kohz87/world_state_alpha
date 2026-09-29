@@ -404,11 +404,20 @@ export async function runManualRebuild({
   // An operator-initiated resume continues a failed rebuild from its failed
   // boundary with the candidate accepted up to there. It is only valid while
   // the canonical state and exact chat lineage are unchanged since the failure.
+  const planKey = stableStringify({
+    startMessageId: plan.metrics.startMessageId,
+    maxBoundaries: plan.metrics.maxBoundaries,
+    includeHiddenMessages: plan.metrics.includeHiddenMessages,
+    windows: plan.windows.map(window => [window.messageId, window.lineageKey]),
+  });
   let resumeFromMessageId = null;
+  let resumedWindowIndex = -1;
   let candidate;
   if (resume) {
-    if (resume.snapshotToken !== snapshotToken || !resume.candidate || !Number.isInteger(resume.fromMessageId)
-      || !plan.windows.some(window => window.messageId === resume.fromMessageId)) {
+    resumedWindowIndex = Number.isInteger(resume.fromMessageId)
+      ? plan.windows.findIndex(window => window.messageId === resume.fromMessageId)
+      : -1;
+    if (resume.snapshotToken !== snapshotToken || resume.planKey !== planKey || !resume.candidate || resumedWindowIndex < 0) {
       return {
         outcome: 'failure',
         state: clone(original),
@@ -477,7 +486,8 @@ export async function runManualRebuild({
     }
   }
   let providerCalls = 0;
-  let processedBoundaries = resume ? Math.max(0, Number(resume.processedBoundaries) || 0) : 0;
+  // Derived from the plan, never trusted from the resume point.
+  let processedBoundaries = resume ? resumedWindowIndex : 0;
   const receipts = [];
 
   // Everything needed to resume from a failed boundary; kept by the host in
@@ -486,6 +496,7 @@ export async function runManualRebuild({
     candidate: clone(acceptedCandidate),
     fromMessageId: failedMessageId,
     snapshotToken,
+    planKey,
     processedBoundaries,
   });
 

@@ -914,7 +914,7 @@ test('a failed rebuild shows Resume from message N on its status and in the rebu
   assert.deepEqual(model.maintenance.rebuild.resume, { messageId: 37, processedBoundaries: 18, totalBoundaries: 26 });
 
   const panel = renderWorldStatePanel(model, {});
-  assert.match(panel, /data-wsa-resume-rebuild[^>]*>Resume from message 37</);
+  assert.match(panel, /data-wsa-resume-rebuild data-wsa-resume-message="37"[^>]*>Resume from message 37</);
   const sheet = renderWorldStatePanel(model, { rebuildOpen: true });
   assert.match(sheet, /Failed rebuild can resume/);
   assert.match(sheet, /18 of 26 boundaries were rebuilt before message 37 failed/);
@@ -928,5 +928,6 @@ test('a failed rebuild shows Resume from message N on its status and in the rebu
   assert.doesNotMatch(renderWorldStatePanel(running, {}), /data-wsa-resume-rebuild/);
 
   const source = fs.readFileSync('ui.js', 'utf8');
-  assert.match(source, /closest\(event\.target, '\[data-wsa-resume-rebuild\]'\)[\s\S]{0,200}onMaintenanceAction\('rebuild', \{ rebuild: \{ resume: true \} \}\)/);
+  // One press answers one named failure; repeat clicks are ignored while it runs.
+  assert.match(source, /if \(ui\.resumePending\) return;[\s\S]{0,400}onMaintenanceAction\('rebuild', \{ rebuild: \{ resume: true, fromMessageId \} \}\)/);
 });

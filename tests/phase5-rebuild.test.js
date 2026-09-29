@@ -1499,8 +1499,25 @@ test('a resume is refused before any provider call when the chat or World State 
   });
   assert.equal(stateChanged.errorCode, 'WORLD_STATE_REBUILD_RESUME_STALE');
   assert.match(stateChanged.errorMessage, /changed since the rebuild failed/);
-  assert.equal(calls.count, 0);
   assert.deepEqual(stateChanged.state.records.map(record => record.summary), ['Southport harbor is open.']);
+
+  // The plan is bound into the resume point: different options cannot skip
+  // boundaries the candidate never processed.
+  for (const options of [{ includeHiddenMessages: false }, { maxBoundaries: 5 }, { startMessageId: 2 }]) {
+    const planChanged = await runManualRebuild({
+      ctx: {}, dispatcher: glitchingDispatcher({ calls }), state: original, chat,
+      chatKey: 'resume-stale', isCurrent: () => true, resume: failed.resume, ...options,
+    });
+    assert.equal(planChanged.errorCode, 'WORLD_STATE_REBUILD_RESUME_STALE', JSON.stringify(options));
+  }
+  // A tampered processed count is ignored: it is derived from the plan.
+  const tampered = await runManualRebuild({
+    ctx: {}, dispatcher: glitchingDispatcher({ calls: { count: 0, prompts: [] } }), state: original, chat,
+    chatKey: 'resume-stale', isCurrent: () => true, resume: { ...failed.resume, processedBoundaries: 99 },
+  });
+  assert.equal(tampered.outcome, 'completed');
+  assert.equal(tampered.processedBoundaries, 3);
+  assert.equal(calls.count, 0);
 });
 
 test('stale and cancelled rebuilds never offer a resume point', async () => {

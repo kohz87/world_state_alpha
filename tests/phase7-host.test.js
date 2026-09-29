@@ -1160,9 +1160,21 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
 
   // Resume is an explicit operator request that reuses the failed run's plan.
   assert.match(body, /const savedResume = rebuildRequest\.resume === true \? rebuildResumes\.get\(chatKey\) : null;/);
-  assert.match(body, /There is no failed rebuild to resume for this chat/);
-  assert.ok(body.indexOf('rebuildResumes.delete(chatKey);') < body.indexOf('runManualRebuild({'), 'a new run or a resume consumes the old resume point first');
+  // It must name the failure it answers, and a stale resume is refused before
+  // reconcile, status or provider side effects.
+  assert.match(body, /savedResume\.resume\.fromMessageId !== rebuildRequest\.fromMessageId/);
+  assert.match(body, /There is no failed rebuild to resume at that message for this chat/);
+  const staleAt = body.indexOf('rebuildSnapshotToken({ state, chat }) !== savedResume.resume.snapshotToken');
+  assert.ok(staleAt > 0 && staleAt < body.indexOf('extendCurrentBranchFast(chatKey)') && staleAt < body.indexOf("phase: 'running'"));
   assert.match(body, /resumeParams\.bootstrapRecoveryAtStart !== bootstrapRecoveryAtStart/);
+  assert.match(body, /resumeParams\.routeKey !== stableStringify\(routeSettings\(\)\)/);
+  assert.match(body, /':resume-' \+ savedResume\.resume\.fromMessageId/);
+  assert.match(body, /result\.providerCalls = priorTotals\.providerCalls \+/);
+  // Consumed only after every no-call early return (base map, planning, branch proof).
+  const consumeAt = body.indexOf('rebuildResumes.delete(chatKey);\n    const priorTotals');
+  assert.ok(consumeAt > body.indexOf('attached Spatial base map is unavailable') && consumeAt < body.indexOf('runManualRebuild({'));
+  const cacheStart = source.indexOf('function setCachedState(');
+  assert.match(source.slice(cacheStart, cacheStart + 400), /rebuildResumes\.delete\(chatKey\)/);
   assert.match(body, /resume: savedResume\?\.resume \|\| null,/);
 
   // Only a genuine failure that is still current leaves a resume point.
@@ -1173,6 +1185,6 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
   // Never persisted; dropped with the chat's runtime continuations (import, reset, rebuild success, eviction).
   const forgetStart = source.indexOf('function forgetBranchContinuations(');
   assert.match(source.slice(forgetStart, forgetStart + 200), /rebuildResumes\.delete\(chatKey\)/);
-  assert.match(source, /rebuildResume: rebuildResumes\.has\(chatKey\)/);
+  assert.match(source, /: null\)\)\(rebuildResumes\.get\(chatKey\)\),/);
   assert.doesNotMatch(fs.readFileSync('storage.js', 'utf8'), /resume/i);
 });
