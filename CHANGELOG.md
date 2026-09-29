@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.0-alpha.38 - Bulk resolve and supersede
+
+### Added
+
+- **Bulk manual lifecycle.** The World panel (Active, Recent and Search views) has a **Select records** mode. Tick active records or use **Select all shown** (first 100), then **Mark resolved** or **Mark superseded** to move them all to history at once. Records already in history cannot be selected.
+- One operator note and one confirmation cover the whole selection; the confirmation previews the first five summaries. Summaries stay unchanged in bulk.
+- The batch is all-or-nothing and is one manual boundary with one journal entry, so a rollback undoes it as a unit. Every record gets the same manual evidence note as a single action.
+- The host validates every selected record exactly as it does for one (identity, still active, summary and change point unchanged); one stale record cancels the whole batch and asks the operator to reselect.
+
+- Hardening from code review:
+  - bulk mode and its selection end whenever the tab or search text changes, and the action only sends rows currently shown, so records the operator cannot see are never changed;
+  - selection checkboxes announce their state to screen readers.
+
+### Architecture
+
+- New `applyManualLifecycleBatch` in `manual.js` shares the single-record boundary, lineage and reducer path. Core contract lifecycle-control paragraph amended. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- Added regressions for the batch (one boundary, evidence, all-or-nothing rejections, bounds), the panel rendering and controls, and the host validation wiring.
+- Drove the panel in Chromium: select, toggle, Select all, and the bulk action payload reaching the host handler. Real SillyTavern persistence and the browser prompt/confirm dialogs remain unverified live.
+
 ## 0.9.0-alpha.37 - Resume a failed rebuild
 
 ### Added

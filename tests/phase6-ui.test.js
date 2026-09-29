@@ -931,3 +931,46 @@ test('a failed rebuild shows Resume from message N on its status and in the rebu
   // One press answers one named failure; repeat clicks are ignored while it runs.
   assert.match(source, /if \(ui\.resumePending\) return;[\s\S]{0,400}onMaintenanceAction\('rebuild', \{ rebuild: \{ resume: true, fromMessageId \} \}\)/);
 });
+
+test('bulk select mode marks rows, offers bulk lifecycle actions, and never touches history rows', async () => {
+  const { buildWorldStateUiModel, renderWorldStatePanel } = await import('../ui.js');
+  const state = createState('chat:test:bulk');
+  state.records = [
+    record('a', { kind: 'development', summary: 'The dock strike is active.', trend: 'stable' }),
+    record('b', { kind: 'development', summary: 'The tollhouse blockade is active.', trend: 'rising' }),
+    record('c', { kind: 'fact', summary: 'The orchard gate is locked.' }),
+    record('d', { kind: 'development', summary: 'The old feud ended.', status: 'resolved' }),
+  ];
+  const model = buildWorldStateUiModel(state, {});
+
+  const off = renderWorldStatePanel(model, {});
+  assert.match(off, /data-wsa-bulk-toggle/);
+  assert.doesNotMatch(off, /data-wsa-bulk-action|wsa-record-check/);
+
+  const keys = new Set([model.views.current[0].key]);
+  const on = renderWorldStatePanel(model, { bulk: { active: true, keys } });
+  assert.match(on, /1 selected/);
+  assert.match(on, /data-wsa-bulk-select-all/);
+  assert.match(on, /data-wsa-bulk-action="resolve"/);
+  assert.match(on, /data-wsa-bulk-action="supersede"/);
+  assert.equal((on.match(/role="checkbox" aria-checked="true"/g) || []).length, 1);
+  assert.equal((on.match(/role="checkbox"/g) || []).length, 3);
+  assert.doesNotMatch(on, /<button[^>]*data-wsa-bulk-action[^>]*disabled/);
+
+  const empty = renderWorldStatePanel(model, { bulk: { active: true, keys: new Set() } });
+  assert.match(empty, /0 selected/);
+  assert.match(empty, /<button[^>]*data-wsa-bulk-action="resolve"[^>]*disabled/);
+
+  const history = renderWorldStatePanel(model, { activeTab: 'resolved', bulk: { active: true, keys } });
+  assert.doesNotMatch(history, /data-wsa-bulk-toggle|data-wsa-bulk-action|wsa-record-check/);
+
+  const source = fs.readFileSync('ui.js', 'utf8');
+  assert.match(source, /onRecordAction\(action, \{ records \}\)/);
+  assert.match(source, /bulkSelection: 100/);
+  assert.match(source, /pruneBulkSelection\(next\)/);
+  // The UI and host share one bound, and a tab or search change ends bulk mode so hidden rows are never sent.
+  const { MANUAL_LIMITS } = await import('../manual.js');
+  assert.equal(WORLD_STATE_UI_LIMITS.bulkSelection, MANUAL_LIMITS.bulkRecords);
+  assert.match(source, /bulkScope !== ui\.bulkScope[\s\S]{0,120}ui\.bulk\.active = false;[\s\S]{0,60}ui\.bulk\.keys\.clear\(\)/);
+  assert.match(source, /const shown = new Map\(selectedRecordRows\(model\(\)\)\.filter\(row => row\.status === 'active'\)/);
+});

@@ -15,6 +15,7 @@ export const WORLD_STATE_UI_LIMITS = Object.freeze({
   diagnostics: 80,
   evidence: 32,
   relations: 24,
+  bulkSelection: 100,
 });
 
 export const WORLD_STATE_UI_TABS = Object.freeze([
@@ -802,12 +803,20 @@ function anchorTags(record, limit = COLLAPSED_ANCHOR_LIMIT) {
   return shown + (hidden > 0 ? '<span class="wsa-tag is-more">+' + hidden + '</span>' : '');
 }
 
-function recordDisclosure(record, expanded, index, detail = null, model = {}) {
+function recordDisclosure(record, expanded, index, detail = null, model = {}, bulk = null) {
   const tone = recordTone(record);
   const when = messagesAgo(model, record.lastChangedMessage);
-  return '<details class="wsa-record-disclosure' + (expanded ? ' is-expanded' : '') + ' wsa-rec-' + tone + '"' + (expanded ? ' open' : '') + '>' +
+  const selectable = Boolean(bulk?.active) && record.status === 'active';
+  const checked = selectable && bulk.keys.has(record.key);
+  const check = bulk?.active
+    ? '<span class="wsa-record-check' + (checked ? ' is-checked' : '') + (selectable ? '' : ' is-disabled') +
+      '" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-disabled="' + (selectable ? 'false' : 'true') + '">' +
+      (checked ? icon('resolved') : '') + '<span class="wsa-sr-only">' +
+      (selectable ? (checked ? 'Selected. Press to unselect.' : 'Not selected. Press to select.') : 'Already in history.') + '</span></span>'
+    : '';
+  return '<details class="wsa-record-disclosure' + (expanded ? ' is-expanded' : '') + (checked ? ' is-selected' : '') + ' wsa-rec-' + tone + '"' + (expanded ? ' open' : '') + '>' +
     '<summary data-wsa-record-index="' + index + '">' +
-    '<span class="wsa-record-glyph" aria-hidden="true">' + icon(tone) + '</span>' +
+    (check || '<span class="wsa-record-glyph" aria-hidden="true">' + icon(tone) + '</span>') +
     '<span class="wsa-record-summary-main">' +
     '<span class="wsa-record-text">' + escapeHtml(record.summary || 'Untitled world state') + '</span>' +
     '<span class="wsa-record-meta">' + anchorTags(record) +
@@ -848,10 +857,10 @@ function currentRecordGroups(records, model) {
   ].filter(group => group.entries.length);
 }
 
-function recordsPane(records, model, emptyTitle, emptyBody, truncated, expanded = false, { grouped = false } = {}) {
+function recordsPane(records, model, emptyTitle, emptyBody, truncated, expanded = false, { grouped = false, bulk = null } = {}) {
   const row = ({ record, index }) => {
-    const isExpanded = expanded && record.key === model.selectedRecordId;
-    return recordDisclosure(record, isExpanded, index, isExpanded ? model.detail : null, model);
+    const isExpanded = !bulk?.active && expanded && record.key === model.selectedRecordId;
+    return recordDisclosure(record, isExpanded, index, isExpanded ? model.detail : null, model, bulk);
   };
   let rows;
   if (!records.length) {
@@ -1246,7 +1255,28 @@ function segmentButton(tab, activeTab, label, count, shortLabel = '') {
     '<em>' + count + '</em></button>';
 }
 
-function recordsViewHtml(model, tab, { detailOpen = false } = {}) {
+function bulkToolbarHtml(records, bulk) {
+  if (!bulk) {
+    return '<div class="wsa-bulk-bar"><button type="button" class="wsa-btn wsa-btn-sm wsa-btn-ghost" data-wsa-bulk-toggle>' +
+      icon('resolved') + 'Select records</button></div>';
+  }
+  const shown = records.filter(record => record.status === 'active');
+  const selected = shown.filter(record => bulk.keys.has(record.key)).length;
+  const limit = WORLD_STATE_UI_LIMITS.bulkSelection;
+  const disabled = selected ? '' : ' disabled';
+  return '<div class="wsa-bulk-bar is-active" role="toolbar" aria-label="Bulk lifecycle actions">' +
+    '<strong class="wsa-bulk-count">' + selected + ' selected</strong>' +
+    '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-ghost" data-wsa-bulk-select-all>Select all shown' +
+    (shown.length > limit ? ' (first ' + limit + ')' : '') + '</button>' +
+    '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-ghost" data-wsa-bulk-clear' + disabled + '>Clear</button>' +
+    '<span class="wsa-bulk-spacer"></span>' +
+    '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-bulk-action="resolve"' + disabled + '>' + icon('resolved') + 'Mark resolved</button>' +
+    '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-bulk-action="supersede"' + disabled + '>' + icon('superseded') + 'Mark superseded</button>' +
+    '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-ghost" data-wsa-bulk-toggle>' + icon('close') + 'Done</button>' +
+    '</div>';
+}
+
+function recordsViewHtml(model, tab, { detailOpen = false, bulk = null } = {}) {
   let records = model.views.current;
   let title = 'Current world state';
   let emptyTitle = 'No current world state';
@@ -1291,9 +1321,12 @@ function recordsViewHtml(model, tab, { detailOpen = false } = {}) {
       segmentButton('resolved', tab, 'Resolved', model.totals.resolved) +
       '</div></div>';
 
-  return '<section class="wsa-view wsa-records-view" aria-label="' + escapeHtml(title) + '">' +
+  const canBulk = tab !== 'resolved' && records.some(record => record.status === 'active');
+  const bulkState = canBulk && bulk?.active ? bulk : null;
+  return '<section class="wsa-view wsa-records-view' + (bulkState ? ' is-bulk' : '') + '" aria-label="' + escapeHtml(title) + '">' +
     toolbar +
-    recordsPane(records, model, emptyTitle, emptyBody, truncated, detailOpen, { grouped: tab === 'current' }) +
+    (canBulk ? bulkToolbarHtml(records, bulkState) : '') +
+    recordsPane(records, model, emptyTitle, emptyBody, truncated, detailOpen, { grouped: tab === 'current', bulk: bulkState }) +
     '</section>';
 }
 
@@ -1618,6 +1651,7 @@ export function renderWorldStatePanel(model, {
   rebuildOpen = false,
   rebuildForm = {},
   dismissedRebuildOperationId = '',
+  bulk = null,
 } = {}) {
   const tab = WORLD_STATE_UI_TABS.includes(activeTab) ? activeTab : 'current';
   const isWorld = WORLD_RECORD_TABS.includes(tab);
@@ -1629,7 +1663,7 @@ export function renderWorldStatePanel(model, {
   if (tab === 'spatial') body = spatialViewHtml(model, { detailOpen: spatialDetailOpen, editing: spatialEditing, mapSettingsOpen });
   else if (tab === 'diagnostics') body = diagnosticsHtml(model);
   else if (tab === 'maintenance') body = maintenanceHtml(model);
-  else body = recordsViewHtml(model, tab, { detailOpen });
+  else body = recordsViewHtml(model, tab, { detailOpen, bulk });
 
   const rebuildStatus = model.maintenance.rebuild.status;
   const showStatus = rebuildStatus && rebuildStatus.operationId !== dismissedRebuildOperationId;
@@ -1689,6 +1723,8 @@ export function createWorldStateUiController({
     menuOpen: false,
     mobileMoreOpen: false,
     rebuildOpen: false,
+    bulk: { active: false, keys: new Set() },
+    bulkScope: '',
     dismissedRebuildOperationId: '',
     rebuildForm: {
       mode: 'full',
@@ -1722,6 +1758,15 @@ export function createWorldStateUiController({
       ui.dismissedRebuildOperationId = '';
     }
     ui.selectedRecordId = next.selectedRecordId;
+    // Bulk mode belongs to one list: changing tab or search text ends it, so a selection can never
+    // include rows the operator can no longer see.
+    const bulkScope = ui.activeTab + '|' + ui.query;
+    if (bulkScope !== ui.bulkScope) {
+      ui.bulkScope = bulkScope;
+      ui.bulk.active = false;
+      ui.bulk.keys.clear();
+    }
+    pruneBulkSelection(next);
     ui.selectedSpatialKey = next.spatial.selectedKey;
     if (!Number.isInteger(ui.rebuildForm.maxBoundaries)) {
       ui.rebuildForm.maxBoundaries = next.maintenance.rebuild.defaultMaxBoundaries;
@@ -1744,6 +1789,7 @@ export function createWorldStateUiController({
       rebuildOpen: ui.rebuildOpen,
       rebuildForm: ui.rebuildForm,
       dismissedRebuildOperationId: ui.dismissedRebuildOperationId,
+      bulk: ui.bulk,
     });
 
     if (restoreSearchFocus) {
@@ -1778,6 +1824,20 @@ export function createWorldStateUiController({
         : ui.activeTab === 'search'
           ? currentModel.views.search
           : currentModel.views.current;
+  }
+
+  function activeRowsByKey(currentModel) {
+    const rows = new Map();
+    for (const view of Object.values(currentModel.views)) {
+      for (const record of view) if (record.status === 'active') rows.set(record.key, record);
+    }
+    return rows;
+  }
+
+  function pruneBulkSelection(currentModel) {
+    if (!ui.bulk.keys.size) return;
+    const live = activeRowsByKey(currentModel);
+    for (const key of [...ui.bulk.keys]) if (!live.has(key)) ui.bulk.keys.delete(key);
   }
 
   async function copyOperationJson(button) {
@@ -2002,11 +2062,69 @@ export function createWorldStateUiController({
       return;
     }
 
+    if (closest(event.target, '[data-wsa-bulk-toggle]')) {
+      ui.bulk.active = !ui.bulk.active;
+      ui.bulk.keys.clear();
+      ui.detailOpen = false;
+      refresh();
+      return;
+    }
+
+    if (closest(event.target, '[data-wsa-bulk-clear]')) {
+      ui.bulk.keys.clear();
+      refresh();
+      return;
+    }
+
+    if (closest(event.target, '[data-wsa-bulk-select-all]')) {
+      const shown = selectedRecordRows(model()).filter(row => row.status === 'active' && row.key);
+      ui.bulk.keys.clear();
+      for (const row of shown.slice(0, WORLD_STATE_UI_LIMITS.bulkSelection)) ui.bulk.keys.add(row.key);
+      refresh();
+      return;
+    }
+
+    const bulkAction = closest(event.target, '[data-wsa-bulk-action]');
+    if (bulkAction && typeof onRecordAction === 'function') {
+      const action = clean(bulkAction.dataset?.wsaBulkAction, 24);
+      if (!['resolve', 'supersede'].includes(action) || ui.bulkPending) return;
+      const shown = new Map(selectedRecordRows(model()).filter(row => row.status === 'active').map(row => [row.key, row]));
+      const records = [...ui.bulk.keys].map(key => shown.get(key)).filter(Boolean)
+        .slice(0, WORLD_STATE_UI_LIMITS.bulkSelection)
+        .map(row => ({
+          key: row.key,
+          kind: row.kind,
+          status: row.status,
+          summary: row.summary,
+          createdAtMessage: row.createdAtMessage,
+          lastChangedMessage: row.lastChangedMessage,
+        }));
+      if (!records.length) return;
+      ui.bulkPending = true;
+      try {
+        await onRecordAction(action, { records });
+      } finally {
+        ui.bulkPending = false;
+      }
+      refresh();
+      return;
+    }
+
     const record = closest(event.target, '[data-wsa-record-index]');
     if (record) {
       const index = Number(record.dataset?.wsaRecordIndex);
       const currentModel = model();
       const rows = selectedRecordRows(currentModel);
+      if (ui.bulk.active && WORLD_RECORD_TABS.includes(ui.activeTab) && ui.activeTab !== 'resolved') {
+        event.preventDefault?.();
+        const row = Number.isInteger(index) && index >= 0 ? rows[index] : null;
+        if (row?.key && row.status === 'active') {
+          if (ui.bulk.keys.has(row.key)) ui.bulk.keys.delete(row.key);
+          else if (ui.bulk.keys.size < WORLD_STATE_UI_LIMITS.bulkSelection) ui.bulk.keys.add(row.key);
+        }
+        refresh();
+        return;
+      }
       if (Number.isInteger(index) && index >= 0 && rows[index]?.key) {
         const same = ui.selectedRecordId === rows[index].key;
         ui.selectedRecordId = rows[index].key;

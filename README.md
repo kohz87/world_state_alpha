@@ -11,7 +11,7 @@ It is the world-level sibling of [NPC State Delta](https://github.com/kohz87/npc
 | NPC State Delta | "What is true about *this character* right now?" |
 | **World State Alpha** | "What is true about *the wider world* right now?" |
 
-> **Status:** `0.9.0-alpha.37`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
+> **Status:** `0.9.0-alpha.38`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
 
 ---
 
@@ -94,6 +94,7 @@ Swipe, edit or delete that original reply, and the record goes away with it.
   - The current state is only replaced after the whole rebuild succeeds.
 - **Export / import** World State bundles, with a preview and confirmation.
 - **Manual lifecycle:** mark any record resolved or superseded, with a note explaining why.
+  - **Bulk:** use **Select records** on the World panel to tick many active records (or **Select all shown**, up to 100) and mark them resolved or superseded in one step with a single note. It is all-or-nothing, and one rollback undoes it.
 
 ### Interface
 - **A World / Places panel** with grouped, colour-coded records, search, an Operations log and data tools. Works on desktop, tablet and phone.
