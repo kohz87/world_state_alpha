@@ -974,3 +974,10 @@ test('bulk select mode marks rows, offers bulk lifecycle actions, and never touc
   assert.match(source, /bulkScope !== ui\.bulkScope[\s\S]{0,120}ui\.bulk\.active = false;[\s\S]{0,60}ui\.bulk\.keys\.clear\(\)/);
   assert.match(source, /const shown = new Map\(selectedRecordRows\(model\(\)\)\.filter\(row => row\.status === 'active'\)/);
 });
+
+test('re-rendering the panel keeps the record and place list scroll position within a tab', () => {
+  const source = fs.readFileSync('ui.js', 'utf8');
+  assert.match(source, /SCROLL_KEEP_SELECTORS = Object\.freeze\(\['\.wsa-view', '\.wsa-place-list'\]\)/);
+  // Captured before the wholesale innerHTML replacement, restored after it, and only when the tab did not change.
+  assert.match(source, /ui\.renderedTab === ui\.activeTab[\s\S]{0,200}scrollTop[\s\S]*root\.innerHTML = renderWorldStatePanel[\s\S]*ui\.renderedTab = ui\.activeTab;[\s\S]{0,200}el\.scrollTop = top/);
+});

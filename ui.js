@@ -1694,6 +1694,8 @@ export function renderWorldStatePanel(model, {
     '</div>';
 }
 
+const SCROLL_KEEP_SELECTORS = Object.freeze(['.wsa-view', '.wsa-place-list']);
+
 export function createWorldStateUiController({
   root,
   getState,
@@ -1725,6 +1727,7 @@ export function createWorldStateUiController({
     rebuildOpen: false,
     bulk: { active: false, keys: new Set() },
     bulkScope: '',
+    renderedTab: '',
     dismissedRebuildOperationId: '',
     rebuildForm: {
       mode: 'full',
@@ -1778,6 +1781,11 @@ export function createWorldStateUiController({
         Math.max(1, next.maintenance.rebuild.chatMessages),
       ),
     );
+    // The panel re-renders wholesale, which resets every scroll container. Keep the operator's place in the
+    // record and place lists across in-tab updates (selecting, expanding, bulk ticks); a tab change starts at the top.
+    const keptScroll = ui.renderedTab === ui.activeTab
+      ? SCROLL_KEEP_SELECTORS.map(selector => [selector, root.querySelector?.(selector)?.scrollTop || 0])
+      : [];
     root.innerHTML = renderWorldStatePanel(next, {
       activeTab: ui.activeTab,
       detailOpen: ui.detailOpen,
@@ -1791,6 +1799,11 @@ export function createWorldStateUiController({
       dismissedRebuildOperationId: ui.dismissedRebuildOperationId,
       bulk: ui.bulk,
     });
+    ui.renderedTab = ui.activeTab;
+    for (const [selector, top] of keptScroll) {
+      const el = top > 0 ? root.querySelector?.(selector) : null;
+      if (el) el.scrollTop = top;
+    }
 
     if (restoreSearchFocus) {
       const inputs = [...(root.querySelectorAll?.('[data-wsa-search]') || [])];
