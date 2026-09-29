@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.0-alpha.37 - Resume a failed rebuild
+
+### Added
+
+- **Resume from message N.** When a rebuild boundary genuinely fails (for example a provider reply corrupted by a stray token), World State now keeps the progress up to the failed boundary in memory. The failure notice and the rebuild sheet offer **Resume from message N**, which re-sends that message's request and continues. Earlier messages are not redone, so a glitch late in a long rebuild no longer costs the whole run.
+- Resume is safe by construction:
+  - it re-sends the failed boundary's unmodified request and never feeds the malformed reply back (not a correction retry);
+  - it only happens when the operator presses Resume, never automatically;
+  - it is refused before any provider call if the chat, the canonical World State, or the rebuild settings changed since the failure;
+  - replacement stays atomic: canonical state changes only after every boundary succeeds;
+  - the resume point is never persisted and is dropped by a new rebuild, import, reset, a completed rebuild or leaving the chat.
+- Cancelled or stale rebuilds offer no resume.
+
+### Architecture
+
+- Core contract C06 amended: an operator-initiated rebuild resume is the one explicit exception to "no retry". Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- Added regressions for:
+  - the rebuild resume point;
+  - resuming with the identical failed-boundary request, calling only the failed and later boundaries, and converging with an uninterrupted full rebuild;
+  - a stale resume refused with zero calls;
+  - no resume after stale or cancelled runs;
+  - host wiring, in memory only;
+  - the panel Resume button and sheet notice.
+- Live SillyTavern 1.19 with a stubbed model: a stray-token glitch at message 6 failed the rebuild after 4 calls, and Resume finished all 6 boundaries with 3 more calls instead of a 6-call re-run.
+
+
 ## 0.9.0-alpha.36 - Keep model JSON parseable around dialogue
 
 ### Fixed
