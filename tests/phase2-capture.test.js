@@ -1874,3 +1874,99 @@ test('a single extortion scene is captured as an attributed ongoing arrangement,
   assert.equal(unattributed.outcome, 'no-change');
   assert.equal(unattributed.state.records.length, 0);
 });
+
+// Live report: a character's earlier incident record stayed active after the
+// story established the character's death, and records about the killed
+// racketeers stayed active too.
+function greyPostState() {
+  const earlier = withLineage([{
+    role: 'assistant',
+    content: 'Mistress Vena lies unconscious in her bedchamber at The Grey Post; her coin is gone and her shutters are broken. Bran and two accomplices run a protection racket out of The Grey Post. Clara serves at The Grey Post.',
+  }]);
+  const state = reduceMutations(createState('capture-grey-post'), {
+    chatKey: 'capture-grey-post',
+    messageId: 0,
+    lineageKey: earlier[0].lineageKey,
+    mutations: [
+      {
+        action: 'create',
+        kind: 'fact',
+        summary: 'Mistress Vena was knocked unconscious in her bedchamber at The Grey Post, her daily coin earnings were stolen, and her window shutters were broken open to stage a break-in.',
+        anchors: ['Mistress Vena', 'The Grey Post'],
+      },
+      {
+        action: 'create',
+        kind: 'development',
+        summary: 'Bran and two accomplices run a protection racket out of The Grey Post.',
+        anchors: ['Bran', 'The Grey Post', 'protection racket'],
+      },
+      {
+        action: 'create',
+        kind: 'fact',
+        summary: 'Clara serves at The Grey Post.',
+        anchors: ['Clara', 'The Grey Post'],
+      },
+    ],
+  }).state;
+  return state;
+}
+
+const GREY_POST_DEATHS = 'Mistress Vena and Clara were found dead in their bedchamber at The Grey Post, while Bran and his two accomplices were killed and left throughout the inn.';
+
+test('capture prompt tells the model a death ends dependent records, keeps the death current, and states current conditions', () => {
+  assert.match(CAPTURE_SYSTEM_PROMPT, /A death, destruction, or elimination established by CURRENT EXCHANGE ends shown active records \(facts or developments\) that depend on/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Keep the death itself current: update a shown active record describing that subject's state to the new state \(for example injured or robbed -> dead\), or create a fact for it when none is shown; never leave a death only in a resolved or superseded record/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Merely mentioning, threatening, fearing, or suspecting a death never ends a record/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Write each create\/update summary as the condition that is true now/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /A resolve\/supersede summary may state how the record ended/);
+
+  const state = greyPostState();
+  const exchange = withLineage([{ role: 'assistant', content: GREY_POST_DEATHS }]);
+  const prompt = buildCapturePrompt({ exchange, visibleRecords: state.records });
+  assert.match(prompt.prompt, /LIFECYCLE CHECK: If CURRENT EXCHANGE explicitly ends\/completes\/fails\/eliminates a shown active record \(fact or development\), including through the death or elimination of the person or group it depends on/);
+});
+
+test('records about the dead reach capture through the production relevance pick', async () => {
+  const { buildRelevanceIndex, selectRelevantRecords } = await import('../relevance.js');
+  const state = greyPostState();
+  const visible = selectRelevantRecords(state, {
+    index: buildRelevanceIndex(state),
+    recentText: GREY_POST_DEATHS,
+    currentMessageId: 1,
+    maxRecords: 8,
+  }).selected.map(item => item.record.id);
+  for (const record of state.records) assert.ok(visible.includes(record.id), record.summary + ' must be shown to capture');
+});
+
+test('a death in the current exchange keeps the dead current and resolves what depended on them', () => {
+  const state = greyPostState();
+  const [vena, racket, clara] = state.records;
+  const exchange = withLineage([
+    { role: 'user', content: 'I return to The Grey Post at dawn.' },
+    { role: 'assistant', content: GREY_POST_DEATHS },
+  ]);
+  const excerpt = claim => [{ sourceMessageId: 1, claim }];
+  const payload = JSON.stringify({
+    mutations: [
+      { action: 'update', recordId: vena.id, summary: 'Mistress Vena is dead, found in her bedchamber at The Grey Post.', evidence: excerpt('Mistress Vena and Clara were found dead in their bedchamber at The Grey Post') },
+      { action: 'update', recordId: clara.id, summary: 'Clara is dead, found in her bedchamber at The Grey Post.', evidence: excerpt('Mistress Vena and Clara were found dead in their bedchamber at The Grey Post') },
+      { action: 'resolve', recordId: racket.id, summary: "Bran's protection racket at The Grey Post ended when Bran and his two accomplices were killed.", evidence: excerpt('Bran and his two accomplices were killed and left throughout the inn') },
+    ],
+  });
+  const result = processCaptureResponse({
+    text: payload,
+    state,
+    exchange,
+    visibleRecords: state.records,
+    chatKey: 'capture-grey-post',
+    ...sourceBoundary(exchange),
+  });
+  assert.deepEqual(result.rejected, []);
+  assert.equal(result.acceptedCount, 3);
+  const byId = new Map(result.state.records.map(record => [record.id, record]));
+  assert.equal(byId.get(vena.id).status, 'active');
+  assert.match(byId.get(vena.id).summary, /Mistress Vena is dead/);
+  assert.equal(byId.get(clara.id).status, 'active');
+  assert.match(byId.get(clara.id).summary, /Clara is dead/);
+  assert.equal(byId.get(racket.id).status, 'resolved');
+});

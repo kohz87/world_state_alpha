@@ -225,6 +225,7 @@ Deliverables:
 - v0.9.0-alpha.32 accumulated day steps: narrated day steps since the last persisted elapsed catch-up (one per exchange, hidden/quoted/planned/hypothetical excluded, lineage-bound, fresh-window only) combine into one meaningful elapsed hint at two days; last elapsed boundary tracked incrementally on the relevance index
 - v0.9.0-alpha.33 branch continuity through ordinary editing: local tail delete/regenerate rolls back instead of failing closed as host-chat-behind, parked swipe branches resume exactly, settled existing swipes and edited latest replies are captured, unjournaled states are exact from an equal on-branch checkpoint, hide/unhide is visibility-only with rollback from the first real change, the Operations log persists in its own per-chat server file, and partial rebuild names the earliest provable start; durable formats unchanged
 - v0.9.0-alpha.34 stable evolution provenance: the evolution prompt asks every evaluation to cite its trigger support; a `stable` evaluation that omits it records its own target's elapsed/current trigger instead of invalidating the batch; changed outcomes stay strict; durable formats unchanged
+- v0.9.0-alpha.35 death ends dependent records: setting-neutral capture rule that an established death/destruction/elimination resolves conditions the dead ran or suffered and keeps the death current (update the subject's state record or create a fact; threats end nothing), present-condition create/update summaries, and a fact-inclusive per-request LIFECYCLE CHECK; durable formats unchanged
 
 Acceptance:
 

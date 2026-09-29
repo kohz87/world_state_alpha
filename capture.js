@@ -104,12 +104,14 @@ export const CAPTURE_SYSTEM_PROMPT = [
   'Story-driving CoT principles such as autonomous world motion, scene variation, chance, escalation, or avoiding stagnation do not apply to capture and are not evidence.',
   'Existing World State records are current campaign authority. Lore is baseline context/possibility only and cannot by itself establish a current condition.',
   'Never invent off-screen developments, outcomes, consequences, or causal links.',
+  'Write each create/update summary as the condition that is true now (who or what is in which state), not as a narrated past event: describe lasting consequences such as injury, loss, damage, death, or control rather than retelling the incident that caused them. A resolve/supersede summary may state how the record ended.',
   'For every non-noop mutation, cite 1-4 short verbatim excerpts from CURRENT EXCHANGE using sourceMessageId.',
   'Use shown record IDs only for update/resolve/supersede/related links. Never create an ID.',
   'Reality mutation field names are exact: use kind and summary. Never substitute category for kind or description for summary.',
   'Reconcile lifecycle for shown active records addressed by CURRENT EXCHANGE: resolve only when explicitly ended, completed, failed, eliminated, or permanently ceased; supersede only when explicitly replaced; update if it still exists but changed.',
   'Resolved/superseded records shown for recurrence checks are immutable history: never update, resolve, or supersede them. A genuinely new recurrence must be a create with newEpisodeOfRecordId.',
   'If an INTERPRETIVE LIFECYCLE ANTECEDENT is shown, it is prior accepted context for resolving an indirect reference only; it is not mutation evidence. CURRENT EXCHANGE must still establish the update/ending/replacement.',
+  'A death, destruction, or elimination established by CURRENT EXCHANGE ends shown active records (facts or developments) that depend on that person, group, or thing continuing: resolve conditions they were running, holding, or suffering (an injury, captivity, occupation, a racket or scheme they ran). Keep the death itself current: update a shown active record describing that subject\'s state to the new state (for example injured or robbed -> dead), or create a fact for it when none is shown; never leave a death only in a resolved or superseded record. Merely mentioning, threatening, fearing, or suspecting a death never ends a record.',
   'An ending may be transient as an event but still retires the prior ongoing record. Silence, off-screen status, temporary absence, escape, interruption, uncertainty, scene departure, or PC irrelevance never proves resolution.',
   'Use resolve/supersede for lifecycle changes; do not smuggle them through update. If no persistent change or proven lifecycle transition exists, return {"mutations":[]}.',
 ].join(' ');
@@ -253,7 +255,7 @@ export function buildCapturePrompt({
       ? 'Use this only to bind an indirect reference in CURRENT EXCHANGE to an already-active record. CURRENT EXCHANGE alone must establish any changed/ended/replaced state. Keep enough subject wording from the shown antecedent in the proposed summary for deterministic target validation.'
       : '',
     '',
-    'LIFECYCLE CHECK: If CURRENT EXCHANGE explicitly ends/completes/fails/eliminates a shown active development, resolve it; if explicitly replaces it, supersede it; if it continues but changed, update it. Silence, off-screen status, absence, escape, or uncertainty never proves resolution.',
+    'LIFECYCLE CHECK: If CURRENT EXCHANGE explicitly ends/completes/fails/eliminates a shown active record (fact or development), including through the death or elimination of the person or group it depends on, resolve it; if explicitly replaces it, supersede it; if it continues but changed, update it. Silence, off-screen status, absence, escape, or uncertainty never proves resolution.',
     operation === 'rebuild'
       ? 'REBUILD: Later historical boundaries may close earlier active threads; reconcile those endings so completed episodes do not remain active.'
       : '',
