@@ -1913,45 +1913,43 @@ function greyPostState() {
 
 const GREY_POST_DEATHS = 'Mistress Vena and Clara were found dead in their bedchamber at The Grey Post, while Bran and his two accomplices were killed and left throughout the inn.';
 
-test('capture prompt tells the model a death ends dependent records and summaries state current conditions', () => {
-  assert.match(CAPTURE_SYSTEM_PROMPT, /A death, destruction, or elimination established by CURRENT EXCHANGE ends shown active records that depend on/);
-  assert.match(CAPTURE_SYSTEM_PROMPT, /supersede a record describing their state when the new state replaces it \(for example injured or robbed -> dead\)/);
+test('capture prompt tells the model a death ends dependent records, keeps the death current, and states current conditions', () => {
+  assert.match(CAPTURE_SYSTEM_PROMPT, /A death, destruction, or elimination established by CURRENT EXCHANGE ends shown active records \(facts or developments\) that depend on/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Keep the death itself current: update a shown active record describing that subject's state to the new state \(for example injured or robbed -> dead\), or create a fact for it when none is shown; never leave a death only in a resolved or superseded record/);
   assert.match(CAPTURE_SYSTEM_PROMPT, /Merely mentioning, threatening, fearing, or suspecting a death never ends a record/);
-  assert.match(CAPTURE_SYSTEM_PROMPT, /Write each summary as the condition that is true now/);
-});
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Write each create\/update summary as the condition that is true now/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /A resolve\/supersede summary may state how the record ended/);
 
-test('facts named by the current exchange compete for lifecycle slots; scene context stays development-only', async () => {
-  const { buildRelevanceIndex, selectLifecycleCandidates } = await import('../relevance.js');
   const state = greyPostState();
-  const index = buildRelevanceIndex(state);
-  const vena = state.records.find(record => /Mistress Vena/.test(record.summary));
-
-  const named = selectLifecycleCandidates(state, { index, currentText: GREY_POST_DEATHS, currentMessageId: 1, maxRecords: 4 });
-  assert.ok(named.selected.some(item => item.record.id === vena.id && item.lifecycleSource === 'current-exchange'));
-
-  // An anaphoric scene-context antecedent is still only an ongoing development.
-  const context = selectLifecycleCandidates(state, {
-    index,
-    currentText: 'It is finally over.',
-    contextText: 'Mistress Vena lies unconscious at The Grey Post while Bran runs his protection racket.',
-    currentMessageId: 1,
-    maxRecords: 4,
-  });
-  assert.ok(context.selected.filter(item => item.lifecycleSource === 'scene-context').every(item => item.record.kind === 'development'));
+  const exchange = withLineage([{ role: 'assistant', content: GREY_POST_DEATHS }]);
+  const prompt = buildCapturePrompt({ exchange, visibleRecords: state.records });
+  assert.match(prompt.prompt, /LIFECYCLE CHECK: If CURRENT EXCHANGE explicitly ends\/completes\/fails\/eliminates a shown active record \(fact or development\), including through the death or elimination of the person or group it depends on/);
 });
 
-test('a death established in the current exchange can supersede and resolve the records that depended on those people', () => {
+test('records about the dead reach capture through the production relevance pick', async () => {
+  const { buildRelevanceIndex, selectRelevantRecords } = await import('../relevance.js');
+  const state = greyPostState();
+  const visible = selectRelevantRecords(state, {
+    index: buildRelevanceIndex(state),
+    recentText: GREY_POST_DEATHS,
+    currentMessageId: 1,
+    maxRecords: 8,
+  }).selected.map(item => item.record.id);
+  for (const record of state.records) assert.ok(visible.includes(record.id), record.summary + ' must be shown to capture');
+});
+
+test('a death in the current exchange keeps the dead current and resolves what depended on them', () => {
   const state = greyPostState();
   const [vena, racket, clara] = state.records;
   const exchange = withLineage([
     { role: 'user', content: 'I return to The Grey Post at dawn.' },
     { role: 'assistant', content: GREY_POST_DEATHS },
   ]);
-  const excerpt = (claim) => [{ sourceMessageId: 1, claim }];
+  const excerpt = claim => [{ sourceMessageId: 1, claim }];
   const payload = JSON.stringify({
     mutations: [
-      { action: 'supersede', recordId: vena.id, summary: 'Mistress Vena is dead, found in her bedchamber at The Grey Post.', evidence: excerpt('Mistress Vena and Clara were found dead in their bedchamber at The Grey Post') },
-      { action: 'supersede', recordId: clara.id, summary: 'Clara is dead, found in her bedchamber at The Grey Post.', evidence: excerpt('Mistress Vena and Clara were found dead in their bedchamber at The Grey Post') },
+      { action: 'update', recordId: vena.id, summary: 'Mistress Vena is dead, found in her bedchamber at The Grey Post.', evidence: excerpt('Mistress Vena and Clara were found dead in their bedchamber at The Grey Post') },
+      { action: 'update', recordId: clara.id, summary: 'Clara is dead, found in her bedchamber at The Grey Post.', evidence: excerpt('Mistress Vena and Clara were found dead in their bedchamber at The Grey Post') },
       { action: 'resolve', recordId: racket.id, summary: "Bran's protection racket at The Grey Post ended when Bran and his two accomplices were killed.", evidence: excerpt('Bran and his two accomplices were killed and left throughout the inn') },
     ],
   });
@@ -1966,25 +1964,9 @@ test('a death established in the current exchange can supersede and resolve the 
   assert.deepEqual(result.rejected, []);
   assert.equal(result.acceptedCount, 3);
   const byId = new Map(result.state.records.map(record => [record.id, record]));
-  assert.equal(byId.get(vena.id).status, 'superseded');
-  assert.equal(byId.get(clara.id).status, 'superseded');
+  assert.equal(byId.get(vena.id).status, 'active');
+  assert.match(byId.get(vena.id).summary, /Mistress Vena is dead/);
+  assert.equal(byId.get(clara.id).status, 'active');
+  assert.match(byId.get(clara.id).summary, /Clara is dead/);
   assert.equal(byId.get(racket.id).status, 'resolved');
-  assert.equal(result.state.records.filter(record => record.status === 'active').length, 0);
-});
-
-test('a death named only in a threat, or a response that proposes nothing, closes nothing', () => {
-  const state = greyPostState();
-  const exchange = withLineage([
-    { role: 'user', content: 'I ask about Vena.' },
-    { role: 'assistant', content: 'Bran growls that Mistress Vena will be dead by morning if she talks.' },
-  ]);
-  const result = processCaptureResponse({
-    text: '{"mutations":[]}',
-    state,
-    exchange,
-    visibleRecords: state.records,
-    chatKey: 'capture-grey-post',
-    ...sourceBoundary(exchange),
-  });
-  assert.equal(result.state.records.every(record => record.status === 'active'), true);
 });

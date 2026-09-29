@@ -237,7 +237,7 @@ A fuller example is in [`tests/fixtures/cartesian-base-map-sample.json`](tests/f
 
 | When | Calls |
 |---|---|
-| After each assistant reply | **1** capture call. It reads only that exchange; the prompt is about 1.75k tokens plus the exchange, or about 2.1k with Places. |
+| After each assistant reply | **1** capture call. It reads only that exchange; the prompt is about 1.8k tokens plus the exchange, or about 2.2k with Places. |
 | When you send a message and story time has passed | **0 or 1** catch-up call, covering at most 6 developments |
 | Ordinary turns | **0** extra calls for the note itself; relevance is picked locally |
 | Rebuild | Only when you start it: one call per assistant reply rebuilt |

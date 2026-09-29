@@ -5,25 +5,25 @@
 ### Fixed
 
 - **Deaths left older records active.** A character's earlier incident ("Mistress Vena was knocked unconscious… her coin was stolen…") and a gang's racket stayed active after the story established that Vena and Clara were found dead and Bran's crew were killed. Capture was told to resolve only what was "explicitly ended" and to supersede only what was "explicitly replaced". Nothing covered deaths, and a record written as a past event looked permanently true to the model.
-- The capture prompt now says that a death, destruction, or elimination established by the current exchange ends shown active records that depended on that person, group, or thing continuing:
-  - it supersedes a record describing their state (injured or robbed → dead);
-  - it resolves conditions they were running, holding or suffering (an injury, captivity, occupation, or a racket or scheme they ran).
-  - A merely mentioned, threatened, feared or suspected death still ends nothing.
-- Capture is asked to write each summary as the condition that is true now (lasting injury, loss, damage, death, control) rather than a retelling of the incident.
-- Active facts named by the current exchange now compete for the bounded lifecycle slots alongside developments. The wider scene-context antecedent stays development-only.
+- The capture prompt now says that a death, destruction, or elimination established by the current exchange ends shown active records, facts included, that depended on that person, group, or thing continuing:
+  - it resolves conditions they were running, holding or suffering (an injury, captivity, occupation, or a racket or scheme they ran);
+  - the death itself stays current: the model updates a record describing the person's state to the new state (injured or robbed → dead), or creates a fact for it. It is never left only in resolved/superseded history, which the private note does not include;
+  - a merely mentioned, threatened, feared or suspected death still ends nothing.
+- The per-request lifecycle check now covers facts as well as developments and names death or elimination explicitly.
+- Capture is asked to write create/update summaries as the condition that is true now (lasting injury, loss, damage, death, control) rather than a retelling of the incident. Resolve/supersede summaries may still say how a record ended.
+- Hardening from code review: an earlier draft also let named facts compete for the two reserved lifecycle slots. That was reverted before release, because it broke indirect endings ("It is finally over.") and crowded out weakly matched developments. Named facts already reach capture through the ordinary relevance pick.
 
 ### Architecture
 
-- Core contract C06 records the death/elimination rule, present-condition summaries and fact lifecycle slots. The source firewall is unchanged: every resolve or supersede still needs a current-exchange excerpt that names its target. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+- Core contract C06 records the death/elimination rule, the keep-the-death-current requirement and present-condition summaries. The source firewall is unchanged: every resolve, supersede or update still needs a current-exchange excerpt that names its target. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
 
 ### Validation
 
 - Added regressions for:
-  - the prompt rules;
-  - named facts entering lifecycle slots while scene context stays development-only;
-  - a Grey Post death exchange accepted to supersede Vena's and Clara's facts and resolve Bran's racket;
-  - a threat-only exchange closing nothing.
-- The prompt and lifecycle-slot regressions fail on the previous code. The acceptance and threat regressions pass both ways, which shows the reducer and firewall already accepted such closures; the gap was the prompt.
+  - the system-prompt and per-request lifecycle rules;
+  - all Grey Post records reaching capture through the production relevance pick;
+  - a Grey Post death exchange accepted to update Vena's and Clara's facts to dead (still active) and resolve Bran's racket.
+- The prompt regression fails on the previous code. The visibility and acceptance regressions pass both ways, which shows the reducer, firewall and relevance pick already allowed this; the gap was the prompt.
 - Existing records already written as past events are not rewritten automatically. Close them from the panel or run Rebuild from chat.
 
 
