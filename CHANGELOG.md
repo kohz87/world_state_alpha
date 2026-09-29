@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.0-alpha.36 - Keep capture JSON parseable around dialogue
+
+### Fixed
+
+- **Malformed capture replies aborted rebuilds.** A rebuild failed at 18/26 boundaries with `capture response is not valid JSON: Expected ',' or ']' after array element`. Because a rebuild is atomic, one bad reply discarded every earlier boundary and its calls. The most common cause of this error is a verbatim dialogue excerpt copied with raw double quotes, which ends the JSON string early.
+- The capture prompt, which rebuild uses too, now tells the model never to put a raw double quote inside a JSON string. In excerpts it may leave dialogue quotation marks out, since excerpt grounding already ignores punctuation, or escape them. It is also told to emit nothing outside the JSON object and its strings.
+- The reply in the reported failure was actually corrupted by a stray token (`]偏}`), not a quote. This change cannot prevent that kind of provider glitch: such output is still rejected whole. A way to resume a failed rebuild from the failed boundary is a separate, larger change.
+
+### Architecture
+
+- Core contract C06 records the parseability guidance. Malformed output stays fail-closed: no repair, no correction retry. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- Added regressions for:
+  - the prompt rule;
+  - a dialogue excerpt with its quotation marks left out or escaped still grounding and being accepted;
+  - the live stray-token reply still being rejected.
+- The prompt regression fails on the previous code; the other two pass both ways.
+
+
 ## 0.9.0-alpha.35 - A death ends the records that depended on it
 
 ### Fixed
