@@ -975,9 +975,35 @@ test('bulk select mode marks rows, offers bulk lifecycle actions, and never touc
   assert.match(source, /const shown = new Map\(selectedRecordRows\(model\(\)\)\.filter\(row => row\.status === 'active'\)/);
 });
 
-test('re-rendering the panel keeps the record and place list scroll position within a tab', () => {
+test('scroll memory returns an offset only under the identity it was recorded for', async () => {
+  const { createScrollMemory } = await import('../ui.js');
+  const memory = createScrollMemory({ limit: 3 });
+  memory.remember('chat:a|current', '.wsa-view', 900.4);
+  assert.equal(memory.recall('chat:a|current', '.wsa-view'), 900);
+  // Another chat, filter or selector never inherits it.
+  assert.equal(memory.recall('chat:b|current', '.wsa-view'), 0);
+  assert.equal(memory.recall('chat:a|search', '.wsa-view'), 0);
+  assert.equal(memory.recall('chat:a|current', '.wsa-place-list'), 0);
+  // Bad values are stored as the top, and the memory stays bounded (oldest dropped first).
+  memory.remember('s1', '.x', -5);
+  memory.remember('s2', '.x', NaN);
+  assert.equal(memory.recall('s1', '.x'), 0);
+  memory.remember('s3', '.x', 10);
+  memory.remember('s4', '.x', 20);
+  assert.equal(memory.recall('chat:a|current', '.wsa-view'), 0);
+  assert.equal(memory.recall('s4', '.x'), 20);
+});
+
+test('panel re-render restores remembered scroll from scroll events, keyed by list identity', () => {
   const source = fs.readFileSync('ui.js', 'utf8');
-  assert.match(source, /SCROLL_KEEP_SELECTORS = Object\.freeze\(\['\.wsa-view', '\.wsa-place-list'\]\)/);
-  // Captured before the wholesale innerHTML replacement, restored after it, and only when the tab did not change.
-  assert.match(source, /ui\.renderedTab === ui\.activeTab[\s\S]{0,200}scrollTop[\s\S]*root\.innerHTML = renderWorldStatePanel[\s\S]*ui\.renderedTab = ui\.activeTab;[\s\S]{0,200}el\.scrollTop = top/);
+  // Offsets are recorded from capture-phase scroll events and restored right after the innerHTML replacement.
+  assert.match(source, /root\.addEventListener\('scroll', scrolled, true\)/);
+  assert.match(source, /root\.removeEventListener\('scroll', scrolled, true\)/);
+  assert.match(source, /root\.innerHTML = renderWorldStatePanel[\s\S]{0,600}restoreScroll\(\);/);
+  // The list identity covers chat, tab and filters; detail panes also cover the selection.
+  assert.match(source, /getState\(\)\?\.chatKey[\s\S]{0,200}ui\.activeTab,[\s\S]{0,60}ui\.query,[\s\S]{0,60}ui\.spatialSearch/);
+  assert.match(source, /ui\.selectedRecordId, ui\.selectedSpatialKey/);
+  for (const selector of ['.wsa-view', '.wsa-place-list', '.wsa-detail-pane', '.wsa-map-settings-body', '.wsa-rebuild-sheet']) {
+    assert.ok(source.includes("'" + selector + "'"), selector);
+  }
 });
