@@ -1970,3 +1970,47 @@ test('a death in the current exchange keeps the dead current and resolves what d
   assert.match(byId.get(clara.id).summary, /Clara is dead/);
   assert.equal(byId.get(racket.id).status, 'resolved');
 });
+
+test('capture prompt keeps JSON valid around dialogue quotes and stray characters', () => {
+  assert.match(CAPTURE_SYSTEM_PROMPT, /never put a raw double quote inside a JSON string/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /leave out dialogue quotation marks \(excerpt matching ignores punctuation\) or escape them as \\"/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Emit no characters outside the JSON object and its strings/);
+});
+
+test('a dialogue excerpt stays verbatim with its quotation marks left out or escaped', () => {
+  const exchange = withLineage([
+    { role: 'user', content: 'I walk up to the bridge.' },
+    { role: 'assistant', content: 'Gelt blocks the planks and snarls, "Pay the bridge toll or swim." His men laugh.' },
+  ]);
+  const run = claim => processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        summary: 'Gelt and his men demand a toll from travelers crossing the bridge.',
+        anchors: ['Gelt', 'bridge toll'],
+        evidence: [{ sourceMessageId: 1, claim }],
+      }],
+    }),
+    state: createState('capture-dialogue-quotes'),
+    exchange,
+    visibleRecords: [],
+    chatKey: 'capture-dialogue-quotes',
+    ...sourceBoundary(exchange),
+  });
+
+  const withoutMarks = run('Gelt blocks the planks and snarls, Pay the bridge toll or swim.');
+  assert.deepEqual(withoutMarks.rejected, []);
+  assert.equal(withoutMarks.acceptedCount, 1);
+
+  // JSON.stringify escapes the quotes, exactly as the prompt asks the model to.
+  const escaped = run('Gelt blocks the planks and snarls, "Pay the bridge toll or swim."');
+  assert.deepEqual(escaped.rejected, []);
+  assert.equal(escaped.acceptedCount, 1);
+});
+
+test('a reply corrupted by a stray character is still rejected whole (fail closed, no repair)', () => {
+  // Live rebuild reply: a stray token between the closing ] and } of the object.
+  const corrupted = '```json {"mutations":[],"spatialMutations":[]偏} ```';
+  assert.throws(() => parseCaptureJson(corrupted), /capture response is not valid JSON/);
+});

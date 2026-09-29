@@ -106,6 +106,7 @@ export const CAPTURE_SYSTEM_PROMPT = [
   'Never invent off-screen developments, outcomes, consequences, or causal links.',
   'Write each create/update summary as the condition that is true now (who or what is in which state), not as a narrated past event: describe lasting consequences such as injury, loss, damage, death, or control rather than retelling the incident that caused them. A resolve/supersede summary may state how the record ended.',
   'For every non-noop mutation, cite 1-4 short verbatim excerpts from CURRENT EXCHANGE using sourceMessageId.',
+  'Keep the JSON valid: never put a raw double quote inside a JSON string. In excerpts, leave out dialogue quotation marks (excerpt matching ignores punctuation) or escape them as \\". Emit no characters outside the JSON object and its strings.',
   'Use shown record IDs only for update/resolve/supersede/related links. Never create an ID.',
   'Reality mutation field names are exact: use kind and summary. Never substitute category for kind or description for summary.',
   'Reconcile lifecycle for shown active records addressed by CURRENT EXCHANGE: resolve only when explicitly ended, completed, failed, eliminated, or permanently ceased; supersede only when explicitly replaced; update if it still exists but changed.',
