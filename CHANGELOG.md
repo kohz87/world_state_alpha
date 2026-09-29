@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.9.0-alpha.35 - A death ends the records that depended on it
+
+### Fixed
+
+- **Deaths left older records active.** A character's earlier incident ("Mistress Vena was knocked unconscious… her coin was stolen…") and a gang's racket stayed active after the story established that Vena and Clara were found dead and Bran's crew were killed. Capture was told to resolve only what was "explicitly ended" and to supersede only what was "explicitly replaced". Nothing covered deaths, and a record written as a past event looked permanently true to the model.
+- The capture prompt now says that a death, destruction, or elimination established by the current exchange ends shown active records that depended on that person, group, or thing continuing:
+  - it supersedes a record describing their state (injured or robbed → dead);
+  - it resolves conditions they were running, holding or suffering (an injury, captivity, occupation, or a racket or scheme they ran).
+  - A merely mentioned, threatened, feared or suspected death still ends nothing.
+- Capture is asked to write each summary as the condition that is true now (lasting injury, loss, damage, death, control) rather than a retelling of the incident.
+- Active facts named by the current exchange now compete for the bounded lifecycle slots alongside developments. The wider scene-context antecedent stays development-only.
+
+### Architecture
+
+- Core contract C06 records the death/elimination rule, present-condition summaries and fact lifecycle slots. The source firewall is unchanged: every resolve or supersede still needs a current-exchange excerpt that names its target. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- Added regressions for:
+  - the prompt rules;
+  - named facts entering lifecycle slots while scene context stays development-only;
+  - a Grey Post death exchange accepted to supersede Vena's and Clara's facts and resolve Bran's racket;
+  - a threat-only exchange closing nothing.
+- The prompt and lifecycle-slot regressions fail on the previous code. The acceptance and threat regressions pass both ways, which shows the reducer and firewall already accepted such closures; the gap was the prompt.
+- Existing records already written as past events are not rewritten automatically. Close them from the panel or run Rebuild from chat.
+
+
 ## 0.9.0-alpha.34 - Stable catch-up no longer rejected for missing support
 
 ### Fixed

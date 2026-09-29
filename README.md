@@ -11,7 +11,7 @@ It is the world-level sibling of [NPC State Delta](https://github.com/kohz87/npc
 | NPC State Delta | "What is true about *this character* right now?" |
 | **World State Alpha** | "What is true about *the wider world* right now?" |
 
-> **Status:** `0.9.0-alpha.34`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
+> **Status:** `0.9.0-alpha.35`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
 
 ---
 
@@ -237,7 +237,7 @@ A fuller example is in [`tests/fixtures/cartesian-base-map-sample.json`](tests/f
 
 | When | Calls |
 |---|---|
-| After each assistant reply | **1** capture call. It reads only that exchange; the prompt is about 1.6k tokens plus the exchange, or about 1.9k with Places. |
+| After each assistant reply | **1** capture call. It reads only that exchange; the prompt is about 1.75k tokens plus the exchange, or about 2.1k with Places. |
 | When you send a message and story time has passed | **0 or 1** catch-up call, covering at most 6 developments |
 | Ordinary turns | **0** extra calls for the note itself; relevance is picked locally |
 | Rebuild | Only when you start it: one call per assistant reply rebuilt |
