@@ -1694,6 +1694,29 @@ export function renderWorldStatePanel(model, {
     '</div>';
 }
 
+// Scroll containers the wholesale re-render would otherwise snap back to the top. Lists are remembered per list
+// identity (chat, tab, filters, whether a detail hides them); detail-like panes also per selection.
+const LIST_SCROLL_SELECTORS = Object.freeze(['.wsa-view', '.wsa-place-list']);
+const DETAIL_SCROLL_SELECTORS = Object.freeze(['.wsa-detail-pane', '.wsa-map-settings-body', '.wsa-rebuild-sheet']);
+
+// Offsets come from real scroll events (never from reading the DOM at render time), so a hidden or closed panel
+// cannot overwrite them with 0, and an offset only comes back under the identity it was recorded for.
+export function createScrollMemory({ limit = 40 } = {}) {
+  const store = new Map();
+  return {
+    remember(scope, selector, top) {
+      const key = String(scope) + '\u0001' + String(selector);
+      const value = Number.isFinite(top) && top > 0 ? Math.round(top) : 0;
+      store.delete(key);
+      store.set(key, value);
+      while (store.size > limit) store.delete(store.keys().next().value);
+    },
+    recall(scope, selector) {
+      return store.get(String(scope) + '\u0001' + String(selector)) || 0;
+    },
+  };
+}
+
 export function createWorldStateUiController({
   root,
   getState,
@@ -1725,6 +1748,7 @@ export function createWorldStateUiController({
     rebuildOpen: false,
     bulk: { active: false, keys: new Set() },
     bulkScope: '',
+    scrollMemory: createScrollMemory(),
     dismissedRebuildOperationId: '',
     rebuildForm: {
       mode: 'full',
@@ -1748,6 +1772,46 @@ export function createWorldStateUiController({
       spatialDuplicatesOnly: ui.spatialDuplicatesOnly,
       runtimeInfo: typeof getRuntimeInfo === 'function' ? getRuntimeInfo() : {},
     });
+  }
+
+  function scrollScope(kind) {
+    const list = [
+      getState()?.chatKey || '',
+      ui.activeTab,
+      ui.query,
+      ui.spatialSearch,
+      ui.spatialDuplicatesOnly ? 1 : 0,
+      // Records expand inline, so only the Places layout swaps list and detail panes.
+      ui.activeTab === 'spatial' && ui.spatialDetailOpen ? 1 : 0,
+      ui.activeTab === 'spatial' && ui.spatialEditing ? 1 : 0,
+    ].join('|');
+    return kind === 'detail'
+      ? list + '|' + [ui.selectedRecordId, ui.selectedSpatialKey, ui.rebuildOpen ? 1 : 0, ui.mapSettingsOpen ? 1 : 0].join('|')
+      : list;
+  }
+
+  function restoreScroll() {
+    const restore = (selectors, kind) => {
+      const scope = scrollScope(kind);
+      for (const selector of selectors) {
+        const top = ui.scrollMemory.recall(scope, selector);
+        const el = top > 0 ? root.querySelector?.(selector) : null;
+        if (el) el.scrollTop = top;
+      }
+    };
+    restore(LIST_SCROLL_SELECTORS, 'list');
+    restore(DETAIL_SCROLL_SELECTORS, 'detail');
+  }
+
+  function scrolled(event) {
+    const target = event?.target;
+    if (!target || typeof target.matches !== 'function') return;
+    const remember = (selectors, kind) => {
+      const selector = selectors.find(item => target.matches(item));
+      if (selector) ui.scrollMemory.remember(scrollScope(kind), selector, target.scrollTop);
+    };
+    remember(LIST_SCROLL_SELECTORS, 'list');
+    remember(DETAIL_SCROLL_SELECTORS, 'detail');
   }
 
   function refresh({ restoreSearchFocus = false, restoreSpatialFocus = false } = {}) {
@@ -1791,6 +1855,7 @@ export function createWorldStateUiController({
       dismissedRebuildOperationId: ui.dismissedRebuildOperationId,
       bulk: ui.bulk,
     });
+    restoreScroll();
 
     if (restoreSearchFocus) {
       const inputs = [...(root.querySelectorAll?.('[data-wsa-search]') || [])];
@@ -2320,6 +2385,7 @@ export function createWorldStateUiController({
 
   root.addEventListener('click', click);
   root.addEventListener('input', input);
+  root.addEventListener('scroll', scrolled, true);
   refresh();
 
   return Object.freeze({
@@ -2349,6 +2415,7 @@ export function createWorldStateUiController({
       ui.destroyed = true;
       root.removeEventListener('click', click);
       root.removeEventListener('input', input);
+      root.removeEventListener('scroll', scrolled, true);
       if (typeof root.replaceChildren === 'function') root.replaceChildren();
       else root.innerHTML = '';
     },

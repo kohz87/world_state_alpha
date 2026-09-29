@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0-alpha.39 - Keep list scroll position
+
+### Fixed
+
+- Selecting, expanding or bulk-ticking a record no longer jumps the World list back to the top. The panel re-renders its whole HTML on every click, which reset the scroll; it now remembers scroll offsets from real scroll events and restores them.
+- The offset is kept per list identity (chat, tab, search and place filter), so a different chat, search or filter still starts at the top, and switching back restores the earlier position.
+- On phone layouts the Places list keeps its position while a place detail hides it, and returns to it on Back.
+- The place detail pane, map settings and rebuild sheet keep their own scroll too, so panel refreshes (for example rebuild progress) no longer snap them to the top.
+
+### Architecture
+
+- UI-only change. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- Added regressions for the scroll memory (identity-keyed, bounded, ignores bad values) and its render/event wiring.
+- Reproduced in Chromium (a list scrolled to 900px reset to 0 on a row click, in normal and select mode) and confirmed it now stays at 900; also confirmed another chat starts at the top and restores on return, and the Places list restores after opening and closing a detail at phone width. Real SillyTavern remains unverified live.
+
 ## 0.9.0-alpha.38 - Bulk resolve and supersede
 
 ### Added
