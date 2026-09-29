@@ -1971,10 +1971,18 @@ test('a death in the current exchange keeps the dead current and resolves what d
   assert.equal(byId.get(racket.id).status, 'resolved');
 });
 
-test('capture prompt keeps JSON valid around dialogue quotes and stray characters', () => {
-  assert.match(CAPTURE_SYSTEM_PROMPT, /never put a raw double quote inside a JSON string/);
-  assert.match(CAPTURE_SYSTEM_PROMPT, /leave out dialogue quotation marks \(excerpt matching ignores punctuation\) or escape them as \\"/);
-  assert.match(CAPTURE_SYSTEM_PROMPT, /Emit no characters outside the JSON object and its strings/);
+test('capture and evolution prompts keep JSON valid around dialogue quotes', async () => {
+  assert.match(CAPTURE_SYSTEM_PROMPT, /escape every double quote inside a JSON string as \\", including dialogue quotation marks copied into verbatim excerpts/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Never leave a raw double quote inside a string \(excerpt matching ignores punctuation, so an excerpt without its quotation marks is also accepted\)/);
+  // The prompt must not model the habit it forbids: no prose example wrapped in raw double quotes.
+  assert.doesNotMatch(CAPTURE_SYSTEM_PROMPT, /for example "/);
+  const { EVOLUTION_SYSTEM_PROMPT } = await import('../evolution.js');
+  assert.match(EVOLUTION_SYSTEM_PROMPT, /escape every double quote inside a JSON string as \\"; never leave a raw double quote inside a reason or summary/);
+});
+
+test('a reply with a raw unescaped dialogue quote inside an excerpt is rejected whole (no repair)', () => {
+  const raw = '{"mutations":[{"action":"create","kind":"development","summary":"Gelt demands a bridge toll.","evidence":[{"sourceMessageId":1,"claim":"Gelt snarls, "Pay the bridge toll or swim.""}]}]}';
+  assert.throws(() => parseCaptureJson(raw), /capture response is not valid JSON/);
 });
 
 test('a dialogue excerpt stays verbatim with its quotation marks left out or escaped', () => {

@@ -1,11 +1,13 @@
 # Changelog
 
-## 0.9.0-alpha.36 - Keep capture JSON parseable around dialogue
+## 0.9.0-alpha.36 - Keep model JSON parseable around dialogue
 
 ### Fixed
 
 - **Malformed capture replies aborted rebuilds.** A rebuild failed at 18/26 boundaries with `capture response is not valid JSON: Expected ',' or ']' after array element`. Because a rebuild is atomic, one bad reply discarded every earlier boundary and its calls. The most common cause of this error is a verbatim dialogue excerpt copied with raw double quotes, which ends the JSON string early.
-- The capture prompt, which rebuild uses too, now tells the model never to put a raw double quote inside a JSON string. In excerpts it may leave dialogue quotation marks out, since excerpt grounding already ignores punctuation, or escape them. It is also told to emit nothing outside the JSON object and its strings.
+- The capture prompt, which rebuild uses too, now tells the model to escape every double quote inside a JSON string, including dialogue quotation marks copied into verbatim excerpts. An excerpt without its quotation marks is also accepted, because excerpt grounding already ignores punctuation.
+- The evolution prompt gets the same rule for its free-text reasons and summaries.
+- The capture prompt no longer shows one of its own examples wrapped in raw double quotes, which modelled the habit it forbids.
 - The reply in the reported failure was actually corrupted by a stray token (`]偏}`), not a quote. This change cannot prevent that kind of provider glitch: such output is still rejected whole. A way to resume a failed rebuild from the failed boundary is a separate, larger change.
 
 ### Architecture
@@ -15,10 +17,12 @@
 ### Validation
 
 - Added regressions for:
-  - the prompt rule;
-  - a dialogue excerpt with its quotation marks left out or escaped still grounding and being accepted;
-  - the live stray-token reply still being rejected.
-- The prompt regression fails on the previous code; the other two pass both ways.
+  - the capture and evolution prompt rules, including no raw-quoted prose example;
+  - a dialogue excerpt with its quotation marks escaped or left out still grounding and being accepted;
+  - a reply with a raw unescaped dialogue quote being rejected;
+  - the live stray-token reply being rejected.
+- The prompt regression fails on the previous code; the others pass both ways.
+- Hardening from code review: prefer escaping so excerpts stay verbatim, add the evolution rule and the raw-quote rejection test, remove the raw-quoted example, and drop a redundant "nothing outside the object" sentence.
 
 
 ## 0.9.0-alpha.35 - A death ends the records that depended on it
