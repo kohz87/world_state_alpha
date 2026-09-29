@@ -649,7 +649,10 @@ export function selectLifecycleCandidates(state, {
   candidateCap = 128,
 } = {}) {
   const limit = boundedInt(maxRecords, 2, 1, 4);
-  const rankedDevelopments = (text, lifecycleSource) => {
+  // Records named by the current exchange may be ending whatever their kind
+  // (a death supersedes a person's injured/robbed fact). The wider scene
+  // context only supplies anaphoric antecedents for ongoing developments.
+  const rankedLifecycle = (text, lifecycleSource, kinds) => {
     if (!String(text || '').trim()) return [];
     return selectRelevantRecords(state, {
       index,
@@ -659,14 +662,14 @@ export function selectLifecycleCandidates(state, {
       minScore,
       candidateCap,
     }).selected
-      .filter(item => item?.record?.kind === 'development' && item.record.status === 'active')
+      .filter(item => kinds.includes(item?.record?.kind) && item.record.status === 'active')
       .map(item => ({ ...item, lifecycleSource }));
   };
 
-  const current = rankedDevelopments(currentText, 'current-exchange');
+  const current = rankedLifecycle(currentText, 'current-exchange', ['development', 'fact']);
   const context = String(contextText || '').trim() === String(currentText || '').trim()
     ? []
-    : rankedDevelopments(contextText, 'scene-context');
+    : rankedLifecycle(contextText, 'scene-context', ['development']);
 
   // Reserve the strongest exact match first, then one distinct wider-context
   // antecedent before filling remaining slots. This prevents several newly
