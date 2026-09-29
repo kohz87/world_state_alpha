@@ -229,6 +229,7 @@ Deliverables:
 - v0.9.0-alpha.36 parseable model JSON: capture and evolution prompts require escaping every double quote inside strings (quote-free excerpts also accepted) and drop the capture prompt's raw-quoted example; malformed output stays fail-closed with no repair; durable formats unchanged
 - v0.9.0-alpha.37 resumable rebuild: a boundary failure keeps an in-memory resume point (candidate before the failed boundary + snapshot token + plan) that only an explicit operator Resume consumes, re-sending the unmodified request, refused if chat/state/settings changed, still atomic; panel Resume from message N; durable formats unchanged
 - v0.9.0-alpha.38 bulk manual lifecycle: World panel Select mode with Select all shown, Mark resolved / Mark superseded for up to 100 active records; the host re-validates each selected row against current canonical state, takes one note and one confirmation, and `applyManualLifecycleBatch` commits one all-or-nothing manual boundary; no durable format change.
+- v0.9.0-alpha.39 panel scroll retention: the wholesale panel re-render preserves the World record list and Places list scroll position within a tab (selecting, expanding and bulk ticks no longer reset to the top); no behavior or format change.
 
 Acceptance:
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0-alpha.39 - Keep list scroll position
+
+### Fixed
+
+- Selecting, expanding or bulk-ticking a record no longer jumps the World list back to the top. The panel re-rendered its whole HTML on every click, which reset the scroll; the record list and the Places list now keep their scroll position across those updates. Changing tab still starts at the top.
+
+### Architecture
+
+- UI-only change. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- Added a regression for scroll capture and restore around the re-render.
+- Reproduced in Chromium (a list scrolled to 900px reset to 0 on a row click, in normal and select mode) and confirmed it now stays at 900. Real SillyTavern and phone layouts remain unverified live.
+
 ## 0.9.0-alpha.38 - Bulk resolve and supersede
 
 ### Added
