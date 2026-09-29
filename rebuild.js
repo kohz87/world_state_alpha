@@ -368,6 +368,7 @@ export async function runManualRebuild({
   spatialEnabled = false,
   baseMap = null,
   spatialProfile = null,
+  resume = null,
 } = {}) {
   const original = normalizeState(clone(state), { chatKey });
   const owner = String(chatKey || original.chatKey || '');
@@ -400,8 +401,30 @@ export async function runManualRebuild({
     };
   }
 
+  // An operator-initiated resume continues a failed rebuild from its failed
+  // boundary with the candidate accepted up to there. It is only valid while
+  // the canonical state and exact chat lineage are unchanged since the failure.
+  let resumeFromMessageId = null;
   let candidate;
-  if (plan.metrics.startMessageId > 0) {
+  if (resume) {
+    if (resume.snapshotToken !== snapshotToken || !resume.candidate || !Number.isInteger(resume.fromMessageId)
+      || !plan.windows.some(window => window.messageId === resume.fromMessageId)) {
+      return {
+        outcome: 'failure',
+        state: clone(original),
+        providerCalls: 0,
+        processedBoundaries: 0,
+        plan: plan.metrics,
+        snapshotToken,
+        failedBoundary: null,
+        receipts: [],
+        errorCode: 'WORLD_STATE_REBUILD_RESUME_STALE',
+        errorMessage: 'The chat or World State changed since the rebuild failed, so it cannot resume. Start a new rebuild.',
+      };
+    }
+    resumeFromMessageId = resume.fromMessageId;
+    candidate = normalizeState(clone(resume.candidate), { strictSchema: true, chatKey: owner });
+  } else if (plan.metrics.startMessageId > 0) {
     const prefix = (Array.isArray(chat) ? chat : []).slice(0, plan.metrics.startMessageId);
     const currentLineage = chatLineage(Array.isArray(chat) ? chat : []);
     const priorLineage = Array.isArray(original.lineage) ? original.lineage : [];
@@ -454,8 +477,17 @@ export async function runManualRebuild({
     }
   }
   let providerCalls = 0;
-  let processedBoundaries = 0;
+  let processedBoundaries = resume ? Math.max(0, Number(resume.processedBoundaries) || 0) : 0;
   const receipts = [];
+
+  // Everything needed to resume from a failed boundary; kept by the host in
+  // memory only and never persisted.
+  const resumePoint = (failedMessageId, acceptedCandidate) => ({
+    candidate: clone(acceptedCandidate),
+    fromMessageId: failedMessageId,
+    snapshotToken,
+    processedBoundaries,
+  });
 
   const cancelledResult = failedBoundary => ({
     outcome: 'cancelled',
@@ -471,6 +503,7 @@ export async function runManualRebuild({
   });
 
   for (const window of plan.windows) {
+    if (resumeFromMessageId !== null && window.messageId < resumeFromMessageId) continue;
     if (signal?.aborted) return cancelledResult(window.messageId);
     if (!current()) {
       return {
@@ -505,6 +538,7 @@ export async function runManualRebuild({
           receipts,
           errorCode: error?.code || 'WORLD_STATE_REBUILD_LORE_FAILURE',
           errorMessage: String(error?.message || error),
+          resume: resumePoint(window.messageId, candidate),
         };
       }
     }
@@ -576,8 +610,9 @@ export async function runManualRebuild({
       if (result.outcome === 'cancelled' || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED' || signal?.aborted) {
         return cancelledResult(window.messageId);
       }
+      const stale = result.outcome === 'stale';
       return {
-        outcome: result.outcome === 'stale' ? 'stale' : 'failure',
+        outcome: stale ? 'stale' : 'failure',
         state: clone(original),
         providerCalls,
         processedBoundaries,
@@ -586,6 +621,7 @@ export async function runManualRebuild({
         failedBoundary: window.messageId,
         receipts,
         errorCode: result.errorCode || `WORLD_STATE_REBUILD_BOUNDARY_${String(result.outcome || 'UNKNOWN').toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
+        ...(stale ? {} : { resume: resumePoint(window.messageId, beforeStep) }),
       };
     }
 

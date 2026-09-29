@@ -901,3 +901,32 @@ test('rebuild sheet names the earliest message a partial rebuild can start from'
   const fresh = buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 12, earliestPartialStart: 1 } });
   assert.doesNotMatch(renderWorldStatePanel(fresh, { rebuildOpen: true }), /can start at message/);
 });
+
+test('a failed rebuild shows Resume from message N on its status and in the rebuild sheet', async () => {
+  const { buildWorldStateUiModel, renderWorldStatePanel } = await import('../ui.js');
+  const state = createState('chat:test:resume');
+  const runtimeInfo = {
+    chatMessages: 60,
+    rebuildStatus: { phase: 'failed', operationId: 'rebuild:1', processedBoundaries: 18, totalBoundaries: 26, detail: 'capture response is not valid JSON' },
+    rebuildResume: { messageId: 37, processedBoundaries: 18, totalBoundaries: 26 },
+  };
+  const model = buildWorldStateUiModel(state, { runtimeInfo });
+  assert.deepEqual(model.maintenance.rebuild.resume, { messageId: 37, processedBoundaries: 18, totalBoundaries: 26 });
+
+  const panel = renderWorldStatePanel(model, {});
+  assert.match(panel, /data-wsa-resume-rebuild[^>]*>Resume from message 37</);
+  const sheet = renderWorldStatePanel(model, { rebuildOpen: true });
+  assert.match(sheet, /Failed rebuild can resume/);
+  assert.match(sheet, /18 of 26 boundaries were rebuilt before message 37 failed/);
+
+  const none = buildWorldStateUiModel(state, { runtimeInfo: { ...runtimeInfo, rebuildResume: null } });
+  assert.doesNotMatch(renderWorldStatePanel(none, { rebuildOpen: true }), /data-wsa-resume-rebuild/);
+
+  const running = buildWorldStateUiModel(state, {
+    runtimeInfo: { ...runtimeInfo, rebuildStatus: { ...runtimeInfo.rebuildStatus, phase: 'running' } },
+  });
+  assert.doesNotMatch(renderWorldStatePanel(running, {}), /data-wsa-resume-rebuild/);
+
+  const source = fs.readFileSync('ui.js', 'utf8');
+  assert.match(source, /closest\(event\.target, '\[data-wsa-resume-rebuild\]'\)[\s\S]{0,200}onMaintenanceAction\('rebuild', \{ rebuild: \{ resume: true \} \}\)/);
+});

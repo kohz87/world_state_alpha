@@ -683,6 +683,13 @@ export function buildWorldStateUiModel(state, {
         maxAllowedBoundaries: integer(runtimeInfo?.maxRebuildBoundaries) ?? 4096,
         spatialEnabled: Boolean(runtimeInfo?.spatialEnabled),
         bootstrapRequired: Boolean(runtimeInfo?.bootstrapRequired),
+        resume: runtimeInfo?.rebuildResume && Number.isInteger(runtimeInfo.rebuildResume.messageId)
+          ? {
+            messageId: runtimeInfo.rebuildResume.messageId,
+            processedBoundaries: integer(runtimeInfo.rebuildResume.processedBoundaries) ?? 0,
+            totalBoundaries: integer(runtimeInfo.rebuildResume.totalBoundaries) ?? 0,
+          }
+          : null,
         status: runtimeInfo?.rebuildStatus && typeof runtimeInfo.rebuildStatus === 'object'
           ? {
             phase: clean(runtimeInfo.rebuildStatus.phase, 24),
@@ -1423,7 +1430,13 @@ function tabLabel(tab) {
   return 'Data';
 }
 
-function rebuildStatusHtml(status, { dismissible = true } = {}) {
+function resumeRebuildButtonHtml(resume) {
+  if (!resume) return '';
+  return '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-primary" data-wsa-resume-rebuild title="Re-send the failed message and continue; earlier messages are not redone">Resume from message ' +
+    escapeHtml(String(resume.messageId)) + '</button>';
+}
+
+function rebuildStatusHtml(status, { dismissible = true, resume = null } = {}) {
   if (!status) return '';
   const total = Math.max(0, Number(status.totalBoundaries) || 0);
   const processed = Math.max(0, Number(status.processedBoundaries) || 0);
@@ -1453,6 +1466,7 @@ function rebuildStatusHtml(status, { dismissible = true } = {}) {
     (Number(status.hiddenMessagesIncluded) > 0 ? '<span>' + Number(status.hiddenMessagesIncluded) + ' hidden included</span>' : '') +
     '</div></div>' +
     (cancellable ? '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-cancel-rebuild>Cancel</button>' : '') +
+    (!cancellable && status.phase === 'failed' ? resumeRebuildButtonHtml(resume) : '') +
     '</aside>';
 }
 
@@ -1473,6 +1487,13 @@ function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
     ? '<div class="wsa-rebuild-running">' + rebuildStatusHtml(status, { dismissible: false }) +
       '<p class="wsa-muted">The existing canonical state remains authoritative until the entire candidate rebuild succeeds and is persisted.</p></div>'
     : '<form class="wsa-rebuild-form" onsubmit="return false;">' +
+      (rebuild.resume
+        ? '<div class="wsa-rebuild-safety wsa-rebuild-resume"><strong>Failed rebuild can resume</strong><p>' +
+          escapeHtml(String(rebuild.resume.processedBoundaries)) + ' of ' + escapeHtml(String(rebuild.resume.totalBoundaries)) +
+          ' boundaries were rebuilt before message ' + escapeHtml(String(rebuild.resume.messageId)) +
+          ' failed. Resume re-sends that message and continues; earlier messages are not redone. Starting a new rebuild discards this resume point.</p>' +
+          resumeRebuildButtonHtml(rebuild.resume) + '</div>'
+        : '') +
       (rebuild.bootstrapRequired
         ? '<div class="wsa-rebuild-safety wsa-bootstrap-safety"><strong>Full rebuild required</strong><p>This chat has history but no durable World State baseline on this session/backend. Partial rebuild cannot prove the missing earlier canonical state.</p></div>'
         : '') +
@@ -1624,7 +1645,7 @@ export function renderWorldStatePanel(model, {
     '<button type="button" class="wsa-icon-btn wsa-close" data-wsa-close aria-label="Close World State" title="Close">' + icon('close') + '</button>' +
     actionMenuHtml(model, menuOpen) +
     '</div></header>' +
-    (showStatus ? rebuildStatusHtml(rebuildStatus) : '') +
+    (showStatus ? rebuildStatusHtml(rebuildStatus, { resume: model.maintenance.rebuild.resume }) : '') +
     bootstrapRecoveryBannerHtml(model) +
     '<nav class="wsa-tabs" role="tablist" aria-label="World State views">' + tabs +
     '<label class="wsa-input-icon wsa-nav-search">' + icon('search') + '<input type="search" data-wsa-search value="' +
@@ -1908,6 +1929,14 @@ export function createWorldStateUiController({
 
     if (closest(event.target, '[data-wsa-cancel-rebuild]')) {
       if (typeof onMaintenanceAction === 'function') await onMaintenanceAction('cancel_rebuild', {});
+      refresh();
+      return;
+    }
+
+    if (closest(event.target, '[data-wsa-resume-rebuild]')) {
+      if (typeof onMaintenanceAction === 'function') {
+        await onMaintenanceAction('rebuild', { rebuild: { resume: true } });
+      }
       refresh();
       return;
     }

@@ -41,7 +41,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.36';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.37';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -100,6 +100,8 @@ const diagnosticStore = createDiagnosticStore({
   onRecord: chatKey => scheduleOperationLogSave(chatKey),
 });
 const rebuildStatuses = new Map();
+// In-memory only: where a failed rebuild can be resumed by the operator.
+const rebuildResumes = new Map();
 const rebuildAbortControllers = new Map();
 
 const CHAT_CACHE_LIMIT = 6;
@@ -426,6 +428,7 @@ function clearBranchCaptureTimer(chatKey) {
 }
 
 function forgetBranchContinuations(chatKey) {
+  rebuildResumes.delete(chatKey);
   parkedBranches.delete(chatKey);
   clearBranchCaptureTimer(chatKey);
   locallyProvenTails.delete(chatKey);
@@ -2851,8 +2854,25 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     if (!payload?.rebuild
       && !window.confirm('Rebuild World State Alpha from this chat chronology? This is an explicit provider-backed recovery operation.')) return;
 
-    const mode = ['full', 'last', 'from'].includes(rebuildRequest.mode) ? rebuildRequest.mode : 'full';
+    // Resume re-sends the failed boundary's unmodified request with the same
+    // plan; it never feeds the malformed reply back to the model.
+    const savedResume = rebuildRequest.resume === true ? rebuildResumes.get(chatKey) : null;
+    if (rebuildRequest.resume === true && !savedResume) {
+      notify('error', 'There is no failed rebuild to resume for this chat. Start a new rebuild.');
+      refreshPanel();
+      return;
+    }
+    rebuildResumes.delete(chatKey);
+    const resumeParams = savedResume?.params || null;
+
+    const mode = resumeParams ? resumeParams.mode : (['full', 'last', 'from'].includes(rebuildRequest.mode) ? rebuildRequest.mode : 'full');
     const bootstrapRecoveryAtStart = bootstrapRequiredChats.has(chatKey);
+    if (resumeParams && (resumeParams.bootstrapRecoveryAtStart !== bootstrapRecoveryAtStart
+      || resumeParams.spatialEnabled !== Boolean(getWorldStateSettings().spatialEnabled))) {
+      notify('error', 'World State settings changed since the rebuild failed, so it cannot resume. Start a new rebuild.');
+      refreshPanel();
+      return;
+    }
     if (bootstrapRecoveryAtStart && mode !== 'full') {
       notify('error', 'This chat has no durable World State baseline. Use Full chat rebuild, import, or explicit reset; partial rebuild cannot safely recover missing continuity.');
       return;
@@ -2862,7 +2882,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       if (!Number.isFinite(number)) return fallback;
       return Math.max(min, Math.min(max, Math.trunc(number)));
     };
-    const maxBoundaries = numeric(
+    const maxBoundaries = resumeParams ? resumeParams.maxBoundaries : numeric(
       rebuildRequest.maxBoundaries,
       REBUILD_LIMITS.maxBoundaries,
       1,
@@ -2870,12 +2890,14 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     );
     const lastMessages = numeric(rebuildRequest.lastMessages, 20, 1, Math.max(1, chat.length));
     const requestedStart = numeric(rebuildRequest.startMessageId, 0, 0, Math.max(0, chat.length - 1));
-    const includeHiddenMessages = rebuildRequest.includeHiddenMessages !== false;
-    const startMessageId = mode === 'last'
-      ? Math.max(0, chat.length - lastMessages)
-      : mode === 'from'
-        ? requestedStart
-        : 0;
+    const includeHiddenMessages = resumeParams ? resumeParams.includeHiddenMessages : rebuildRequest.includeHiddenMessages !== false;
+    const startMessageId = resumeParams
+      ? resumeParams.startMessageId
+      : mode === 'last'
+        ? Math.max(0, chat.length - lastMessages)
+        : mode === 'from'
+          ? requestedStart
+          : 0;
 
     if (startMessageId > 0) {
       const branch = extendCurrentBranchFast(chatKey)
@@ -2926,7 +2948,8 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const rebuildController = new AbortController();
     rebuildAbortControllers.set(chatKey, rebuildController);
 
-    const rangeLabel = startMessageId > 0 ? 'message ' + startMessageId + ' to current' : 'full chat';
+    const rangeLabel = (startMessageId > 0 ? 'message ' + startMessageId + ' to current' : 'full chat')
+      + (savedResume ? ', resuming at message ' + savedResume.failedMessageId : '');
     rebuildStatuses.set(chatKey, {
       phase: 'running',
       operationId,
@@ -2936,7 +2959,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       includeHiddenMessages,
       hiddenMessagesIncluded: rebuildPlan.metrics.hiddenMessagesIncluded || 0,
       hiddenAssistantBoundaries: rebuildPlan.metrics.hiddenAssistantBoundaries || 0,
-      processedBoundaries: 0,
+      processedBoundaries: savedResume ? savedResume.processedBoundaries : 0,
       totalBoundaries,
       currentMessageId: null,
       providerCalls: 0,
@@ -2985,6 +3008,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         spatialEnabled: Boolean(settings.spatialEnabled),
         baseMap,
         spatialProfile: resolveSpatialProfile(state.spatial, baseMap),
+        resume: savedResume?.resume || null,
         onProgress: progress => {
           const previous = rebuildStatuses.get(chatKey) || {};
           rebuildStatuses.set(chatKey, {
@@ -3040,6 +3064,23 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const cancelledOutcome = result.outcome === 'stale'
       || result.outcome === 'cancelled'
       || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED';
+    const resumable = result.outcome === 'failure' && !cancelledOutcome && result.resume && isCurrent();
+    if (resumable) {
+      rebuildResumes.set(chatKey, {
+        resume: result.resume,
+        failedMessageId: result.resume.fromMessageId,
+        processedBoundaries: result.resume.processedBoundaries,
+        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+        params: {
+          mode,
+          startMessageId,
+          maxBoundaries,
+          includeHiddenMessages,
+          bootstrapRecoveryAtStart,
+          spatialEnabled: Boolean(settings.spatialEnabled),
+        },
+      });
+    }
     if (result.outcome !== 'completed' || !isCurrent()) {
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
@@ -3072,7 +3113,8 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         cancelledOutcome ? 'info' : 'error',
         cancelledOutcome
           ? 'World State Alpha rebuild cancelled' + atBoundary + '. Canonical state was left unchanged.'
-          : 'World State Alpha rebuild failed' + atBoundary + ': ' + failureDetail + '. Canonical state was left unchanged.',
+          : 'World State Alpha rebuild failed' + atBoundary + ': ' + failureDetail + '. Canonical state was left unchanged.'
+            + (resumable ? ' Use Resume from message ' + result.resume.fromMessageId + ' to continue without redoing earlier messages.' : ''),
       );
       return;
     }
@@ -4035,6 +4077,13 @@ export async function openWorldStatePanel() {
         hydrationSource: hydrationSources.get(chatKey) || '',
         bootstrapRequired: bootstrapRequiredChats.has(chatKey),
         rebuildStatus: rebuildStatuses.get(chatKey) ? clone(rebuildStatuses.get(chatKey)) : null,
+        rebuildResume: rebuildResumes.has(chatKey)
+          ? {
+            messageId: rebuildResumes.get(chatKey).failedMessageId,
+            processedBoundaries: rebuildResumes.get(chatKey).processedBoundaries,
+            totalBoundaries: rebuildResumes.get(chatKey).totalBoundaries,
+          }
+          : null,
       };
     },
     onMaintenanceAction: (actionId, payload) => applyMaintenanceAction(actionId, payload, chatKey),
