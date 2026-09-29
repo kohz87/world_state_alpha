@@ -34,6 +34,7 @@ export const EVOLUTION_SYSTEM_PROMPT = [
   'Every evaluation, including stable, must cite the elapsed/current trigger supportId shown for that target; a changed outcome must also cite the supportIds that justify the change. Use only supportIds shown for that target.',
   'At most one derived development may be proposed. It must be a strongly grounded consequence of at least two supplied target developments, or one target plus grounded CURRENT affecting evidence.',
   'Never create an episode merely because static lore still describes an old pressure.',
+  'Keep the JSON valid: escape every double quote inside a JSON string as \\"; never leave a raw double quote inside a reason or summary.',
 ].join(' ');
 
 function clip(value, max) {

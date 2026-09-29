@@ -1970,3 +1970,55 @@ test('a death in the current exchange keeps the dead current and resolves what d
   assert.match(byId.get(clara.id).summary, /Clara is dead/);
   assert.equal(byId.get(racket.id).status, 'resolved');
 });
+
+test('capture and evolution prompts keep JSON valid around dialogue quotes', async () => {
+  assert.match(CAPTURE_SYSTEM_PROMPT, /escape every double quote inside a JSON string as \\", including dialogue quotation marks copied into verbatim excerpts/);
+  assert.match(CAPTURE_SYSTEM_PROMPT, /Never leave a raw double quote inside a string \(excerpt matching ignores punctuation, so an excerpt without its quotation marks is also accepted\)/);
+  // The prompt must not model the habit it forbids: no prose example wrapped in raw double quotes.
+  assert.doesNotMatch(CAPTURE_SYSTEM_PROMPT, /for example "/);
+  const { EVOLUTION_SYSTEM_PROMPT } = await import('../evolution.js');
+  assert.match(EVOLUTION_SYSTEM_PROMPT, /escape every double quote inside a JSON string as \\"; never leave a raw double quote inside a reason or summary/);
+});
+
+test('a reply with a raw unescaped dialogue quote inside an excerpt is rejected whole (no repair)', () => {
+  const raw = '{"mutations":[{"action":"create","kind":"development","summary":"Gelt demands a bridge toll.","evidence":[{"sourceMessageId":1,"claim":"Gelt snarls, "Pay the bridge toll or swim.""}]}]}';
+  assert.throws(() => parseCaptureJson(raw), /capture response is not valid JSON/);
+});
+
+test('a dialogue excerpt stays verbatim with its quotation marks left out or escaped', () => {
+  const exchange = withLineage([
+    { role: 'user', content: 'I walk up to the bridge.' },
+    { role: 'assistant', content: 'Gelt blocks the planks and snarls, "Pay the bridge toll or swim." His men laugh.' },
+  ]);
+  const run = claim => processCaptureResponse({
+    text: JSON.stringify({
+      mutations: [{
+        action: 'create',
+        kind: 'development',
+        summary: 'Gelt and his men demand a toll from travelers crossing the bridge.',
+        anchors: ['Gelt', 'bridge toll'],
+        evidence: [{ sourceMessageId: 1, claim }],
+      }],
+    }),
+    state: createState('capture-dialogue-quotes'),
+    exchange,
+    visibleRecords: [],
+    chatKey: 'capture-dialogue-quotes',
+    ...sourceBoundary(exchange),
+  });
+
+  const withoutMarks = run('Gelt blocks the planks and snarls, Pay the bridge toll or swim.');
+  assert.deepEqual(withoutMarks.rejected, []);
+  assert.equal(withoutMarks.acceptedCount, 1);
+
+  // JSON.stringify escapes the quotes, exactly as the prompt asks the model to.
+  const escaped = run('Gelt blocks the planks and snarls, "Pay the bridge toll or swim."');
+  assert.deepEqual(escaped.rejected, []);
+  assert.equal(escaped.acceptedCount, 1);
+});
+
+test('a reply corrupted by a stray character is still rejected whole (fail closed, no repair)', () => {
+  // Live rebuild reply: a stray token between the closing ] and } of the object.
+  const corrupted = '```json {"mutations":[],"spatialMutations":[]偏} ```';
+  assert.throws(() => parseCaptureJson(corrupted), /capture response is not valid JSON/);
+});

@@ -86,7 +86,7 @@ Routine capture examines only the completed current assistant boundary: messages
 
 Default Alpha cadence is one eligible capture after each completed assistant exchange. A duplicate receipt for an already processed raw-message boundary must not issue a second automatic request. One automatic capture provider call is permitted per eligible boundary; malformed output is not automatically repaired with a second model call.
 
-Provider capture/rebuild output must contain exactly one JSON object. The object may be bare or enclosed by one Markdown code fence with an optional `json` language tag. Surrounding prose, multiple-object extraction, and correction retries are forbidden; malformed or structurally invalid output remains fail-closed.
+Provider capture/rebuild output must contain exactly one JSON object. The object may be bare or enclosed by one Markdown code fence with an optional `json` language tag. Surrounding prose, multiple-object extraction, and correction retries are forbidden; malformed or structurally invalid output remains fail-closed. To keep output parseable, the capture and evolution prompts tell the model to escape every double quote inside a JSON string, including dialogue quotation marks copied into verbatim excerpts; an excerpt without its quotation marks is also accepted because excerpt grounding ignores punctuation. The prompts themselves never wrap prose examples in raw double quotes.
 
 If no material world change is established, capture returns no mutations.
 
