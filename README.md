@@ -11,7 +11,7 @@ It is the world-level sibling of [NPC State Delta](https://github.com/kohz87/npc
 | NPC State Delta | "What is true about *this character* right now?" |
 | **World State Alpha** | "What is true about *the wider world* right now?" |
 
-> **Status:** `0.9.0-alpha.36`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
+> **Status:** `0.9.0-alpha.37`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
 
 ---
 
@@ -90,6 +90,7 @@ Swipe, edit or delete that original reply, and the record goes away with it.
   - Last N / From message need the exact state just before the start. Only the most recent 256 changes are kept, so in a long chat the rebuild sheet shows the earliest message you can start from; earlier starts need Full chat.
   - Can include hidden roleplay messages without changing the chat itself.
   - Shows progress and can be cancelled.
+  - If one message fails (for example the model returns broken JSON), **Resume from message N** re-sends just that message and continues, instead of redoing the whole rebuild. It works as long as the chat and World State haven't changed since the failure.
   - The current state is only replaced after the whole rebuild succeeds.
 - **Export / import** World State bundles, with a preview and confirmation.
 - **Manual lifecycle:** mark any record resolved or superseded, with a note explaining why.

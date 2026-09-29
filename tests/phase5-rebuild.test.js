@@ -1396,3 +1396,147 @@ test('partial rebuild that fails for another reason does not blame journal trimm
   assert.match(result.errorMessage, /cannot be proven from the saved history\. Use Full chat\./);
   assert.doesNotMatch(result.errorMessage, /no longer stored/);
 });
+
+// A dispatcher that corrupts the reply for one boundary (like the live stray
+// `]偏}` token) and otherwise answers like the scripted provider. It records
+// every prompt it receives so tests can compare resumed requests.
+function glitchingDispatcher({ glitchOn = null, calls = { count: 0, prompts: [] } } = {}) {
+  const scripted = scriptedDispatcher();
+  return async (ctx, options, scope) => {
+    calls.count += 1;
+    calls.prompts.push(options.prompt);
+    if (glitchOn && options.prompt.includes(glitchOn)) {
+      return { text: '{"mutations":[]偏}', receipt: { dispatched: true, outcome: 'success', route: 'test', profileId: '' } };
+    }
+    return scripted(ctx, options, scope);
+  };
+}
+
+test('a failed rebuild returns a resume point and resumes from the failed boundary without redoing earlier ones', async () => {
+  const chat = fixtureChat();
+  const original = seedRootCheckpoint(createState('resume-rebuild'));
+  const glitch = 'The Southport dock strike continues and cargo delays worsen.';
+
+  const firstCalls = { count: 0, prompts: [] };
+  const failed = await runManualRebuild({
+    ctx: {},
+    dispatcher: glitchingDispatcher({ glitchOn: glitch, calls: firstCalls }),
+    state: original,
+    chat,
+    chatKey: 'resume-rebuild',
+    isCurrent: () => true,
+  });
+  assert.equal(failed.outcome, 'failure');
+  assert.equal(failed.failedBoundary, 3);
+  assert.deepEqual(failed.state, original, 'canonical state is untouched by the failed run');
+  assert.ok(failed.resume, 'a resume point is returned');
+  assert.equal(failed.resume.fromMessageId, 3);
+  assert.equal(failed.resume.processedBoundaries, 1);
+  assert.equal(failed.resume.snapshotToken, failed.snapshotToken);
+  assert.deepEqual(failed.resume.candidate.records.map(record => record.summary), ['The Southport dock strike is active.']);
+  assert.equal(firstCalls.count, 2);
+
+  const resumeCalls = { count: 0, prompts: [] };
+  const resumed = await runManualRebuild({
+    ctx: {},
+    dispatcher: glitchingDispatcher({ calls: resumeCalls }),
+    state: original,
+    chat,
+    chatKey: 'resume-rebuild',
+    isCurrent: () => true,
+    resume: failed.resume,
+  });
+  assert.equal(resumed.outcome, 'completed');
+  assert.equal(resumeCalls.count, 2, 'only the failed boundary and later ones are requested');
+  assert.equal(resumed.providerCalls, 2);
+  assert.equal(resumed.processedBoundaries, 3);
+  // The failed boundary is re-sent with the same unmodified request: the bad reply is never fed back.
+  assert.equal(resumeCalls.prompts[0], firstCalls.prompts[1]);
+  assert.doesNotMatch(resumeCalls.prompts[0], /偏|not valid JSON/);
+
+  const fullCalls = { count: 0, prompts: [] };
+  const full = await runManualRebuild({
+    ctx: {},
+    dispatcher: glitchingDispatcher({ calls: fullCalls }),
+    state: original,
+    chat,
+    chatKey: 'resume-rebuild',
+    isCurrent: () => true,
+  });
+  assert.equal(full.outcome, 'completed');
+  assert.equal(compareWorldStateSemantics(full.state, resumed.state).equivalent, true);
+  assert.deepEqual(resumed.state.lineage.map(item => item.lineageKey), full.state.lineage.map(item => item.lineageKey));
+});
+
+test('a resume is refused before any provider call when the chat or World State changed since the failure', async () => {
+  const chat = fixtureChat();
+  const original = seedRootCheckpoint(createState('resume-stale'));
+  const failed = await runManualRebuild({
+    ctx: {},
+    dispatcher: glitchingDispatcher({ glitchOn: 'The Southport dock strike continues' }),
+    state: original,
+    chat,
+    chatKey: 'resume-stale',
+    isCurrent: () => true,
+  });
+  assert.ok(failed.resume);
+
+  const calls = { count: 0, prompts: [] };
+  const editedChat = chat.map((message, index) => (index === 2 ? { ...message, content: 'I wait a single day.' } : message));
+  const chatChanged = await runManualRebuild({
+    ctx: {}, dispatcher: glitchingDispatcher({ calls }), state: original, chat: editedChat,
+    chatKey: 'resume-stale', isCurrent: () => true, resume: failed.resume,
+  });
+  assert.equal(chatChanged.errorCode, 'WORLD_STATE_REBUILD_RESUME_STALE');
+
+  const changedState = reduceMutations(original, {
+    chatKey: 'resume-stale', messageId: 1, lineageKey: chatLineage(chat)[1].lineageKey,
+    mutations: [{ action: 'create', kind: 'fact', summary: 'Southport harbor is open.', anchors: ['Southport harbor'] }],
+  }).state;
+  const stateChanged = await runManualRebuild({
+    ctx: {}, dispatcher: glitchingDispatcher({ calls }), state: changedState, chat,
+    chatKey: 'resume-stale', isCurrent: () => true, resume: failed.resume,
+  });
+  assert.equal(stateChanged.errorCode, 'WORLD_STATE_REBUILD_RESUME_STALE');
+  assert.match(stateChanged.errorMessage, /changed since the rebuild failed/);
+  assert.deepEqual(stateChanged.state.records.map(record => record.summary), ['Southport harbor is open.']);
+
+  // The plan is bound into the resume point: different options cannot skip
+  // boundaries the candidate never processed.
+  for (const options of [{ includeHiddenMessages: false }, { maxBoundaries: 5 }, { startMessageId: 2 }]) {
+    const planChanged = await runManualRebuild({
+      ctx: {}, dispatcher: glitchingDispatcher({ calls }), state: original, chat,
+      chatKey: 'resume-stale', isCurrent: () => true, resume: failed.resume, ...options,
+    });
+    assert.equal(planChanged.errorCode, 'WORLD_STATE_REBUILD_RESUME_STALE', JSON.stringify(options));
+  }
+  // A tampered processed count is ignored: it is derived from the plan.
+  const tampered = await runManualRebuild({
+    ctx: {}, dispatcher: glitchingDispatcher({ calls: { count: 0, prompts: [] } }), state: original, chat,
+    chatKey: 'resume-stale', isCurrent: () => true, resume: { ...failed.resume, processedBoundaries: 99 },
+  });
+  assert.equal(tampered.outcome, 'completed');
+  assert.equal(tampered.processedBoundaries, 3);
+  assert.equal(calls.count, 0);
+});
+
+test('stale and cancelled rebuilds never offer a resume point', async () => {
+  const chat = fixtureChat();
+  const original = seedRootCheckpoint(createState('resume-none'));
+  let checks = 0;
+  const stale = await runManualRebuild({
+    ctx: {}, dispatcher: glitchingDispatcher(), state: original, chat, chatKey: 'resume-none',
+    isCurrent: () => (checks += 1) < 3,
+  });
+  assert.equal(stale.outcome, 'stale');
+  assert.equal(stale.resume, undefined);
+
+  const controller = new AbortController();
+  controller.abort();
+  const cancelled = await runManualRebuild({
+    ctx: {}, dispatcher: glitchingDispatcher(), state: original, chat, chatKey: 'resume-none',
+    isCurrent: () => true, signal: controller.signal,
+  });
+  assert.equal(cancelled.outcome, 'cancelled');
+  assert.equal(cancelled.resume, undefined);
+});

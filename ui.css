@@ -2126,6 +2126,17 @@
   color: var(--wsa-muted);
 }
 
+.wsa-rebuild-resume {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.wsa-rebuild-toast [data-wsa-resume-rebuild] {
+  align-self: center;
+  white-space: nowrap;
+}
+
 .wsa-bootstrap-safety {
   border-color: rgba(241, 199, 121, 0.6);
   background: var(--wsa-caution-bg);

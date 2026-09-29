@@ -30,7 +30,7 @@ import {
   previewWorldStateReset,
 } from './manual.js';
 import { cancelWorldStateRequests, worldStateProfileOptions } from './provider-routing.js';
-import { planChronologicalRebuild, REBUILD_LIMITS, runManualRebuild } from './rebuild.js';
+import { planChronologicalRebuild, REBUILD_LIMITS, rebuildSnapshotToken, runManualRebuild } from './rebuild.js';
 import { buildRelevanceIndex, selectLifecycleCandidates, selectRelevantRecords, selectRelevantTombstones, updateRelevanceIndex } from './relevance.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
 import { buildSpatialInjection } from './spatial-injection.js';
@@ -41,7 +41,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.36';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.37';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -100,6 +100,8 @@ const diagnosticStore = createDiagnosticStore({
   onRecord: chatKey => scheduleOperationLogSave(chatKey),
 });
 const rebuildStatuses = new Map();
+// In-memory only: where a failed rebuild can be resumed by the operator.
+const rebuildResumes = new Map();
 const rebuildAbortControllers = new Map();
 
 const CHAT_CACHE_LIMIT = 6;
@@ -426,6 +428,7 @@ function clearBranchCaptureTimer(chatKey) {
 }
 
 function forgetBranchContinuations(chatKey) {
+  rebuildResumes.delete(chatKey);
   parkedBranches.delete(chatKey);
   clearBranchCaptureTimer(chatKey);
   locallyProvenTails.delete(chatKey);
@@ -557,6 +560,8 @@ function setCachedState(chatKey, state, {
   spatialIndexDelta = null,
   sourcePointer = undefined,
 } = {}) {
+  // Any new canonical state makes a failed rebuild's resume point stale.
+  rebuildResumes.delete(chatKey);
   const normalized = normalizeState(clone(state), { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
   const hydratedPointer = sourcePointer === undefined ? pointerFor(chatKey) : sourcePointer;
@@ -2851,8 +2856,38 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     if (!payload?.rebuild
       && !window.confirm('Rebuild World State Alpha from this chat chronology? This is an explicit provider-backed recovery operation.')) return;
 
-    const mode = ['full', 'last', 'from'].includes(rebuildRequest.mode) ? rebuildRequest.mode : 'full';
+    // Resume re-sends the failed boundary's unmodified request with the same
+    // plan; it never feeds the malformed reply back to the model.
+    // It must name the failure it answers, so a duplicate click can never
+    // consume a newer failure's resume point without a fresh decision.
+    const savedResume = rebuildRequest.resume === true ? rebuildResumes.get(chatKey) : null;
+    const refuseResume = message => {
+      rebuildResumes.delete(chatKey);
+      notify('error', message);
+      refreshPanel();
+    };
+    if (rebuildRequest.resume === true) {
+      if (!savedResume || savedResume.resume.fromMessageId !== rebuildRequest.fromMessageId) {
+        notify('error', 'There is no failed rebuild to resume at that message for this chat. Start a new rebuild.');
+        refreshPanel();
+        return;
+      }
+      // Refuse a stale resume before any reconcile, status, or provider side effect.
+      if (rebuildSnapshotToken({ state, chat }) !== savedResume.resume.snapshotToken) {
+        refuseResume('The chat or World State changed since the rebuild failed, so it cannot resume. Start a new rebuild.');
+        return;
+      }
+    }
+    const resumeParams = savedResume?.params || null;
+
+    const mode = resumeParams ? resumeParams.mode : (['full', 'last', 'from'].includes(rebuildRequest.mode) ? rebuildRequest.mode : 'full');
     const bootstrapRecoveryAtStart = bootstrapRequiredChats.has(chatKey);
+    if (resumeParams && (resumeParams.bootstrapRecoveryAtStart !== bootstrapRecoveryAtStart
+      || resumeParams.spatialEnabled !== Boolean(getWorldStateSettings().spatialEnabled)
+      || resumeParams.routeKey !== stableStringify(routeSettings()))) {
+      refuseResume('World State settings or the connection profile changed since the rebuild failed, so it cannot resume without mixing models. Start a new rebuild.');
+      return;
+    }
     if (bootstrapRecoveryAtStart && mode !== 'full') {
       notify('error', 'This chat has no durable World State baseline. Use Full chat rebuild, import, or explicit reset; partial rebuild cannot safely recover missing continuity.');
       return;
@@ -2862,7 +2897,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       if (!Number.isFinite(number)) return fallback;
       return Math.max(min, Math.min(max, Math.trunc(number)));
     };
-    const maxBoundaries = numeric(
+    const maxBoundaries = resumeParams ? resumeParams.maxBoundaries : numeric(
       rebuildRequest.maxBoundaries,
       REBUILD_LIMITS.maxBoundaries,
       1,
@@ -2870,12 +2905,14 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     );
     const lastMessages = numeric(rebuildRequest.lastMessages, 20, 1, Math.max(1, chat.length));
     const requestedStart = numeric(rebuildRequest.startMessageId, 0, 0, Math.max(0, chat.length - 1));
-    const includeHiddenMessages = rebuildRequest.includeHiddenMessages !== false;
-    const startMessageId = mode === 'last'
-      ? Math.max(0, chat.length - lastMessages)
-      : mode === 'from'
-        ? requestedStart
-        : 0;
+    const includeHiddenMessages = resumeParams ? resumeParams.includeHiddenMessages : rebuildRequest.includeHiddenMessages !== false;
+    const startMessageId = resumeParams
+      ? resumeParams.startMessageId
+      : mode === 'last'
+        ? Math.max(0, chat.length - lastMessages)
+        : mode === 'from'
+          ? requestedStart
+          : 0;
 
     if (startMessageId > 0) {
       const branch = extendCurrentBranchFast(chatKey)
@@ -2910,7 +2947,8 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const totalBoundaries = rebuildPlan.metrics.assistantBoundaries;
     const startEpoch = epoch(chatKey);
     const startLineage = stableStringify(chatLineage(chat));
-    const operationId = 'rebuild:' + sourceMessageId + ':' + startEpoch + ':' + startMessageId;
+    const operationId = 'rebuild:' + sourceMessageId + ':' + startEpoch + ':' + startMessageId
+      + (savedResume ? ':resume-' + savedResume.resume.fromMessageId + '-' + Date.now().toString(36) : '');
     const isCurrent = () => currentChatKey() === chatKey
       && epoch(chatKey) === startEpoch
       && stableStringify(chatLineage(getContext().chat || [])) === startLineage;
@@ -2922,11 +2960,17 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       return;
     }
 
+    // A new run or a resume consumes the previous resume point only now,
+    // after every no-call early return above has had its chance to refuse.
+    rebuildResumes.delete(chatKey);
+    const priorTotals = savedResume?.totals || { applied: 0, rejected: 0, aliasRepairs: 0, providerCalls: 0 };
+
     rebuildAbortControllers.get(chatKey)?.abort();
     const rebuildController = new AbortController();
     rebuildAbortControllers.set(chatKey, rebuildController);
 
-    const rangeLabel = startMessageId > 0 ? 'message ' + startMessageId + ' to current' : 'full chat';
+    const rangeLabel = (startMessageId > 0 ? 'message ' + startMessageId + ' to current' : 'full chat')
+      + (savedResume ? ', resuming at message ' + savedResume.resume.fromMessageId : '');
     rebuildStatuses.set(chatKey, {
       phase: 'running',
       operationId,
@@ -2936,12 +2980,12 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       includeHiddenMessages,
       hiddenMessagesIncluded: rebuildPlan.metrics.hiddenMessagesIncluded || 0,
       hiddenAssistantBoundaries: rebuildPlan.metrics.hiddenAssistantBoundaries || 0,
-      processedBoundaries: 0,
+      processedBoundaries: savedResume ? savedResume.resume.processedBoundaries : 0,
       totalBoundaries,
       currentMessageId: null,
-      providerCalls: 0,
-      applied: 0,
-      rejected: 0,
+      providerCalls: priorTotals.providerCalls,
+      applied: priorTotals.applied,
+      rejected: priorTotals.rejected,
       currentRecords: (state.records || []).filter(record => record?.status === 'active').length,
       places: resolveEffectiveLocations(state.spatial, baseMap).length,
       startedAt: Date.now(),
@@ -2985,12 +3029,14 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         spatialEnabled: Boolean(settings.spatialEnabled),
         baseMap,
         spatialProfile: resolveSpatialProfile(state.spatial, baseMap),
+        resume: savedResume?.resume || null,
         onProgress: progress => {
           const previous = rebuildStatuses.get(chatKey) || {};
           rebuildStatuses.set(chatKey, {
             ...previous,
             phase: 'running',
             ...progress,
+            providerCalls: priorTotals.providerCalls + Number(progress.providerCalls || 0),
             applied: Number(previous.applied || 0) + Number(progress.boundaryApplied || 0),
             rejected: Number(previous.rejected || 0) + Number(progress.boundaryRejected || 0),
             detail: 'Processed message ' + progress.messageId + ' (' + progress.processedBoundaries + '/' + progress.totalBoundaries + ' boundaries).',
@@ -3024,9 +3070,11 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     if (rebuildAbortControllers.get(chatKey) === rebuildController) rebuildAbortControllers.delete(chatKey);
 
     const receipts = Array.isArray(result.receipts) ? result.receipts : [];
-    const applied = receipts.reduce((sum, item) => sum + (Number(item?.applied) || 0), 0);
-    const rejected = receipts.reduce((sum, item) => sum + (Number(item?.rejected) || 0), 0);
-    const aliasRepairs = receipts.reduce((sum, item) => sum + (Number(item?.aliasRepairs) || 0), 0);
+    // A resumed run reports the whole rebuild: earlier segments plus this one.
+    result.providerCalls = priorTotals.providerCalls + (Number(result.providerCalls) || 0);
+    const applied = priorTotals.applied + receipts.reduce((sum, item) => sum + (Number(item?.applied) || 0), 0);
+    const rejected = priorTotals.rejected + receipts.reduce((sum, item) => sum + (Number(item?.rejected) || 0), 0);
+    const aliasRepairs = priorTotals.aliasRepairs + receipts.reduce((sum, item) => sum + (Number(item?.aliasRepairs) || 0), 0);
     const failedReceipt = receipts.slice().reverse().find(item => item?.messageId === result.failedBoundary) || receipts.at(-1) || null;
     const firstRejection = failedReceipt?.rejections?.[0];
     const failureDetail = String(
@@ -3040,6 +3088,23 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const cancelledOutcome = result.outcome === 'stale'
       || result.outcome === 'cancelled'
       || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED';
+    const resumable = result.outcome === 'failure' && !cancelledOutcome && result.resume && isCurrent();
+    if (resumable) {
+      rebuildResumes.set(chatKey, {
+        resume: result.resume,
+        totals: { applied, rejected, aliasRepairs, providerCalls: result.providerCalls },
+        params: {
+          mode,
+          startMessageId,
+          maxBoundaries,
+          includeHiddenMessages,
+          bootstrapRecoveryAtStart,
+          spatialEnabled: Boolean(settings.spatialEnabled),
+          routeKey: stableStringify(routeSettings()),
+          totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+        },
+      });
+    }
     if (result.outcome !== 'completed' || !isCurrent()) {
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
@@ -3072,7 +3137,8 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         cancelledOutcome ? 'info' : 'error',
         cancelledOutcome
           ? 'World State Alpha rebuild cancelled' + atBoundary + '. Canonical state was left unchanged.'
-          : 'World State Alpha rebuild failed' + atBoundary + ': ' + failureDetail + '. Canonical state was left unchanged.',
+          : 'World State Alpha rebuild failed' + atBoundary + ': ' + failureDetail + '. Canonical state was left unchanged.'
+            + (resumable ? ' Use Resume from message ' + result.resume.fromMessageId + ' to continue without redoing earlier messages.' : ''),
       );
       return;
     }
@@ -4035,6 +4101,13 @@ export async function openWorldStatePanel() {
         hydrationSource: hydrationSources.get(chatKey) || '',
         bootstrapRequired: bootstrapRequiredChats.has(chatKey),
         rebuildStatus: rebuildStatuses.get(chatKey) ? clone(rebuildStatuses.get(chatKey)) : null,
+        rebuildResume: (saved => (saved
+          ? {
+            messageId: saved.resume.fromMessageId,
+            processedBoundaries: saved.resume.processedBoundaries,
+            totalBoundaries: saved.params.totalBoundaries,
+          }
+          : null))(rebuildResumes.get(chatKey)),
       };
     },
     onMaintenanceAction: (actionId, payload) => applyMaintenanceAction(actionId, payload, chatKey),

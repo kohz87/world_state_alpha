@@ -482,7 +482,7 @@ test('rebuild cancellation bypasses the per-chat writer queue while rebuild muta
   assert.match(wrapper, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, payload, chatKey\)\)/);
 
   assert.match(source, /planChronologicalRebuild\(chat, \{[\s\S]*maxBoundaries,[\s\S]*startMessageId,[\s\S]*includeHiddenMessages,[\s\S]*\}\)/);
-  assert.match(source, /includeHiddenMessages = rebuildRequest\.includeHiddenMessages !== false/);
+  assert.match(source, /includeHiddenMessages = resumeParams \? resumeParams\.includeHiddenMessages : rebuildRequest\.includeHiddenMessages !== false/);
   assert.match(source, /includeHiddenMessages,/);
   assert.match(source, /startMessageId > 0[\s\S]*extendCurrentBranchFast\(chatKey\)[\s\S]*reconcileCurrentBranch\(chatKey, \{ persistRestore: true \}\)/);
   assert.match(source, /Partial rebuild cannot prove the current chat lineage safely/);
@@ -1151,4 +1151,40 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   // Operation telemetry never enters the canonical sidecar payload.
   const storage = fs.readFileSync('storage.js', 'utf8');
   assert.doesNotMatch(storage, /diagnostic|operations/i);
+});
+
+test('a failed rebuild keeps an in-memory resume point that only an explicit Resume consumes', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const start = source.indexOf("if (actionId === 'rebuild')");
+  const body = source.slice(start, source.indexOf('async function applySpatialAction(', start));
+
+  // Resume is an explicit operator request that reuses the failed run's plan.
+  assert.match(body, /const savedResume = rebuildRequest\.resume === true \? rebuildResumes\.get\(chatKey\) : null;/);
+  // It must name the failure it answers, and a stale resume is refused before
+  // reconcile, status or provider side effects.
+  assert.match(body, /savedResume\.resume\.fromMessageId !== rebuildRequest\.fromMessageId/);
+  assert.match(body, /There is no failed rebuild to resume at that message for this chat/);
+  const staleAt = body.indexOf('rebuildSnapshotToken({ state, chat }) !== savedResume.resume.snapshotToken');
+  assert.ok(staleAt > 0 && staleAt < body.indexOf('extendCurrentBranchFast(chatKey)') && staleAt < body.indexOf("phase: 'running'"));
+  assert.match(body, /resumeParams\.bootstrapRecoveryAtStart !== bootstrapRecoveryAtStart/);
+  assert.match(body, /resumeParams\.routeKey !== stableStringify\(routeSettings\(\)\)/);
+  assert.match(body, /':resume-' \+ savedResume\.resume\.fromMessageId/);
+  assert.match(body, /result\.providerCalls = priorTotals\.providerCalls \+/);
+  // Consumed only after every no-call early return (base map, planning, branch proof).
+  const consumeAt = body.indexOf('rebuildResumes.delete(chatKey);\n    const priorTotals');
+  assert.ok(consumeAt > body.indexOf('attached Spatial base map is unavailable') && consumeAt < body.indexOf('runManualRebuild({'));
+  const cacheStart = source.indexOf('function setCachedState(');
+  assert.match(source.slice(cacheStart, cacheStart + 400), /rebuildResumes\.delete\(chatKey\)/);
+  assert.match(body, /resume: savedResume\?\.resume \|\| null,/);
+
+  // Only a genuine failure that is still current leaves a resume point.
+  assert.match(body, /const resumable = result\.outcome === 'failure' && !cancelledOutcome && result\.resume && isCurrent\(\);/);
+  assert.match(body, /rebuildResumes\.set\(chatKey, \{/);
+  assert.match(body, /Use Resume from message ' \+ result\.resume\.fromMessageId/);
+
+  // Never persisted; dropped with the chat's runtime continuations (import, reset, rebuild success, eviction).
+  const forgetStart = source.indexOf('function forgetBranchContinuations(');
+  assert.match(source.slice(forgetStart, forgetStart + 200), /rebuildResumes\.delete\(chatKey\)/);
+  assert.match(source, /: null\)\)\(rebuildResumes\.get\(chatKey\)\),/);
+  assert.doesNotMatch(fs.readFileSync('storage.js', 'utf8'), /resume/i);
 });
