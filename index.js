@@ -22,6 +22,8 @@ import {
   continuityInjectionBlocked,
 } from './injection.js';
 import {
+  MANUAL_LIMITS,
+  applyManualLifecycleBatch,
   applyManualMutation,
   applyWorldStateImport,
   applyWorldStateReset,
@@ -3452,27 +3454,52 @@ async function applyRecordActionNow(actionId, payload, chatKey) {
 
   const actionIsCurrent = chatHeadGuard(chatKey);
   const state = stateCache.get(chatKey);
-  const publicRecord = payload?.record && typeof payload.record === 'object' ? payload.record : null;
-  const keyMatch = /^row-(\d+)$/.exec(String(publicRecord?.key || ''));
-  const rowIndex = keyMatch ? Number(keyMatch[1]) : -1;
-  const record = Number.isInteger(rowIndex) && rowIndex >= 0 ? state?.records?.[rowIndex] : null;
-  const projectedSummary = String(record?.summary || '').trim().slice(0, 700);
-  const expectedCreated = Number.isInteger(publicRecord?.createdAtMessage) ? publicRecord.createdAtMessage : null;
-  const actualCreated = Number.isInteger(record?.createdAtMessage) ? record.createdAtMessage : null;
-  const expectedChanged = Number.isInteger(publicRecord?.lastChangedMessage) ? publicRecord.lastChangedMessage : null;
-  const actualChanged = Number.isInteger(record?.lastChangedMessage) ? record.lastChangedMessage : null;
+  const bulk = Array.isArray(payload?.records);
+  const publicRecords = bulk
+    ? payload.records
+    : (payload?.record && typeof payload.record === 'object' ? [payload.record] : []);
+  if (bulk && (!publicRecords.length || publicRecords.length > MANUAL_LIMITS.bulkRecords)) {
+    notify('warning', 'Select between 1 and ' + MANUAL_LIMITS.bulkRecords + ' records for a bulk lifecycle correction.');
+    return;
+  }
+  const targets = [];
+  const seenRows = new Set();
+  let stale = !publicRecords.length;
+  for (const publicRecord of publicRecords) {
+    const keyMatch = /^row-(\d+)$/.exec(String(publicRecord?.key || ''));
+    const rowIndex = keyMatch ? Number(keyMatch[1]) : -1;
+    const record = Number.isInteger(rowIndex) && rowIndex >= 0 ? state?.records?.[rowIndex] : null;
+    const projectedSummary = String(record?.summary || '').trim().slice(0, 700);
+    const expectedCreated = Number.isInteger(publicRecord?.createdAtMessage) ? publicRecord.createdAtMessage : null;
+    const actualCreated = Number.isInteger(record?.createdAtMessage) ? record.createdAtMessage : null;
+    const expectedChanged = Number.isInteger(publicRecord?.lastChangedMessage) ? publicRecord.lastChangedMessage : null;
+    const actualChanged = Number.isInteger(record?.lastChangedMessage) ? record.lastChangedMessage : null;
+    if (!record
+      || seenRows.has(rowIndex)
+      || record.status !== 'active'
+      || publicRecord?.status !== 'active'
+      || publicRecord?.kind !== record.kind
+      || publicRecord?.summary !== projectedSummary
+      || expectedCreated !== actualCreated
+      || expectedChanged !== actualChanged) {
+      stale = true;
+      break;
+    }
+    seenRows.add(rowIndex);
+    targets.push(record);
+  }
 
-  if (!record
-    || record.status !== 'active'
-    || publicRecord?.status !== 'active'
-    || publicRecord?.kind !== record.kind
-    || publicRecord?.summary !== projectedSummary
-    || expectedCreated !== actualCreated
-    || expectedChanged !== actualChanged) {
-    notify('warning', 'That World State record changed before the manual action could run. Reopen it and try again.');
+  if (stale) {
+    notify(
+      'warning',
+      bulk
+        ? 'The selected World State records changed before the bulk action could run. Reselect them and try again.'
+        : 'That World State record changed before the manual action could run. Reopen it and try again.',
+    );
     refreshPanel();
     return;
   }
+  const record = targets[0];
 
   const chat = getContext().chat || [];
   if (!chat.length) {
@@ -3481,8 +3508,9 @@ async function applyRecordActionNow(actionId, payload, chatKey) {
   }
   const messageId = chat.length - 1;
   const outcomeLabel = actionId === 'resolve' ? 'resolved' : 'superseded';
+  const subject = bulk ? targets.length + ' records' : 'this record';
   const note = window.prompt(
-    'Why should this record be marked ' + outcomeLabel + '?\nThis note will be stored as manual evidence.',
+    'Why should ' + subject + ' be marked ' + outcomeLabel + '?\nThis note will be stored as manual evidence.',
     '',
   );
   if (note === null) return;
@@ -3491,28 +3519,51 @@ async function applyRecordActionNow(actionId, payload, chatKey) {
     return;
   }
 
-  const historySummaryInput = window.prompt(
-    'History summary:\nEdit this if the current wording will be misleading after it is marked ' + outcomeLabel + '.',
-    record.summary,
-  );
-  if (historySummaryInput === null) return;
-  const historySummary = String(historySummaryInput).trim() || record.summary;
+  let historySummary = '';
+  if (bulk) {
+    const previews = targets.slice(0, 5).map(item => {
+      const text = String(item.summary || '').trim();
+      return '- ' + (text.length > 100 ? text.slice(0, 97) + '...' : text);
+    });
+    const more = targets.length > previews.length ? '\n...and ' + (targets.length - previews.length) + ' more' : '';
+    if (!window.confirm(
+      'Move ' + targets.length + ' records to history as ' + outcomeLabel + '?\nTheir summaries stay unchanged.\n\n'
+        + previews.join('\n') + more,
+    )) return;
+  } else {
+    const historySummaryInput = window.prompt(
+      'History summary:\nEdit this if the current wording will be misleading after it is marked ' + outcomeLabel + '.',
+      record.summary,
+    );
+    if (historySummaryInput === null) return;
+    historySummary = String(historySummaryInput).trim() || record.summary;
 
-  const preview = historySummary.length > 180 ? historySummary.slice(0, 177) + '...' : historySummary;
-  if (!window.confirm('Move this record to history as ' + outcomeLabel + '?\n\n' + preview)) return;
+    const preview = historySummary.length > 180 ? historySummary.slice(0, 177) + '...' : historySummary;
+    if (!window.confirm('Move this record to history as ' + outcomeLabel + '?\n\n' + preview)) return;
+  }
 
-  const result = applyManualMutation({
-    state,
-    chat,
-    chatKey,
-    messageId,
-    mutation: {
+  const result = bulk
+    ? applyManualLifecycleBatch({
+      state,
+      chat,
+      chatKey,
+      messageId,
       action: actionId,
-      recordId: record.id,
-      summary: historySummary,
-    },
-    note: String(note).trim(),
-  });
+      recordIds: targets.map(item => item.id),
+      note: String(note).trim(),
+    })
+    : applyManualMutation({
+      state,
+      chat,
+      chatKey,
+      messageId,
+      mutation: {
+        action: actionId,
+        recordId: record.id,
+        summary: historySummary,
+      },
+      note: String(note).trim(),
+    });
 
   if (result.outcome !== 'applied') {
     notify('error', 'Manual lifecycle correction was rejected: ' + (result.rejected?.[0]?.reason || 'invalid change'));
@@ -3535,7 +3586,12 @@ async function applyRecordActionNow(actionId, payload, chatKey) {
   passiveCaptureRebaseCandidates.delete(chatKey);
   updatePrivateInjection();
   refreshPanel();
-  notify('success', 'Moved World State record to history as ' + outcomeLabel + '.');
+  notify(
+    'success',
+    bulk
+      ? 'Moved ' + targets.length + ' World State records to history as ' + outcomeLabel + '.'
+      : 'Moved World State record to history as ' + outcomeLabel + '.',
+  );
 }
 
 async function applySpatialAction(actionId, payload = {}, expectedChatKey = currentChatKey()) {

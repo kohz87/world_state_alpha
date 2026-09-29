@@ -519,6 +519,21 @@ test('host manual history actions stay queued, auditable, and hidden-ID safe', (
   assert.match(source, /persistGuardedMutation\(\{[\s\S]*candidateState: result\.state,[\s\S]*recoveryState: state,[\s\S]*label: 'manual lifecycle'[\s\S]*\}\);[\s\S]*if \(persisted\.stale\)[\s\S]*setCachedState\(chatKey, result\.state\);[\s\S]*updatePrivateInjection\(\);/);
 });
 
+test('host bulk lifecycle action validates every selected record and commits one manual boundary', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const body = source.slice(source.indexOf('async function applyRecordActionNow'), source.indexOf('async function applySpatialAction('));
+
+  assert.match(source, /applyManualLifecycleBatch,/);
+  assert.match(body, /const bulk = Array\.isArray\(payload\?\.records\)/);
+  assert.match(body, /publicRecords\.length > MANUAL_LIMITS\.bulkRecords/);
+  // Every selected record gets the same stale/identity check as the single-record action; one stale row cancels the batch.
+  assert.match(body, /for \(const publicRecord of publicRecords\)[\s\S]*seenRows\.has\(rowIndex\)[\s\S]*record\.status !== 'active'[\s\S]*publicRecord\?\.summary !== projectedSummary[\s\S]*stale = true;[\s\S]*break;/);
+  assert.match(body, /selected World State records changed before the bulk action could run/);
+  assert.match(body, /Their summaries stay unchanged/);
+  assert.match(body, /applyManualLifecycleBatch\(\{[\s\S]*recordIds: targets\.map\(item => item\.id\),[\s\S]*note: String\(note\)\.trim\(\)/);
+  assert.equal((body.match(/persistGuardedMutation\(/g) || []).length, 1);
+});
+
 test('host panel actions are bound to the chat that opened the panel', () => {
   const source = fs.readFileSync('index.js', 'utf8');
 

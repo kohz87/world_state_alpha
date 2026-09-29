@@ -6,6 +6,7 @@ import { exportBundle, importBundle, resetState } from './transfer.js';
 export const MANUAL_LIMITS = Object.freeze({
   queryResults: 100,
   noteChars: 500,
+  bulkRecords: 100,
 });
 
 function clean(value, max = 500) {
@@ -224,6 +225,74 @@ export function applyManualMutation({
   return {
     outcome: 'applied',
     state: committed,
+    applied: reduced.applied,
+    rejected: [],
+  };
+}
+
+export function applyManualLifecycleBatch({
+  state,
+  chat,
+  chatKey,
+  messageId,
+  action,
+  recordIds,
+  note,
+} = {}) {
+  if (!['resolve', 'supersede'].includes(action)) {
+    throw new Error('bulk lifecycle action must be resolve or supersede');
+  }
+  const ids = [...new Set((Array.isArray(recordIds) ? recordIds : []).map(id => clean(id, 120)).filter(Boolean))];
+  if (!ids.length) throw new Error('bulk lifecycle action needs at least one record');
+  if (ids.length > MANUAL_LIMITS.bulkRecords) {
+    throw new Error('bulk lifecycle action is limited to ' + MANUAL_LIMITS.bulkRecords + ' records');
+  }
+
+  const before = normalizeState(clone(state), { chatKey });
+  const owner = String(chatKey || before.chatKey || '');
+  if (!owner) throw new Error('chatKey is required');
+  if (before.chatKey && before.chatKey !== owner) throw new Error('manual mutation chatKey does not match state owner');
+
+  const boundary = exactBoundary(chat, messageId, before);
+  const proposals = ids.map(recordId => manualProposal({ action, recordId }, note, boundary));
+
+  const inactive = ids.filter(recordId => before.records.find(record => record.id === recordId)?.status !== 'active');
+  if (inactive.length) {
+    return {
+      outcome: 'rejected',
+      state: clone(before),
+      applied: [],
+      rejected: inactive.map(recordId => ({
+        stage: 'reducer',
+        reason: 'target record is not an active record',
+        recordId,
+      })),
+    };
+  }
+
+  const reduced = reduceMutations(before, {
+    chatKey: owner,
+    messageId,
+    lineageKey: boundary.lineageKey,
+    operation: 'manual',
+    mutations: proposals,
+  });
+
+  const changed = reduced.applied.filter(item => item.action !== 'noop').length;
+  if (reduced.rejected.length || changed !== ids.length) {
+    return {
+      outcome: 'rejected',
+      state: clone(before),
+      applied: reduced.applied,
+      rejected: reduced.rejected.length
+        ? reduced.rejected.map(item => ({ stage: 'reducer', reason: item.reason }))
+        : [{ stage: 'reducer', reason: 'not every selected record could be changed' }],
+    };
+  }
+
+  return {
+    outcome: 'applied',
+    state: commitMutationBoundary(before, reduced.state, chat.slice(0, messageId + 1), messageId, 'manual'),
     applied: reduced.applied,
     rejected: [],
   };

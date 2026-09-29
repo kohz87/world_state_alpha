@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import { chatLineage, reconcileBranch } from '../branch.js';
 import {
+  MANUAL_LIMITS,
+  applyManualLifecycleBatch,
   applyManualMutation,
   applyWorldStateImport,
   applyWorldStateReset,
@@ -314,4 +316,89 @@ test('reset UX requires explicit confirmation and creates pristine state', () =>
   assert.equal(reset.chatKey, 'reset-manual');
   assert.deepEqual(reset.records, []);
   assert.deepEqual(reset.evidence, {});
+});
+
+test('bulk lifecycle action resolves or supersedes many active records in one boundary', () => {
+  const chat = [
+    { role: 'assistant', content: 'Three threads are open.' },
+    { role: 'user', content: 'I clean up the tracker.' },
+  ];
+  const state = seedState('manual-bulk', chat.slice(0, 1), [
+    { action: 'create', kind: 'development', summary: 'The dock strike is active.', anchors: ['dock'] },
+    { action: 'create', kind: 'development', summary: 'The tollhouse blockade is active.', anchors: ['tollhouse'] },
+    { action: 'create', kind: 'fact', summary: 'The orchard gate is locked.', anchors: ['orchard'] },
+  ]);
+  const ids = state.records.map(record => record.id);
+  const journalBefore = state.rollbackJournal.length;
+
+  const resolved = applyManualLifecycleBatch({
+    state,
+    chat,
+    chatKey: 'manual-bulk',
+    messageId: 1,
+    action: 'resolve',
+    recordIds: ids.slice(0, 2),
+    note: 'Operator cleanup: both episodes ended off-screen.',
+  });
+  assert.equal(resolved.outcome, 'applied');
+  assert.deepEqual(resolved.state.records.map(record => record.status), ['resolved', 'resolved', 'active']);
+  assert.deepEqual(
+    resolved.state.records.map(record => record.summary),
+    state.records.map(record => record.summary),
+  );
+  assert.equal(resolved.state.records[0].lastChangedMessage, 1);
+  assert.equal(resolved.state.rollbackJournal.length, journalBefore + 1);
+  assert.equal(
+    Object.values(resolved.state.evidence).filter(item =>
+      item.sourceClass === 'manual' && /both episodes ended/.test(item.claim)).length >= 2,
+    true,
+  );
+  assert.equal(state.records.every(record => record.status === 'active'), true);
+
+  const superseded = applyManualLifecycleBatch({
+    state,
+    chat,
+    chatKey: 'manual-bulk',
+    messageId: 1,
+    action: 'supersede',
+    recordIds: ids,
+    note: 'Operator cleanup: replaced by the new arrangement.',
+  });
+  assert.equal(superseded.outcome, 'applied');
+  assert.equal(superseded.state.records.every(record => record.status === 'superseded'), true);
+});
+
+test('bulk lifecycle action is all-or-nothing and bounded', () => {
+  const chat = [
+    { role: 'assistant', content: 'Two threads are open.' },
+    { role: 'user', content: 'I clean up the tracker.' },
+  ];
+  const state = seedState('manual-bulk-guard', chat.slice(0, 1), [
+    { action: 'create', kind: 'development', summary: 'The dock strike is active.', anchors: ['dock'] },
+    { action: 'create', kind: 'development', summary: 'The tollhouse blockade is active.', anchors: ['tollhouse'] },
+  ]);
+  const [first, second] = state.records.map(record => record.id);
+  const base = { state, chat, chatKey: 'manual-bulk-guard', messageId: 1, action: 'resolve', note: 'Operator cleanup.' };
+
+  const missing = applyManualLifecycleBatch({ ...base, recordIds: [first, 'ghost'] });
+  assert.equal(missing.outcome, 'rejected');
+  assert.equal(missing.state.records.every(record => record.status === 'active'), true);
+
+  const already = applyManualLifecycleBatch({ ...base, recordIds: [first] });
+  const again = applyManualLifecycleBatch({ ...base, state: already.state, recordIds: [first, second] });
+  assert.equal(again.outcome, 'rejected');
+  assert.equal(again.rejected[0].recordId, first);
+  assert.equal(again.state.records.find(record => record.id === second).status, 'active');
+
+  assert.throws(() => applyManualLifecycleBatch({ ...base, recordIds: [] }), /at least one record/);
+  assert.throws(() => applyManualLifecycleBatch({ ...base, action: 'update', recordIds: [first] }), /resolve or supersede/);
+  assert.throws(() => applyManualLifecycleBatch({ ...base, note: '  ', recordIds: [first] }), /operator note/);
+  assert.throws(
+    () => applyManualLifecycleBatch({
+      ...base,
+      recordIds: Array.from({ length: MANUAL_LIMITS.bulkRecords + 1 }, (_, index) => 'r' + index),
+    }),
+    /limited to/,
+  );
+  assert.throws(() => applyManualLifecycleBatch({ ...base, messageId: 0, recordIds: [first] }), /current raw-message head/);
 });
