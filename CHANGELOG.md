@@ -9,6 +9,10 @@
 - The batch is all-or-nothing and is one manual boundary with one journal entry, so a rollback undoes it as a unit. Every record gets the same manual evidence note as a single action.
 - The host validates every selected record exactly as it does for one (identity, still active, summary and change point unchanged); one stale record cancels the whole batch and asks the operator to reselect.
 
+- Hardening from code review:
+  - bulk mode and its selection end whenever the tab or search text changes, and the action only sends rows currently shown, so records the operator cannot see are never changed;
+  - selection checkboxes announce their state to screen readers.
+
 ### Architecture
 
 - New `applyManualLifecycleBatch` in `manual.js` shares the single-record boundary, lineage and reducer path. Core contract lifecycle-control paragraph amended. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.

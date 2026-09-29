@@ -811,7 +811,8 @@ function recordDisclosure(record, expanded, index, detail = null, model = {}, bu
   const check = bulk?.active
     ? '<span class="wsa-record-check' + (checked ? ' is-checked' : '') + (selectable ? '' : ' is-disabled') +
       '" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-disabled="' + (selectable ? 'false' : 'true') + '">' +
-      (checked ? icon('resolved') : '') + '</span>'
+      (checked ? icon('resolved') : '') + '<span class="wsa-sr-only">' +
+      (selectable ? (checked ? 'Selected. Press to unselect.' : 'Not selected. Press to select.') : 'Already in history.') + '</span></span>'
     : '';
   return '<details class="wsa-record-disclosure' + (expanded ? ' is-expanded' : '') + (checked ? ' is-selected' : '') + ' wsa-rec-' + tone + '"' + (expanded ? ' open' : '') + '>' +
     '<summary data-wsa-record-index="' + index + '">' +
@@ -1723,6 +1724,7 @@ export function createWorldStateUiController({
     mobileMoreOpen: false,
     rebuildOpen: false,
     bulk: { active: false, keys: new Set() },
+    bulkScope: '',
     dismissedRebuildOperationId: '',
     rebuildForm: {
       mode: 'full',
@@ -1756,6 +1758,14 @@ export function createWorldStateUiController({
       ui.dismissedRebuildOperationId = '';
     }
     ui.selectedRecordId = next.selectedRecordId;
+    // Bulk mode belongs to one list: changing tab or search text ends it, so a selection can never
+    // include rows the operator can no longer see.
+    const bulkScope = ui.activeTab + '|' + ui.query;
+    if (bulkScope !== ui.bulkScope) {
+      ui.bulkScope = bulkScope;
+      ui.bulk.active = false;
+      ui.bulk.keys.clear();
+    }
     pruneBulkSelection(next);
     ui.selectedSpatialKey = next.spatial.selectedKey;
     if (!Number.isInteger(ui.rebuildForm.maxBoundaries)) {
@@ -2078,8 +2088,8 @@ export function createWorldStateUiController({
     if (bulkAction && typeof onRecordAction === 'function') {
       const action = clean(bulkAction.dataset?.wsaBulkAction, 24);
       if (!['resolve', 'supersede'].includes(action) || ui.bulkPending) return;
-      const live = activeRowsByKey(model());
-      const records = [...ui.bulk.keys].map(key => live.get(key)).filter(Boolean)
+      const shown = new Map(selectedRecordRows(model()).filter(row => row.status === 'active').map(row => [row.key, row]));
+      const records = [...ui.bulk.keys].map(key => shown.get(key)).filter(Boolean)
         .slice(0, WORLD_STATE_UI_LIMITS.bulkSelection)
         .map(row => ({
           key: row.key,

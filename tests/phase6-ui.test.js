@@ -968,4 +968,9 @@ test('bulk select mode marks rows, offers bulk lifecycle actions, and never touc
   assert.match(source, /onRecordAction\(action, \{ records \}\)/);
   assert.match(source, /bulkSelection: 100/);
   assert.match(source, /pruneBulkSelection\(next\)/);
+  // The UI and host share one bound, and a tab or search change ends bulk mode so hidden rows are never sent.
+  const { MANUAL_LIMITS } = await import('../manual.js');
+  assert.equal(WORLD_STATE_UI_LIMITS.bulkSelection, MANUAL_LIMITS.bulkRecords);
+  assert.match(source, /bulkScope !== ui\.bulkScope[\s\S]{0,120}ui\.bulk\.active = false;[\s\S]{0,60}ui\.bulk\.keys\.clear\(\)/);
+  assert.match(source, /const shown = new Map\(selectedRecordRows\(model\(\)\)\.filter\(row => row\.status === 'active'\)/);
 });
