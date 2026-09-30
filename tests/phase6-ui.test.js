@@ -1007,3 +1007,18 @@ test('panel re-render restores remembered scroll from scroll events, keyed by li
     assert.ok(source.includes("'" + selector + "'"), selector);
   }
 });
+
+test('fixed panel layers size from the viewport, not inset 0, so a transformed <html> cannot collapse them', () => {
+  const css = fs.readFileSync('ui.css', 'utf8');
+  // SillyTavern: `html { transform: translateZ(0) }` plus a fixed <body> below 1000px makes <html> a 0-height
+  // containing block; `inset: 0` layers then collapse and the rebuild sheet renders off the top of the screen.
+  for (const selector of ['.wsa-shell', '.wsa-sheet-layer']) {
+    const block = css.slice(css.indexOf('\n' + selector + ' {'), css.indexOf('}', css.indexOf('\n' + selector + ' {')));
+    assert.match(block, /position: fixed;/, selector);
+    assert.doesNotMatch(block, /inset: 0/, selector);
+    assert.match(block, /width: 100vw;[\s\S]*height: 100vh;[\s\S]*height: 100dvh;/, selector);
+  }
+  // Cancel / Start Rebuild stay reachable when the sheet has to scroll (landscape tablets).
+  const actions = css.slice(css.indexOf('\n.wsa-sheet-actions {'), css.indexOf('}', css.indexOf('\n.wsa-sheet-actions {')));
+  assert.match(actions, /position: sticky;[\s\S]*bottom: 0;/);
+});

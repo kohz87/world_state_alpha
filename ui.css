@@ -92,9 +92,16 @@
 
 /* Shell */
 
+/* SillyTavern sets `html { transform: translateZ(0) }`, which makes <html> the containing block for fixed
+   elements, and below 1000px its mobile layout fixes <body> so <html> collapses to zero height. Size fixed
+   layers from the viewport instead of `inset: 0`, or they collapse to a sliver at the top of the screen. */
 .wsa-shell {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
   z-index: 2147483000;
   display: grid;
   place-items: center;
@@ -2070,7 +2077,11 @@
 
 .wsa-sheet-layer {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
   z-index: 2147483100;
   display: grid;
   place-items: center;
@@ -2216,9 +2227,14 @@
 }
 
 .wsa-sheet-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+  background: var(--wsa-bg);
 }
 
 .wsa-mobile-back {
@@ -2608,13 +2624,6 @@
   .wsa-inline-field {
     grid-template-columns: 1fr;
     gap: 4px;
-  }
-
-  .wsa-sheet-actions {
-    position: sticky;
-    bottom: 0;
-    padding: 8px 0 max(8px, env(safe-area-inset-bottom));
-    background: var(--wsa-bg);
   }
 
   .wsa-sheet-actions .wsa-btn {
