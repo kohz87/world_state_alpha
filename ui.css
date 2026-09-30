@@ -2198,6 +2198,12 @@
   gap: 12px;
 }
 
+.wsa-records-view .wsa-capture-failures {
+  margin: 8px 0 4px;
+  border-color: rgba(241, 199, 121, 0.5);
+  background: var(--wsa-caution-bg);
+}
+
 .wsa-rebuild-safety {
   padding: 11px 12px;
   border: 1px solid rgba(127, 176, 255, 0.36);
@@ -2210,6 +2216,7 @@
   color: var(--wsa-muted);
 }
 
+.wsa-capture-failures,
 .wsa-rebuild-resume {
   display: grid;
   gap: 8px;

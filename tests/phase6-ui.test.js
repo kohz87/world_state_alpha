@@ -929,7 +929,8 @@ test('a failed rebuild shows Resume from message N on its status and in the rebu
 
   const source = fs.readFileSync('ui.js', 'utf8');
   // One press answers one named failure; repeat clicks are ignored while it runs.
-  assert.match(source, /if \(ui\.resumePending\) return;[\s\S]{0,400}onMaintenanceAction\('rebuild', \{ rebuild: \{ resume: true, fromMessageId \} \}\)/);
+  assert.match(source, /'\[data-wsa-resume-rebuild\]', 'wsaResumeMessage', 'data-wsa-resume-message', fromMessageId => \(\{ resume: true, fromMessageId \}\)/);
+  assert.match(source, /if \(ui\.namedRebuildPending\) return;[\s\S]{0,400}onMaintenanceAction\('rebuild', \{ rebuild: request\(fromMessageId\) \}\)/);
 });
 
 test('bulk select mode marks rows, offers bulk lifecycle actions, and never touches history rows', async () => {
@@ -1032,4 +1033,44 @@ test('fixed panel layers size from the viewport, not inset 0, so a transformed <
   assert.ok(actions.some(body => /position: sticky;[\s\S]*bottom: 0;/.test(body)));
   assert.ok(actions.every(body => !/position\s*:\s*(static|relative)/.test(body)));
   assert.ok(bodiesFor('.wsa-rebuild-sheet').some(body => /scroll-padding-bottom: \d+px/.test(body)));
+});
+
+test('missed live captures show a Recapture button only when the partial rebuild can prove its prefix', async () => {
+  const { buildWorldStateUiModel, renderWorldStatePanel } = await import('../ui.js');
+  const state = createState('chat:test:missed');
+  const runtimeInfo = { chatMessages: 60, earliestPartialStart: 1, captureFailures: [21, 33] };
+  const model = buildWorldStateUiModel(state, { runtimeInfo });
+  assert.deepEqual(model.maintenance.rebuild.captureFailures, { count: 2, messageIds: [21, 33], fromMessageId: 21, bootstrapRequired: false, recoverable: true });
+
+  const world = renderWorldStatePanel(model, {});
+  assert.match(world, /2 live captures failed and were never recovered \(messages 21, 33\)/);
+  assert.match(world, /data-wsa-recapture-failed data-wsa-recapture-from="21"[^>]*>[\s\S]*?Recapture from message 21</);
+  assert.match(renderWorldStatePanel(model, { rebuildOpen: true }), /data-wsa-rebuild-sheet[\s\S]*Missed captures/);
+  // Only the landing World view carries the notice.
+  assert.doesNotMatch(renderWorldStatePanel(model, { activeTab: 'resolved' }), /Missed captures/);
+
+  // History before the failure is no longer journaled: point to Full chat instead of a doomed partial rebuild.
+  const trimmed = buildWorldStateUiModel(state, { runtimeInfo: { ...runtimeInfo, earliestPartialStart: 30 } });
+  const trimmedHtml = renderWorldStatePanel(trimmed, {});
+  assert.doesNotMatch(trimmedHtml, /data-wsa-recapture-failed/);
+  assert.match(trimmedHtml, /needs a Full chat rebuild[\s\S]*data-wsa-open-rebuild/);
+  // Inside the already-open rebuild sheet there is no dead Open rebuild button.
+  assert.doesNotMatch(renderWorldStatePanel(trimmed, { rebuildOpen: true }).split('data-wsa-rebuild-sheet')[1], /Missed captures[\s\S]{0,600}data-wsa-open-rebuild/);
+  const bootstrap = buildWorldStateUiModel(state, { runtimeInfo: { ...runtimeInfo, bootstrapRequired: true } });
+  assert.equal(bootstrap.maintenance.rebuild.captureFailures.recoverable, false);
+  assert.match(renderWorldStatePanel(bootstrap, {}), /no durable World State baseline yet/);
+  // A failure at message 0 restarts from a clean root, so it is recoverable even when history is trimmed.
+  const atZero = buildWorldStateUiModel(state, { runtimeInfo: { ...runtimeInfo, earliestPartialStart: 30, captureFailures: [0, 33] } });
+  assert.equal(atZero.maintenance.rebuild.captureFailures.recoverable, true);
+  assert.match(renderWorldStatePanel(atZero, {}), /Recapture from message 0/);
+
+  // No failures, no notice; a running rebuild hides the button.
+  assert.doesNotMatch(renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 60 } }), {}), /Missed captures/);
+  const running = buildWorldStateUiModel(state, {
+    runtimeInfo: { ...runtimeInfo, rebuildStatus: { phase: 'running', operationId: 'rebuild:1' } },
+  });
+  assert.doesNotMatch(renderWorldStatePanel(running, {}), /data-wsa-recapture-failed/);
+
+  const source = fs.readFileSync('ui.js', 'utf8');
+  assert.match(source, /'\[data-wsa-recapture-failed\]', 'wsaRecaptureFrom', 'data-wsa-recapture-from', fromMessageId => \(\{ recaptureFailed: true, fromMessageId \}\)/);
 });

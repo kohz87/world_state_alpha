@@ -2022,3 +2022,23 @@ test('a reply corrupted by a stray character is still rejected whole (fail close
   const corrupted = '```json {"mutations":[],"spatialMutations":[]偏} ```';
   assert.throws(() => parseCaptureJson(corrupted), /capture response is not valid JSON/);
 });
+
+test('live capture carries the same recovery instruction as rebuild, so a live turn is asked for what rebuild recovers', async () => {
+  const { CAPTURE_RECOVERY_INSTRUCTION } = await import('../capture.js');
+  const exchange = [
+    { messageId: 4, role: 'user', content: 'I leave the market for Applecross.' },
+    { messageId: 5, role: 'assistant', content: 'Behind the traveler, Orson and two carters keep demanding unloading fees from every trader.' },
+  ];
+  const live = buildCapturePrompt({ exchange });
+  const rebuild = buildCapturePrompt({ exchange, operation: 'rebuild' });
+  assert.match(CAPTURE_RECOVERY_INSTRUCTION, /off-screen, ignored, or unrelated to the PC objective/);
+  // Identical wording in both, exactly once each.
+  for (const options of [live, rebuild]) {
+    assert.equal(options.prompt.split(CAPTURE_RECOVERY_INSTRUCTION).length - 1, 1);
+  }
+  assert.match(live.prompt, /CAPTURE RECOVERY: Recover every materially persistent condition/);
+  // Only rebuild carries the historical-boundary framing.
+  assert.doesNotMatch(live.prompt, /REBUILD RECOVERY MODE|historical chronological exchange boundary|un-narrated evolution between boundaries/);
+  assert.match(rebuild.prompt, /REBUILD RECOVERY MODE: This is one historical chronological exchange boundary\. Recover every/);
+  assert.equal(live.systemPrompt, rebuild.systemPrompt);
+});

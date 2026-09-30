@@ -90,6 +90,8 @@ export function extractWorldStateCompletenessHints(exchange = []) {
   return hints;
 }
 
+export const CAPTURE_RECOVERY_INSTRUCTION = 'Recover every materially persistent condition established in this exchange, including conditions that were already off-screen, ignored, or unrelated to the PC objective.';
+
 export const CAPTURE_SYSTEM_PROMPT = [
   'Return exactly one valid JSON object for World State Alpha capture. No markdown or commentary.',
   'You are a conservative continuity extractor, not a narrator or Story Director.',
@@ -244,9 +246,11 @@ export function buildCapturePrompt({
     'CURRENT EXCHANGE (the only automatic mutation evidence source):',
     JSON.stringify(currentExchange.map(({ messageId, role, content }) => ({ messageId, role, content }))),
     '',
+    // Live capture and rebuild share one recovery instruction so a live turn is asked for exactly what a
+    // rebuild of the same exchange recovers; rebuild only adds its historical-boundary framing.
     operation === 'rebuild'
-      ? 'REBUILD RECOVERY MODE: This is one historical chronological exchange boundary. Recover every materially persistent condition established in this exchange, including conditions that were already off-screen, ignored, or unrelated to the PC objective. Do not infer un-narrated evolution between boundaries; later narrated exchanges must establish later changes.'
-      : '',
+      ? 'REBUILD RECOVERY MODE: This is one historical chronological exchange boundary. ' + CAPTURE_RECOVERY_INSTRUCTION + ' Do not infer un-narrated evolution between boundaries; later narrated exchanges must establish later changes.'
+      : 'CAPTURE RECOVERY: ' + CAPTURE_RECOVERY_INSTRUCTION,
     'VISIBLE WORLD STATE CONTEXT (active records are current authority; resolved/superseded records are recurrence context only; use only these IDs):',
     JSON.stringify(records),
     '',
@@ -574,6 +578,7 @@ export async function runCaptureOperation({
     const outcome = stale ? 'stale' : (receipt.outcome || 'failure');
     diagnosticStore.record(chatKey, {
       operationId,
+      lineageKey: sourceLineageKey,
       label,
       sourceMessageId,
       outcome,
@@ -603,6 +608,7 @@ export async function runCaptureOperation({
   if (!current()) {
     diagnosticStore.record(chatKey, {
       operationId,
+      lineageKey: sourceLineageKey,
       label,
       sourceMessageId,
       outcome: 'stale',
@@ -642,6 +648,7 @@ export async function runCaptureOperation({
     const outcome = (processed.applied.length + spatialApplied) > 0 ? 'applied' : 'no-change';
     diagnosticStore.record(chatKey, {
       operationId,
+      lineageKey: sourceLineageKey,
       label,
       sourceMessageId,
       outcome,
@@ -680,6 +687,7 @@ export async function runCaptureOperation({
     if (!(error instanceof CaptureWireError)) throw error;
     diagnosticStore.record(chatKey, {
       operationId,
+      lineageKey: sourceLineageKey,
       label,
       sourceMessageId,
       outcome: 'invalid-response',
