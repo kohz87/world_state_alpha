@@ -95,13 +95,17 @@
 /* SillyTavern sets `html { transform: translateZ(0) }`, which makes <html> the containing block for fixed
    elements, and below 1000px its mobile layout fixes <body> so <html> collapses to zero height. Size fixed
    layers from the viewport instead of `inset: 0`, or they collapse to a sliver at the top of the screen. */
-.wsa-shell {
+.wsa-shell,
+.wsa-sheet-layer {
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
   height: 100dvh;
+}
+
+.wsa-shell {
   z-index: 2147483000;
   display: grid;
   place-items: center;
@@ -2076,12 +2080,6 @@
 /* Rebuild sheet */
 
 .wsa-sheet-layer {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
   z-index: 2147483100;
   display: grid;
   place-items: center;
@@ -2104,6 +2102,8 @@
   width: min(620px, calc(100vw - 32px));
   max-height: min(760px, calc(100dvh - 32px));
   overflow: auto;
+  /* Focused fields scroll clear of the sticky action row. */
+  scroll-padding-bottom: 72px;
   border: 1px solid var(--wsa-line-2);
   border-radius: 14px;
   background: var(--wsa-bg);
@@ -2227,13 +2227,20 @@
 }
 
 .wsa-sheet-actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+}
+
+/* Pinned to the bottom of the scrolling rebuild sheet, spanning the form's side and bottom padding so
+   scrolled content cannot show around or under it. */
+.wsa-rebuild-sheet .wsa-sheet-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 0 -16px -16px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--wsa-line);
   background: var(--wsa-bg);
 }
 
@@ -2624,6 +2631,10 @@
   .wsa-inline-field {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+
+  .wsa-rebuild-sheet .wsa-sheet-actions {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
   .wsa-sheet-actions .wsa-btn {

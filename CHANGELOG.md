@@ -8,6 +8,11 @@
   - Cause: SillyTavern sets `html { transform: translateZ(0) }`, and below 1000px its mobile layout fixes `<body>`, so `<html>` becomes a zero-height containing block for fixed elements. The panel shell and the rebuild sheet layer used `inset: 0` and collapsed to a sliver.
   - Both layers now size from the viewport (`100vw` × `100dvh`), so the host's styles cannot collapse them.
 - The rebuild window's Cancel / Start Rebuild row stays pinned to the bottom, so landscape tablets reach it without scrolling.
+- Hardening from code review:
+  - the pinned row spans the sheet's full width with a top border, so scrolled content no longer shows around or under it;
+  - focused fields scroll clear of the pinned row;
+  - the home-indicator (safe-area) padding applies only to the phone bottom-sheet layout;
+  - both layers share one viewport-sizing rule, and the regression checks every rule for them, media queries included.
 
 ### Architecture
 
@@ -15,7 +20,8 @@
 
 ### Validation
 
-- Added a regression for the viewport-sized fixed layers and the sticky action row.
+- Added a regression for the viewport-sized fixed layers (every rule, media queries included) and the sticky action row with scroll padding.
+- Confirmed in SillyTavern that the document itself never scrolls (`body` is `overflow: hidden`) at tablet, phone and desktop sizes, and that a focused field near the bottom is not covered by the pinned row.
 - Live-checked in SillyTavern with Playwright tablet profiles: iPad and Galaxy Tab in both orientations, two phones and two desktop sizes all show the full window; a tap on Start Rebuild in iPad portrait completes a rebuild. iPadOS Safari on real hardware remains unverified.
 
 ## 0.9.0-alpha.39 - Keep list scroll position
