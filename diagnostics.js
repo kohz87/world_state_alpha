@@ -78,7 +78,7 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     if (rows.length > max) rows.splice(0, rows.length - max);
     byChat.set(key, rows);
     if (typeof onRecord === 'function') {
-      try { onRecord(key); } catch { /* persistence hooks never break telemetry */ }
+      try { onRecord(key, clone(value)); } catch { /* persistence hooks never break telemetry */ }
     }
     return clone(value);
   }
@@ -116,4 +116,51 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
   }
 
   return Object.freeze({ record, records, merge, clear, bundle });
+}
+
+// A rebuild operation id is `rebuild:<sourceMessageId>:<epoch>:<startMessageId>[:resume-…]`.
+export function rebuildStartFromOperationId(operationId) {
+  const match = /^rebuild:\d+:\d+:(\d+)(?::|$)/.exec(String(operationId || ''));
+  return match ? Number(match[1]) : null;
+}
+
+const CAPTURE_SETTLED = new Set(['applied', 'no-change']);
+const CAPTURE_NOT_ATTEMPTED = new Set(['stale', 'skipped']);
+
+// Rows that change what unrecoveredCaptureFailures reports: a live capture
+// attempt, a completed rebuild, or an import/reset. The host saves these at
+// once instead of after the quiet period, so a reload cannot lose a failure or
+// its recovery and offer (or hide) a recapture wrongly.
+export function affectsCaptureRecovery(row) {
+  if (!row || typeof row !== 'object') return false;
+  if (row.label === 'capture') return !CAPTURE_NOT_ATTEMPTED.has(row.outcome);
+  if (row.label === 'rebuild') return row.outcome === 'rebuild-completed';
+  return (row.label === 'import' || row.label === 'reset') && row.outcome === 'applied';
+}
+
+// Live capture boundaries whose latest attempt failed (provider error, timeout,
+// malformed reply, …) and that nothing has recovered since: not a later
+// successful capture of that message, not a completed rebuild whose range
+// covers it, and not an import or reset that replaced the state. Derived only
+// from the non-canonical Operations log; it never changes World State.
+export function unrecoveredCaptureFailures(rows = []) {
+  const failed = new Set();
+  const ordered = (Array.isArray(rows) ? rows : [])
+    .filter(row => row && typeof row === 'object')
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => (int(a.row.at) - int(b.row.at)) || (a.index - b.index))
+    .map(item => item.row);
+  for (const row of ordered) {
+    if (row.label === 'capture' && Number.isInteger(row.sourceMessageId)) {
+      if (CAPTURE_SETTLED.has(row.outcome)) failed.delete(row.sourceMessageId);
+      else if (!CAPTURE_NOT_ATTEMPTED.has(row.outcome)) failed.add(row.sourceMessageId);
+    } else if (row.label === 'rebuild' && row.outcome === 'rebuild-completed') {
+      const start = rebuildStartFromOperationId(row.operationId);
+      if (start === null) continue;
+      for (const messageId of [...failed]) if (messageId >= start) failed.delete(messageId);
+    } else if ((row.label === 'import' || row.label === 'reset') && row.outcome === 'applied') {
+      failed.clear();
+    }
+  }
+  return [...failed].sort((a, b) => a - b);
 }

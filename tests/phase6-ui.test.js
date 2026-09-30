@@ -1033,3 +1033,36 @@ test('fixed panel layers size from the viewport, not inset 0, so a transformed <
   assert.ok(actions.every(body => !/position\s*:\s*(static|relative)/.test(body)));
   assert.ok(bodiesFor('.wsa-rebuild-sheet').some(body => /scroll-padding-bottom: \d+px/.test(body)));
 });
+
+test('missed live captures show a Recapture button only when the partial rebuild can prove its prefix', async () => {
+  const { buildWorldStateUiModel, renderWorldStatePanel } = await import('../ui.js');
+  const state = createState('chat:test:missed');
+  const runtimeInfo = { chatMessages: 60, earliestPartialStart: 1, captureFailures: [21, 33] };
+  const model = buildWorldStateUiModel(state, { runtimeInfo });
+  assert.deepEqual(model.maintenance.rebuild.captureFailures, { count: 2, messageIds: [21, 33], fromMessageId: 21, recoverable: true });
+
+  const world = renderWorldStatePanel(model, {});
+  assert.match(world, /2 live captures failed and were never recovered \(messages 21, 33\)/);
+  assert.match(world, /data-wsa-recapture-failed data-wsa-recapture-from="21"[^>]*>[\s\S]*?Recapture from message 21</);
+  assert.match(renderWorldStatePanel(model, { rebuildOpen: true }), /data-wsa-rebuild-sheet[\s\S]*Missed captures/);
+  // Only the landing World view carries the notice.
+  assert.doesNotMatch(renderWorldStatePanel(model, { activeTab: 'resolved' }), /Missed captures/);
+
+  // History before the failure is no longer journaled: point to Full chat instead of a doomed partial rebuild.
+  const trimmed = buildWorldStateUiModel(state, { runtimeInfo: { ...runtimeInfo, earliestPartialStart: 30 } });
+  const trimmedHtml = renderWorldStatePanel(trimmed, {});
+  assert.doesNotMatch(trimmedHtml, /data-wsa-recapture-failed/);
+  assert.match(trimmedHtml, /needs a Full chat rebuild[\s\S]*data-wsa-open-rebuild/);
+  const bootstrap = buildWorldStateUiModel(state, { runtimeInfo: { ...runtimeInfo, bootstrapRequired: true } });
+  assert.equal(bootstrap.maintenance.rebuild.captureFailures.recoverable, false);
+
+  // No failures, no notice; a running rebuild hides the button.
+  assert.doesNotMatch(renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 60 } }), {}), /Missed captures/);
+  const running = buildWorldStateUiModel(state, {
+    runtimeInfo: { ...runtimeInfo, rebuildStatus: { phase: 'running', operationId: 'rebuild:1' } },
+  });
+  assert.doesNotMatch(renderWorldStatePanel(running, {}), /data-wsa-recapture-failed/);
+
+  const source = fs.readFileSync('ui.js', 'utf8');
+  assert.match(source, /if \(ui\.recapturePending\) return;[\s\S]{0,500}onMaintenanceAction\('rebuild', \{ rebuild: \{ recaptureFailed: true, fromMessageId \} \}\)/);
+});

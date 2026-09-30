@@ -534,6 +534,24 @@ test('host bulk lifecycle action validates every selected record and commits one
   assert.equal((body.match(/persistGuardedMutation\(/g) || []).length, 1);
 });
 
+test('host Recapture failed messages is a guarded From-message rebuild at the earliest unrecovered failure', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  assert.match(source, /unrecoveredCaptureFailures\(diagnosticStore\.records\(chatKey\)\)[\s\S]{0,200}messageRole\(chat\[messageId\]\) === 'assistant'/);
+  assert.match(source, /captureFailures: pendingCaptureFailures\(chatKey\)/);
+  // The request must name the current earliest failure; a stale panel cannot start an arbitrary range.
+  assert.match(source, /const recapture = rebuildRequest\.recaptureFailed === true && !savedResume;/);
+  assert.match(source, /recaptureFailures\[0\] !== rebuildRequest\.fromMessageId\)\) \{[\s\S]{0,160}failed captures changed/);
+  assert.match(source, /: recapture \? 'from' :/);
+  assert.match(source, /const requestedStart = recapture\s*\? recaptureFailures\[0\]/);
+  // One explicit confirmation naming the cost, before any provider call or resume-point consumption.
+  const confirmAt = source.indexOf("'Recapture World State from message '");
+  assert.ok(confirmAt > source.indexOf('rebuildPlan = planChronologicalRebuild(chat, {'));
+  assert.ok(confirmAt < source.indexOf('rebuildResumes.delete(chatKey);\n    const priorTotals'));
+  // Import and reset leave a row so older failures stop being offered.
+  assert.match(source, /label: 'import',\s*outcome: 'applied'/);
+  assert.match(source, /label: 'reset',\s*outcome: 'applied'/);
+});
+
 test('host panel actions are bound to the chat that opened the panel', () => {
   const source = fs.readFileSync('index.js', 'utf8');
 
@@ -1153,7 +1171,12 @@ test('a local tail delete or regenerate rolls back instead of being mistaken for
 
 test('the Operations log is kept in its own per-chat server file, merged on save and carried across rename', () => {
   const source = fs.readFileSync('index.js', 'utf8');
-  assert.match(source, /createDiagnosticStore\(\{\s*limit: OPERATION_LOG_LIMIT,\s*onRecord: chatKey => scheduleOperationLogSave\(chatKey\),\s*\}\)/);
+  assert.match(source, /createDiagnosticStore\(\{\s*limit: OPERATION_LOG_LIMIT,\s*onRecord: \(chatKey, row\) => scheduleOperationLogSave\(chatKey, \{ now: affectsCaptureRecovery\(row\) \}\),\s*\}\)/);
+  // Rows that decide missed-capture recovery are saved at once; everything else waits for the quiet period,
+  // and pending rows are flushed when the page is hidden or unloaded.
+  assert.match(source, /if \(now\) \{\s*operationLogTimers\.delete\(chatKey\);\s*void saveOperationLog\(chatKey\);\s*return;\s*\}/);
+  assert.match(source, /else flushAllOperationLogs\(\);/);
+  assert.match(source, /addEventListener\?\.\('pagehide', \(\) => flushAllOperationLogs\(\)\)/);
   assert.match(source, /return 'world-state-alpha-ops-' \+ hashText\(String\(chatKey\)\) \+ '\.json';/);
   assert.match(source, /raw\.format !== OPERATION_LOG_FORMAT[\s\S]{0,120}raw\.chatKey !== chatKey/);
   assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.records\(chatKey\), OPERATION_LOG_LIMIT\);/);

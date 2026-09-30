@@ -9,7 +9,7 @@ import {
 
 import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
-import { createDiagnosticStore, mergeOperationRows } from './diagnostics.js';
+import { affectsCaptureRecovery, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
 import { hashText, stableStringify } from './hash.js';
@@ -43,7 +43,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.40';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.41';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -99,7 +99,7 @@ const deleteRetryTimers = new Map();
 const OPERATION_LOG_LIMIT = 80;
 const diagnosticStore = createDiagnosticStore({
   limit: OPERATION_LOG_LIMIT,
-  onRecord: chatKey => scheduleOperationLogSave(chatKey),
+  onRecord: (chatKey, row) => scheduleOperationLogSave(chatKey, { now: affectsCaptureRecovery(row) }),
 });
 const rebuildStatuses = new Map();
 // In-memory only: where a failed rebuild can be resumed by the operator.
@@ -217,9 +217,14 @@ function saveOperationLog(chatKey, snapshot = null) {
   });
 }
 
-function scheduleOperationLogSave(chatKey) {
+function scheduleOperationLogSave(chatKey, { now = false } = {}) {
   if (!hostHydrationReady || !chatKey || chatKey === 'no-chat' || retiredOperationLogs.has(chatKey)) return;
   clearTimeout(operationLogTimers.get(chatKey));
+  if (now) {
+    operationLogTimers.delete(chatKey);
+    void saveOperationLog(chatKey);
+    return;
+  }
   operationLogTimers.set(chatKey, setTimeout(() => {
     operationLogTimers.delete(chatKey);
     void saveOperationLog(chatKey);
@@ -232,6 +237,11 @@ function flushOperationLog(chatKey) {
   clearTimeout(operationLogTimers.get(chatKey));
   operationLogTimers.delete(chatKey);
   void saveOperationLog(chatKey, diagnosticStore.records(chatKey));
+}
+
+// Best-effort save of every pending Operations log before the page is hidden or unloaded.
+function flushAllOperationLogs() {
+  for (const chatKey of [...operationLogTimers.keys()]) flushOperationLog(chatKey);
 }
 
 // Rename carries the log to the new owner; delete leaves an empty log so a
@@ -548,6 +558,16 @@ function resetSpatialRelevanceIndex(chatKey, spatialState, baseMap) {
 
 function epoch(chatKey) {
   return Number(stateEpochs.get(chatKey) || 0);
+}
+
+// Live captures that failed and were never recovered, limited to messages that
+// are still assistant replies on the current chat. Operations-log derived only.
+function pendingCaptureFailures(chatKey) {
+  const chat = getContext().chat || [];
+  return unrecoveredCaptureFailures(diagnosticStore.records(chatKey))
+    .filter(messageId => messageId < chat.length
+      && messageRole(chat[messageId]) === 'assistant'
+      && messageText(chat[messageId]).trim());
 }
 
 function invalidateChatOperations(chatKey = currentChatKey()) {
@@ -2678,7 +2698,10 @@ function bindSettingsEvents() {
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') scheduleServerFreshnessRefresh('visibility-resume');
+    // Backgrounding (common on phones and tablets) may be the last chance to save pending log rows.
+    else flushAllOperationLogs();
   });
+  globalThis.addEventListener?.('pagehide', () => flushAllOperationLogs());
   globalThis.addEventListener?.('pageshow', () => scheduleServerFreshnessRefresh('pageshow'));
   globalThis.addEventListener?.('focus', () => scheduleServerFreshnessRefresh('window-focus'));
 }
@@ -2819,6 +2842,12 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     setCachedState(chatKey, next);
     passiveCaptureRebaseCandidates.delete(chatKey);
     forgetBranchContinuations(chatKey);
+    diagnosticStore.record(chatKey, {
+      label: 'import',
+      outcome: 'applied',
+      sourceMessageId: Math.max(0, (getContext().chat || []).length - 1),
+      detail: 'World State bundle imported and persisted; earlier failed captures no longer apply.',
+    });
     if (next.spatial?.baseMapRef?.id) {
       const reboundBaseMap = await getChatBaseMap(chatKey, stateCache.get(chatKey));
       if (reboundBaseMap) {
@@ -2847,6 +2876,12 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     setCachedState(chatKey, next);
     passiveCaptureRebaseCandidates.delete(chatKey);
     forgetBranchContinuations(chatKey);
+    diagnosticStore.record(chatKey, {
+      label: 'reset',
+      outcome: 'applied',
+      sourceMessageId: Math.max(0, (getContext().chat || []).length - 1),
+      detail: 'World State reset and persisted; earlier failed captures no longer apply.',
+    });
     updatePrivateInjection();
     refreshPanel();
     return;
@@ -2882,7 +2917,20 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     }
     const resumeParams = savedResume?.params || null;
 
-    const mode = resumeParams ? resumeParams.mode : (['full', 'last', 'from'].includes(rebuildRequest.mode) ? rebuildRequest.mode : 'full');
+    // Recapture failed messages is a From-message rebuild that starts at the
+    // earliest unrecovered live capture failure. The request must name that
+    // exact message, so a stale panel can never start an arbitrary range.
+    const recapture = rebuildRequest.recaptureFailed === true && !savedResume;
+    const recaptureFailures = recapture ? pendingCaptureFailures(chatKey) : [];
+    if (recapture && (!recaptureFailures.length || recaptureFailures[0] !== rebuildRequest.fromMessageId)) {
+      notify('error', 'The failed captures changed since the panel was drawn. Review the panel and try again.');
+      refreshPanel();
+      return;
+    }
+
+    const mode = resumeParams
+      ? resumeParams.mode
+      : recapture ? 'from' : (['full', 'last', 'from'].includes(rebuildRequest.mode) ? rebuildRequest.mode : 'full');
     const bootstrapRecoveryAtStart = bootstrapRequiredChats.has(chatKey);
     if (resumeParams && (resumeParams.bootstrapRecoveryAtStart !== bootstrapRecoveryAtStart
       || resumeParams.spatialEnabled !== Boolean(getWorldStateSettings().spatialEnabled)
@@ -2906,7 +2954,9 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       4096,
     );
     const lastMessages = numeric(rebuildRequest.lastMessages, 20, 1, Math.max(1, chat.length));
-    const requestedStart = numeric(rebuildRequest.startMessageId, 0, 0, Math.max(0, chat.length - 1));
+    const requestedStart = recapture
+      ? recaptureFailures[0]
+      : numeric(rebuildRequest.startMessageId, 0, 0, Math.max(0, chat.length - 1));
     const includeHiddenMessages = resumeParams ? resumeParams.includeHiddenMessages : rebuildRequest.includeHiddenMessages !== false;
     const startMessageId = resumeParams
       ? resumeParams.startMessageId
@@ -2943,6 +2993,16 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       const detail = String(error?.message || error || 'rebuild planning failed').slice(0, 320);
       notify('error', 'World State Alpha rebuild could not start: ' + detail);
       return;
+    }
+    if (recapture) {
+      const listed = recaptureFailures.slice(0, 8).join(', ') + (recaptureFailures.length > 8 ? ', …' : '');
+      if (!window.confirm(
+        'Recapture World State from message ' + startMessageId + '?\n\n'
+          + recaptureFailures.length + ' live capture' + (recaptureFailures.length === 1 ? '' : 's') + ' failed (message'
+          + (recaptureFailures.length === 1 ? ' ' : 's ') + listed + '). This re-reads '
+          + rebuildPlan.metrics.assistantBoundaries + ' assistant repl' + (rebuildPlan.metrics.assistantBoundaries === 1 ? 'y' : 'ies')
+          + ' from message ' + startMessageId + ' to the latest with your capture model. The current World State stays unchanged unless every reply succeeds.',
+      )) return;
     }
 
     const sourceMessageId = Math.max(0, chat.length - 1);
@@ -4157,6 +4217,7 @@ export async function openWorldStatePanel() {
         hydrationSource: hydrationSources.get(chatKey) || '',
         bootstrapRequired: bootstrapRequiredChats.has(chatKey),
         rebuildStatus: rebuildStatuses.get(chatKey) ? clone(rebuildStatuses.get(chatKey)) : null,
+        captureFailures: pendingCaptureFailures(chatKey),
         rebuildResume: (saved => (saved
           ? {
             messageId: saved.resume.fromMessageId,

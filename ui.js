@@ -684,6 +684,19 @@ export function buildWorldStateUiModel(state, {
         maxAllowedBoundaries: integer(runtimeInfo?.maxRebuildBoundaries) ?? 4096,
         spatialEnabled: Boolean(runtimeInfo?.spatialEnabled),
         bootstrapRequired: Boolean(runtimeInfo?.bootstrapRequired),
+        captureFailures: (() => {
+          const ids = (Array.isArray(runtimeInfo?.captureFailures) ? runtimeInfo.captureFailures : [])
+            .filter(value => Number.isInteger(value) && value >= 0);
+          if (!ids.length) return null;
+          const earliest = Math.max(1, integer(runtimeInfo?.earliestPartialStart) ?? 1);
+          return {
+            count: ids.length,
+            messageIds: ids.slice(0, 12),
+            fromMessageId: ids[0],
+            // A partial rebuild can start there only when its exact prefix is still journaled.
+            recoverable: !runtimeInfo?.bootstrapRequired && ids[0] >= earliest,
+          };
+        })(),
         resume: runtimeInfo?.rebuildResume && Number.isInteger(runtimeInfo.rebuildResume.messageId)
           ? {
             messageId: runtimeInfo.rebuildResume.messageId,
@@ -1323,8 +1336,15 @@ function recordsViewHtml(model, tab, { detailOpen = false, bulk = null } = {}) {
 
   const canBulk = tab !== 'resolved' && records.some(record => record.status === 'active');
   const bulkState = canBulk && bulk?.active ? bulk : null;
+  const rebuildPhase = model.maintenance.rebuild.status?.phase;
+  const failures = tab === 'current'
+    ? captureFailuresHtml(model.maintenance.rebuild.captureFailures, {
+      running: ['running', 'cancelling', 'committing'].includes(rebuildPhase),
+    })
+    : '';
   return '<section class="wsa-view wsa-records-view' + (bulkState ? ' is-bulk' : '') + '" aria-label="' + escapeHtml(title) + '">' +
     toolbar +
+    failures +
     (canBulk ? bulkToolbarHtml(records, bulkState) : '') +
     recordsPane(records, model, emptyTitle, emptyBody, truncated, detailOpen, { grouped: tab === 'current', bulk: bulkState }) +
     '</section>';
@@ -1463,6 +1483,26 @@ function tabLabel(tab) {
   return 'Data';
 }
 
+function captureFailuresHtml(failures, { running = false } = {}) {
+  if (!failures) return '';
+  const count = failures.count;
+  const listed = failures.messageIds.join(', ') + (count > failures.messageIds.length ? ', …' : '');
+  const lead = count + ' live capture' + (count === 1 ? '' : 's') + ' failed and ' + (count === 1 ? 'was' : 'were') +
+    ' never recovered (message' + (count === 1 ? ' ' : 's ') + listed + ').';
+  const action = running
+    ? ''
+    : failures.recoverable
+      ? '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-primary" data-wsa-recapture-failed data-wsa-recapture-from="' +
+        escapeHtml(String(failures.fromMessageId)) + '" title="Rebuild from the earliest failed message to the latest; current World State stays until it succeeds">' +
+        icon('refresh') + 'Recapture from message ' + escapeHtml(String(failures.fromMessageId)) + '</button>'
+      : '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-open-rebuild>' + icon('refresh') + 'Open rebuild</button>';
+  const body = failures.recoverable
+    ? 'Recapture re-reads every assistant reply from message ' + failures.fromMessageId + ' to the latest, in order, and replaces World State only if every reply succeeds.'
+    : 'History before message ' + failures.fromMessageId + ' is no longer journaled, so recovering it needs a Full chat rebuild.';
+  return '<div class="wsa-rebuild-safety wsa-capture-failures" role="status"><strong>Missed captures</strong><p>' +
+    escapeHtml(lead) + ' ' + escapeHtml(body) + '</p>' + action + '</div>';
+}
+
 function resumeRebuildButtonHtml(resume) {
   if (!resume) return '';
   return '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-primary" data-wsa-resume-rebuild data-wsa-resume-message="' +
@@ -1521,6 +1561,7 @@ function rebuildSheetHtml(model, { open = false, form = {} } = {}) {
     ? '<div class="wsa-rebuild-running">' + rebuildStatusHtml(status, { dismissible: false }) +
       '<p class="wsa-muted">The existing canonical state remains authoritative until the entire candidate rebuild succeeds and is persisted.</p></div>'
     : '<form class="wsa-rebuild-form" onsubmit="return false;">' +
+      captureFailuresHtml(rebuild.captureFailures) +
       (rebuild.resume
         ? '<div class="wsa-rebuild-safety wsa-rebuild-resume"><strong>Failed rebuild can resume</strong><p>' +
           escapeHtml(String(rebuild.resume.processedBoundaries)) + ' of ' + escapeHtml(String(rebuild.resume.totalBoundaries)) +
@@ -2055,6 +2096,24 @@ export function createWorldStateUiController({
 
     if (closest(event.target, '[data-wsa-cancel-rebuild]')) {
       if (typeof onMaintenanceAction === 'function') await onMaintenanceAction('cancel_rebuild', {});
+      refresh();
+      return;
+    }
+
+    const recaptureButton = closest(event.target, '[data-wsa-recapture-failed]');
+    if (recaptureButton) {
+      // Names the earliest failed message it answers; repeat clicks are ignored while it runs.
+      if (ui.recapturePending) return;
+      const fromMessageId = Number.parseInt(recaptureButton.dataset?.wsaRecaptureFrom ?? recaptureButton.getAttribute?.('data-wsa-recapture-from'), 10);
+      if (!Number.isInteger(fromMessageId)) return;
+      ui.recapturePending = true;
+      try {
+        if (typeof onMaintenanceAction === 'function') {
+          await onMaintenanceAction('rebuild', { rebuild: { recaptureFailed: true, fromMessageId } });
+        }
+      } finally {
+        ui.recapturePending = false;
+      }
       refresh();
       return;
     }

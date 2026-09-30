@@ -1540,3 +1540,55 @@ test('stale and cancelled rebuilds never offer a resume point', async () => {
   assert.equal(cancelled.outcome, 'cancelled');
   assert.equal(cancelled.resume, undefined);
 });
+
+test('unrecovered live capture failures come only from the Operations log and clear once recovered', async () => {
+  const { unrecoveredCaptureFailures, rebuildStartFromOperationId } = await import('../diagnostics.js');
+  let at = 0;
+  const row = (label, outcome, sourceMessageId, operationId = '') => ({ label, outcome, sourceMessageId, operationId, at: ++at });
+
+  assert.equal(rebuildStartFromOperationId('rebuild:40:3:12'), 12);
+  assert.equal(rebuildStartFromOperationId('rebuild:40:3:12:resume-20-abc'), 12);
+  assert.equal(rebuildStartFromOperationId('rebuild:40:3:12:20'), 12);
+  assert.equal(rebuildStartFromOperationId('capture:4:1'), null);
+
+  const rows = [
+    row('capture', 'applied', 3),
+    row('capture', 'invalid-response', 5),
+    row('capture', 'timeout', 7),
+    row('capture', 'failure', 9),
+    row('capture', 'stale', 11), // never attempted: not a failure
+    row('evolution', 'failure', 13), // other operations never count
+    row('rebuild', 'applied', 15, 'rebuild:20:1:0:15'), // a rebuild boundary alone proves nothing
+  ];
+  assert.deepEqual(unrecoveredCaptureFailures(rows), [5, 7, 9]);
+
+  // A later successful capture of that message recovers it; a later failure brings it back.
+  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('capture', 'no-change', 7)]), [5, 9]);
+  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('capture', 'applied', 7), row('capture', 'failure', 7)]), [5, 7, 9]);
+
+  // Only a completed rebuild covers failures inside its range; a failed or cancelled one covers nothing.
+  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('rebuild', 'rebuild-failed', 20, 'rebuild:20:1:0')]), [5, 7, 9]);
+  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('rebuild', 'rebuild-completed', 20, 'rebuild:20:1:7')]), [5]);
+  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('rebuild', 'rebuild-completed', 20, 'rebuild:20:1:0')]), []);
+  // Import or reset replaces the state, so earlier failures no longer apply; later ones still do.
+  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('reset', 'applied', 20), row('capture', 'failure', 21)]), [21]);
+  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('import', 'applied', 20)]), []);
+  // Order comes from the timestamps, not the array order.
+  assert.deepEqual(unrecoveredCaptureFailures([{ ...row('capture', 'applied', 30), at: 2 }, { ...row('capture', 'failure', 30), at: 1 }]), []);
+});
+
+test('only rows that change missed-capture recovery skip the Operations log quiet period', async () => {
+  const { affectsCaptureRecovery, createDiagnosticStore } = await import('../diagnostics.js');
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'invalid-response' }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'applied' }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'stale' }), false);
+  assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'rebuild-completed' }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'applied' }), false);
+  assert.equal(affectsCaptureRecovery({ label: 'reset', outcome: 'applied' }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'lazy-evolution', outcome: 'failure' }), false);
+  // The store hands the sanitized row to its hook.
+  const seen = [];
+  const store = createDiagnosticStore({ onRecord: (key, row) => seen.push([key, row.label, row.outcome]) });
+  store.record('chat:a', { label: 'capture', outcome: 'timeout', sourceMessageId: 4 });
+  assert.deepEqual(seen, [['chat:a', 'capture', 'timeout']]);
+});
