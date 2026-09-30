@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0-alpha.40 - Rebuild window on tablets
+
+### Fixed
+
+- The Rebuild from Chat window now appears correctly on tablets. In portrait (screens narrower than 1000px) it was drawn mostly above the top of the screen.
+  - Cause: SillyTavern sets `html { transform: translateZ(0) }`, and below 1000px its mobile layout fixes `<body>`, so `<html>` becomes a zero-height containing block for fixed elements. The panel shell and the rebuild sheet layer used `inset: 0` and collapsed to a sliver.
+  - Both layers now size from the viewport (`100vw` × `100dvh`), so the host's styles cannot collapse them.
+- The rebuild window's Cancel / Start Rebuild row stays pinned to the bottom, so landscape tablets reach it without scrolling.
+
+### Architecture
+
+- UI-only CSS change. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- Added a regression for the viewport-sized fixed layers and the sticky action row.
+- Live-checked in SillyTavern with Playwright tablet profiles: iPad and Galaxy Tab in both orientations, two phones and two desktop sizes all show the full window; a tap on Start Rebuild in iPad portrait completes a rebuild. iPadOS Safari on real hardware remains unverified.
+
 ## 0.9.0-alpha.39 - Keep list scroll position
 
 ### Fixed
