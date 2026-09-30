@@ -1007,3 +1007,29 @@ test('panel re-render restores remembered scroll from scroll events, keyed by li
     assert.ok(source.includes("'" + selector + "'"), selector);
   }
 });
+
+test('fixed panel layers size from the viewport, not inset 0, so a transformed <html> cannot collapse them', () => {
+  const css = fs.readFileSync('ui.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  // SillyTavern: `html { transform: translateZ(0) }` plus a fixed <body> below 1000px makes <html> a 0-height
+  // containing block; `inset: 0` layers then collapse and the rebuild sheet renders off the top of the screen.
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(match => ({
+    selectors: match[1].split(',').map(item => item.trim().split('\n').pop().trim()),
+    body: match[2],
+  }));
+  const bodiesFor = selector => rules.filter(rule => rule.selectors.includes(selector)).map(rule => rule.body);
+  const shared = rules.find(rule => rule.selectors.includes('.wsa-shell') && rule.selectors.includes('.wsa-sheet-layer'));
+  assert.ok(shared, 'shared viewport-sized rule');
+  assert.match(shared.body, /position: fixed;[\s\S]*top: 0;[\s\S]*left: 0;[\s\S]*width: 100vw;[\s\S]*height: 100vh;[\s\S]*height: 100dvh;/);
+  // No rule anywhere, media queries included, may bring back inset/bottom/right sizing or another position.
+  for (const selector of ['.wsa-shell', '.wsa-sheet-layer']) {
+    for (const body of bodiesFor(selector)) {
+      assert.doesNotMatch(body, /\binset\s*:|(^|[\s;])(bottom|right)\s*:|height\s*:\s*auto/, selector + ' {' + body + '}');
+      if (/position\s*:/.test(body)) assert.match(body, /position: fixed;/, selector);
+    }
+  }
+  // Cancel / Start Rebuild stay reachable when the sheet scrolls (landscape tablets), and focused fields clear it.
+  const actions = bodiesFor('.wsa-rebuild-sheet .wsa-sheet-actions');
+  assert.ok(actions.some(body => /position: sticky;[\s\S]*bottom: 0;/.test(body)));
+  assert.ok(actions.every(body => !/position\s*:\s*(static|relative)/.test(body)));
+  assert.ok(bodiesFor('.wsa-rebuild-sheet').some(body => /scroll-padding-bottom: \d+px/.test(body)));
+});
