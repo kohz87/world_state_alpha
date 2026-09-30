@@ -1544,7 +1544,8 @@ test('stale and cancelled rebuilds never offer a resume point', async () => {
 test('unrecovered live capture failures come only from the Operations log and clear once recovered', async () => {
   const { unrecoveredCaptureFailures, rebuildStartFromOperationId } = await import('../diagnostics.js');
   let at = 0;
-  const row = (label, outcome, sourceMessageId, operationId = '') => ({ label, outcome, sourceMessageId, operationId, at: ++at });
+  const row = (label, outcome, sourceMessageId, operationId = '', lineageKey = '') => ({ label, outcome, sourceMessageId, operationId, lineageKey, at: ++at });
+  const ids = rows => unrecoveredCaptureFailures(rows).map(item => item.messageId);
 
   assert.equal(rebuildStartFromOperationId('rebuild:40:3:12'), 12);
   assert.equal(rebuildStartFromOperationId('rebuild:40:3:12:resume-20-abc'), 12);
@@ -1560,35 +1561,69 @@ test('unrecovered live capture failures come only from the Operations log and cl
     row('evolution', 'failure', 13), // other operations never count
     row('rebuild', 'applied', 15, 'rebuild:20:1:0:15'), // a rebuild boundary alone proves nothing
   ];
-  assert.deepEqual(unrecoveredCaptureFailures(rows), [5, 7, 9]);
+  assert.deepEqual(ids(rows), [5, 7, 9]);
 
   // A later successful capture of that message recovers it; a later failure brings it back.
-  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('capture', 'no-change', 7)]), [5, 9]);
-  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('capture', 'applied', 7), row('capture', 'failure', 7)]), [5, 7, 9]);
+  assert.deepEqual(ids([...rows, row('capture', 'no-change', 7)]), [5, 9]);
+  assert.deepEqual(ids([...rows, row('capture', 'applied', 7), row('capture', 'failure', 7)]), [5, 7, 9]);
+  // A capture whose sidecar save failed is a failure even after its 'applied' row.
+  assert.deepEqual(ids([row('capture', 'applied', 21), row('capture', 'not-saved', 21)]), [21]);
 
   // Only a completed rebuild covers failures inside its range; a failed or cancelled one covers nothing.
-  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('rebuild', 'rebuild-failed', 20, 'rebuild:20:1:0')]), [5, 7, 9]);
-  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('rebuild', 'rebuild-completed', 20, 'rebuild:20:1:7')]), [5]);
-  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('rebuild', 'rebuild-completed', 20, 'rebuild:20:1:0')]), []);
+  assert.deepEqual(ids([...rows, row('rebuild', 'rebuild-failed', 20, 'rebuild:20:1:0')]), [5, 7, 9]);
+  assert.deepEqual(ids([...rows, row('rebuild', 'rebuild-completed', 20, 'rebuild:20:1:7')]), [5]);
+  assert.deepEqual(ids([...rows, row('rebuild', 'rebuild-completed', 20, 'rebuild:20:1:0')]), []);
   // Import or reset replaces the state, so earlier failures no longer apply; later ones still do.
-  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('reset', 'applied', 20), row('capture', 'failure', 21)]), [21]);
-  assert.deepEqual(unrecoveredCaptureFailures([...rows, row('import', 'applied', 20)]), []);
+  assert.deepEqual(ids([...rows, row('reset', 'applied', 20), row('capture', 'failure', 21)]), [21]);
+  assert.deepEqual(ids([...rows, row('import', 'applied', 20)]), []);
   // Order comes from the timestamps, not the array order.
-  assert.deepEqual(unrecoveredCaptureFailures([{ ...row('capture', 'applied', 30), at: 2 }, { ...row('capture', 'failure', 30), at: 1 }]), []);
+  assert.deepEqual(ids([{ ...row('capture', 'applied', 30), at: 2 }, { ...row('capture', 'failure', 30), at: 1 }]), []);
+
+  // Swipes: another swipe's success at the same message does not clear this swipe's failure.
+  const swipes = [row('capture', 'failure', 9, '', 'lnA'), row('capture', 'applied', 9, '', 'lnB')];
+  assert.deepEqual(unrecoveredCaptureFailures(swipes), [{ messageId: 9, lineageKey: 'lnA' }]);
+  assert.deepEqual(ids([...swipes, row('capture', 'applied', 9, '', 'lnA')]), []);
+  // Rows logged before lineage was recorded match any lineage.
+  assert.deepEqual(ids([row('capture', 'failure', 9), row('capture', 'applied', 9, '', 'lnB')]), []);
+});
+
+test('Operations log trimming never drops a still-unrecovered capture failure', async () => {
+  const { createDiagnosticStore, mergeOperationRows, trimOperationRows, unrecoveredCaptureFailures } = await import('../diagnostics.js');
+  let clock = 0;
+  const store = createDiagnosticStore({ limit: 8, now: () => ++clock });
+  store.record('chat:a', { label: 'capture', outcome: 'invalid-response', sourceMessageId: 5, lineageKey: 'ln5' });
+  store.record('chat:a', { label: 'capture', outcome: 'timeout', sourceMessageId: 7, lineageKey: 'ln7' });
+  store.record('chat:a', { label: 'capture', outcome: 'applied', sourceMessageId: 7, lineageKey: 'ln7' });
+  // A long rebuild floods the log with boundary rows.
+  for (let id = 50; id < 90; id += 1) store.record('chat:a', { label: 'rebuild', outcome: 'applied', sourceMessageId: id, operationId: 'rebuild:90:1:50:' + id });
+  const rows = store.records('chat:a');
+  assert.equal(rows.length, 8);
+  assert.deepEqual(unrecoveredCaptureFailures(store.recoveryRows('chat:a')), [{ messageId: 5, lineageKey: 'ln5' }]);
+  // The recovered failure at 7 is not pinned; the newest rows fill the rest, in time order.
+  assert.equal(rows[0].sourceMessageId, 5);
+  assert.deepEqual(rows.slice(1).map(item => item.sourceMessageId), [83, 84, 85, 86, 87, 88, 89]);
+  // Saving and merging keep the pin too.
+  assert.equal(mergeOperationRows(rows, [], 4)[0].sourceMessageId, 5);
+  assert.equal(trimOperationRows(rows, 8).length, 8);
+  // The light view carries only what detection reads.
+  assert.deepEqual(Object.keys(store.recoveryRows('chat:a')[0]).sort(), ['at', 'label', 'lineageKey', 'operationId', 'outcome', 'sourceMessageId']);
 });
 
 test('only rows that change missed-capture recovery skip the Operations log quiet period', async () => {
   const { affectsCaptureRecovery, createDiagnosticStore } = await import('../diagnostics.js');
-  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'invalid-response' }), true);
-  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'applied' }), true);
-  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'stale' }), false);
-  assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'rebuild-completed' }), true);
-  assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'applied' }), false);
-  assert.equal(affectsCaptureRecovery({ label: 'reset', outcome: 'applied' }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'invalid-response', sourceMessageId: 4 }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'not-saved', sourceMessageId: 4 }), true);
+  // Ordinary successes wait for the quiet period unless a failure is listed.
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'applied', sourceMessageId: 4 }), false);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'applied', sourceMessageId: 4 }, { failuresListed: true }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'stale', sourceMessageId: 4 }, { failuresListed: true }), false);
+  assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'rebuild-completed' }, { failuresListed: true }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'applied' }, { failuresListed: true }), false);
+  assert.equal(affectsCaptureRecovery({ label: 'reset', outcome: 'applied' }, { failuresListed: true }), true);
   assert.equal(affectsCaptureRecovery({ label: 'lazy-evolution', outcome: 'failure' }), false);
-  // The store hands the sanitized row to its hook.
+  // The store hands its hook the light row, never the response JSON.
   const seen = [];
-  const store = createDiagnosticStore({ onRecord: (key, row) => seen.push([key, row.label, row.outcome]) });
-  store.record('chat:a', { label: 'capture', outcome: 'timeout', sourceMessageId: 4 });
-  assert.deepEqual(seen, [['chat:a', 'capture', 'timeout']]);
+  const store = createDiagnosticStore({ onRecord: (key, row) => seen.push([key, row.label, row.outcome, row.lineageKey, 'responseJson' in row]) });
+  store.record('chat:a', { label: 'capture', outcome: 'timeout', sourceMessageId: 4, lineageKey: 'ln4', responseJson: '{}' });
+  assert.deepEqual(seen, [['chat:a', 'capture', 'timeout', 'ln4', false]]);
 });

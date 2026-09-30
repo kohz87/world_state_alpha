@@ -99,7 +99,9 @@ const deleteRetryTimers = new Map();
 const OPERATION_LOG_LIMIT = 80;
 const diagnosticStore = createDiagnosticStore({
   limit: OPERATION_LOG_LIMIT,
-  onRecord: (chatKey, row) => scheduleOperationLogSave(chatKey, { now: affectsCaptureRecovery(row) }),
+  onRecord: (chatKey, row) => scheduleOperationLogSave(chatKey, {
+    now: affectsCaptureRecovery(row, { failuresListed: capturesFailedBefore(chatKey) }),
+  }),
 });
 const rebuildStatuses = new Map();
 // In-memory only: where a failed rebuild can be resumed by the operator.
@@ -562,12 +564,24 @@ function epoch(chatKey) {
 
 // Live captures that failed and were never recovered, limited to messages that
 // are still assistant replies on the current chat. Operations-log derived only.
+// A failure recorded on another swipe or an abandoned branch is not listed:
+// its lineage key must match the message's key on the current branch.
 function pendingCaptureFailures(chatKey) {
   const chat = getContext().chat || [];
-  return unrecoveredCaptureFailures(diagnosticStore.records(chatKey))
-    .filter(messageId => messageId < chat.length
+  const lineage = stateCache.get(chatKey)?.lineage || [];
+  const ids = unrecoveredCaptureFailures(diagnosticStore.recoveryRows(chatKey))
+    .filter(({ messageId, lineageKey }) => messageId < chat.length
       && messageRole(chat[messageId]) === 'assistant'
-      && messageText(chat[messageId]).trim());
+      && messageText(chat[messageId]).trim()
+      && (!lineageKey || lineage[messageId]?.lineageKey === lineageKey))
+    .map(item => item.messageId);
+  return [...new Set(ids)].sort((a, b) => a - b);
+}
+
+// Whether a failure was listed before the row just recorded, so its recovery is saved at once.
+function capturesFailedBefore(chatKey) {
+  const rows = diagnosticStore.recoveryRows(chatKey);
+  return unrecoveredCaptureFailures(rows.slice(0, -1)).length > 0;
 }
 
 function invalidateChatOperations(chatKey = currentChatKey()) {
@@ -2245,14 +2259,34 @@ async function handleAssistantMessage(messageId) {
 
     if (!isCurrent() || result.outcome === 'stale' || result.outcome === 'skipped') return;
     const committed = commitMutationBoundary(before, result.state, liveChat, messageId, 'capture', { lineage: before.lineage });
-    const persisted = await persistGuardedMutation({
-      chatKey,
-      candidateState: committed,
-      recoveryState: before,
-      isCurrent,
+    // The capture row above is written before the sidecar save; if that save fails, record the boundary
+    // as a failure so the Operations log never shows a lost capture as recovered.
+    const recordUnsaved = (code, detail) => diagnosticStore.record(chatKey, {
+      operationId: 'capture:' + messageId + ':unsaved:' + Date.now(),
       label: 'capture',
       sourceMessageId: messageId,
+      lineageKey: sourceLineageKey,
+      outcome: 'not-saved',
+      code,
+      detail,
     });
+    let persisted;
+    try {
+      persisted = await persistGuardedMutation({
+        chatKey,
+        candidateState: committed,
+        recoveryState: before,
+        isCurrent,
+        label: 'capture',
+        sourceMessageId: messageId,
+      });
+    } catch (error) {
+      recordUnsaved(error?.code || 'WORLD_STATE_CAPTURE_PERSIST_FAILURE', 'Capture could not be saved: ' + String(error?.message || error).slice(0, 240));
+      throw error;
+    }
+    if (persisted.conflict) {
+      recordUnsaved('WORLD_STATE_REVISION_CONFLICT', 'Capture was discarded because another session saved newer World State first.');
+    }
     if (persisted.stale) {
       resetRelevanceIndex(chatKey, before);
       resetSpatialRelevanceIndex(chatKey, before.spatial, baseMap);
@@ -2921,6 +2955,12 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     // earliest unrecovered live capture failure. The request must name that
     // exact message, so a stale panel can never start an arbitrary range.
     const recapture = rebuildRequest.recaptureFailed === true && !savedResume;
+    if (recapture) {
+      // Another device may already have recovered these; merge the saved log first.
+      const saved = await readOperationLog(chatKey).catch(() => []);
+      if (currentChatKey() !== chatKey) return;
+      if (saved.length) diagnosticStore.merge(chatKey, saved);
+    }
     const recaptureFailures = recapture ? pendingCaptureFailures(chatKey) : [];
     if (recapture && (!recaptureFailures.length || recaptureFailures[0] !== rebuildRequest.fromMessageId)) {
       notify('error', 'The failed captures changed since the panel was drawn. Review the panel and try again.');
@@ -2966,6 +3006,26 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
           ? requestedStart
           : 0;
 
+    // Confirm a recapture before anything is written, the branch sync included.
+    if (recapture) {
+      let preview;
+      try {
+        preview = planChronologicalRebuild(chat, { maxBoundaries, startMessageId, includeHiddenMessages });
+      } catch (error) {
+        notify('error', 'World State Alpha recapture could not start: ' + String(error?.message || error).slice(0, 320));
+        return;
+      }
+      const replies = preview.metrics.assistantBoundaries;
+      const listed = recaptureFailures.slice(0, 8).join(', ') + (recaptureFailures.length > 8 ? ', …' : '');
+      if (!window.confirm(
+        'Recapture World State from message ' + startMessageId + '?\n\n'
+          + recaptureFailures.length + ' live capture' + (recaptureFailures.length === 1 ? '' : 's') + ' failed (message'
+          + (recaptureFailures.length === 1 ? ' ' : 's ') + listed + '). This re-reads '
+          + replies + ' assistant repl' + (replies === 1 ? 'y' : 'ies')
+          + ' from message ' + startMessageId + ' to the latest with your capture model. The current World State stays unchanged unless every reply succeeds.',
+      )) return;
+    }
+
     if (startMessageId > 0) {
       const branch = extendCurrentBranchFast(chatKey)
         || await reconcileCurrentBranch(chatKey, { persistRestore: true });
@@ -2993,16 +3053,6 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       const detail = String(error?.message || error || 'rebuild planning failed').slice(0, 320);
       notify('error', 'World State Alpha rebuild could not start: ' + detail);
       return;
-    }
-    if (recapture) {
-      const listed = recaptureFailures.slice(0, 8).join(', ') + (recaptureFailures.length > 8 ? ', …' : '');
-      if (!window.confirm(
-        'Recapture World State from message ' + startMessageId + '?\n\n'
-          + recaptureFailures.length + ' live capture' + (recaptureFailures.length === 1 ? '' : 's') + ' failed (message'
-          + (recaptureFailures.length === 1 ? ' ' : 's ') + listed + '). This re-reads '
-          + rebuildPlan.metrics.assistantBoundaries + ' assistant repl' + (rebuildPlan.metrics.assistantBoundaries === 1 ? 'y' : 'ies')
-          + ' from message ' + startMessageId + ' to the latest with your capture model. The current World State stays unchanged unless every reply succeeds.',
-      )) return;
     }
 
     const sourceMessageId = Math.max(0, chat.length - 1);

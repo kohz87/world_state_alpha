@@ -536,17 +536,26 @@ test('host bulk lifecycle action validates every selected record and commits one
 
 test('host Recapture failed messages is a guarded From-message rebuild at the earliest unrecovered failure', () => {
   const source = fs.readFileSync('index.js', 'utf8');
-  assert.match(source, /unrecoveredCaptureFailures\(diagnosticStore\.records\(chatKey\)\)[\s\S]{0,200}messageRole\(chat\[messageId\]\) === 'assistant'/);
+  // Listed failures are current assistant replies whose lineage still matches (another swipe's failure is not listed).
+  assert.match(source, /unrecoveredCaptureFailures\(diagnosticStore\.recoveryRows\(chatKey\)\)[\s\S]{0,300}messageRole\(chat\[messageId\]\) === 'assistant'[\s\S]{0,160}lineage\[messageId\]\?\.lineageKey === lineageKey/);
   assert.match(source, /captureFailures: pendingCaptureFailures\(chatKey\)/);
+  // The saved log is merged first, so another device's recovery is honoured.
+  assert.match(source, /if \(recapture\) \{[\s\S]{0,200}await readOperationLog\(chatKey\)[\s\S]{0,200}diagnosticStore\.merge\(chatKey, saved\)/);
   // The request must name the current earliest failure; a stale panel cannot start an arbitrary range.
   assert.match(source, /const recapture = rebuildRequest\.recaptureFailed === true && !savedResume;/);
   assert.match(source, /recaptureFailures\[0\] !== rebuildRequest\.fromMessageId\)\) \{[\s\S]{0,160}failed captures changed/);
   assert.match(source, /: recapture \? 'from' :/);
   assert.match(source, /const requestedStart = recapture\s*\? recaptureFailures\[0\]/);
-  // One explicit confirmation naming the cost, before any provider call or resume-point consumption.
-  const confirmAt = source.indexOf("'Recapture World State from message '");
-  assert.ok(confirmAt > source.indexOf('rebuildPlan = planChronologicalRebuild(chat, {'));
-  assert.ok(confirmAt < source.indexOf('rebuildResumes.delete(chatKey);\n    const priorTotals'));
+  // One explicit confirmation naming the cost, before the branch sync write and any provider call.
+  const rebuildBranch = source.slice(source.indexOf("if (actionId === 'rebuild') {"));
+  const confirmAt = rebuildBranch.indexOf("'Recapture World State from message '");
+  assert.ok(confirmAt > 0);
+  assert.ok(confirmAt < rebuildBranch.indexOf('extendCurrentBranchFast(chatKey)'));
+  assert.ok(confirmAt < rebuildBranch.indexOf('rebuildResumes.delete(chatKey);\n    const priorTotals'));
+  // A capture whose sidecar save fails or conflicts is logged as a failure, never left looking recovered.
+  assert.match(source, /outcome: 'not-saved'/);
+  assert.match(source, /recordUnsaved\(error\?\.code \|\| 'WORLD_STATE_CAPTURE_PERSIST_FAILURE'/);
+  assert.match(source, /if \(persisted\.conflict\) \{\s*recordUnsaved\('WORLD_STATE_REVISION_CONFLICT'/);
   // Import and reset leave a row so older failures stop being offered.
   assert.match(source, /label: 'import',\s*outcome: 'applied'/);
   assert.match(source, /label: 'reset',\s*outcome: 'applied'/);
@@ -1171,7 +1180,7 @@ test('a local tail delete or regenerate rolls back instead of being mistaken for
 
 test('the Operations log is kept in its own per-chat server file, merged on save and carried across rename', () => {
   const source = fs.readFileSync('index.js', 'utf8');
-  assert.match(source, /createDiagnosticStore\(\{\s*limit: OPERATION_LOG_LIMIT,\s*onRecord: \(chatKey, row\) => scheduleOperationLogSave\(chatKey, \{ now: affectsCaptureRecovery\(row\) \}\),\s*\}\)/);
+  assert.match(source, /createDiagnosticStore\(\{\s*limit: OPERATION_LOG_LIMIT,\s*onRecord: \(chatKey, row\) => scheduleOperationLogSave\(chatKey, \{\s*now: affectsCaptureRecovery\(row, \{ failuresListed: capturesFailedBefore\(chatKey\) \}\),\s*\}\),\s*\}\)/);
   // Rows that decide missed-capture recovery are saved at once; everything else waits for the quiet period,
   // and pending rows are flushed when the page is hidden or unloaded.
   assert.match(source, /if \(now\) \{\s*operationLogTimers\.delete\(chatKey\);\s*void saveOperationLog\(chatKey\);\s*return;\s*\}/);

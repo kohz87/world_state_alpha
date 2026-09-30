@@ -5,7 +5,7 @@
 ### Fixed
 
 - **Live capture now asks for what rebuild recovers.** Rebuild's request carried a line next to the exchange that live capture never got: *recover every materially persistent condition established in this exchange, including conditions that were already off-screen, ignored, or unrelated to the PC objective*. So a rebuild of the same exchange found conditions the live scan had missed. Both now send that sentence word for word; rebuild keeps only its "historical boundary" framing. The capture prompt grows by about 190 characters.
-- The Operations log could lose recent rows on reload: it saved only after 1.5 s of quiet, and every new row restarted the wait. Rows that matter for missed-capture recovery now save at once, and pending rows are flushed when the page is hidden or unloaded.
+- The Operations log could lose recent rows on reload: it saved only after 1.5 s of quiet, and every new row restarted the wait. A failed capture now saves at once (and so does its recovery while a failure is listed), and pending rows are flushed when the page is hidden, for example when a phone or tablet switches apps. The flush on unload is best effort.
 
 ### Added
 
@@ -15,6 +15,14 @@
   - A failure clears when that message is later captured successfully, a completed rebuild covers it, or World State is imported or reset. Only messages that are still assistant replies in the current chat are listed.
   - If the history before the failure is no longer journaled, the notice points to a Full chat rebuild instead.
 - Import and reset now leave a row in the Operations log.
+- Hardening from code review:
+  - a capture whose World State save failed, or was discarded by a newer save from another session, is recorded as a failure instead of looking recovered;
+  - failures are tracked per message *and* swipe: another swipe's capture does not clear one, and swiping back to the failed swipe lists it again;
+  - trimming the 80-row Operations log never drops a still-unrecovered failure, so a long rebuild or busy session cannot erase it;
+  - before a recapture the saved log is re-read, so a failure another device already recovered is not re-run;
+  - the confirmation comes before anything is written, including the branch sync;
+  - ordinary successful captures keep the quiet-period save (no extra write per turn), and failure detection reads a light view of the log instead of copying it;
+  - a failure at message 0 is recoverable (it restarts from a clean root); inside the rebuild sheet there is no redundant Open rebuild button.
 
 ### Architecture
 
@@ -22,8 +30,8 @@
 
 ### Validation
 
-- Added regressions for prompt parity, failure detection and recovery (successful recapture, covering/non-covering rebuilds, import/reset, timestamp order), the panel notice and button states, the host guard and confirmation order, and immediate saving of recovery rows.
-- Live-checked in SillyTavern with a stub model: a failed capture at message 4 survived an immediate reload, Recapture re-read messages 4 and 6, the missed record appeared, and the notice stayed cleared after another immediate reload. How much the prompt change improves capture with a real model remains to be seen in play.
+- Added regressions for prompt parity, failure detection and recovery (successful recapture, covering/non-covering rebuilds, import/reset, unsaved captures, swipes, timestamp order), pinning in log trimming, the panel notice and button states, the host guard and confirmation order, and which rows save at once.
+- Live-checked in SillyTavern with a stub model: a failed capture at message 4 survived an immediate reload, Recapture re-read messages 4 and 6, the missed record appeared, and the notice stayed cleared after another immediate reload. A failure on swipe A was hidden while a captured swipe B was shown and listed again after swiping back to A. How much the prompt change improves capture with a real model remains to be seen in play.
 
 ## 0.9.0-alpha.40 - Rebuild window on tablets
 

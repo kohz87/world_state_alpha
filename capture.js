@@ -578,6 +578,7 @@ export async function runCaptureOperation({
     const outcome = stale ? 'stale' : (receipt.outcome || 'failure');
     diagnosticStore.record(chatKey, {
       operationId,
+      lineageKey: sourceLineageKey,
       label,
       sourceMessageId,
       outcome,
@@ -607,6 +608,7 @@ export async function runCaptureOperation({
   if (!current()) {
     diagnosticStore.record(chatKey, {
       operationId,
+      lineageKey: sourceLineageKey,
       label,
       sourceMessageId,
       outcome: 'stale',
@@ -646,6 +648,7 @@ export async function runCaptureOperation({
     const outcome = (processed.applied.length + spatialApplied) > 0 ? 'applied' : 'no-change';
     diagnosticStore.record(chatKey, {
       operationId,
+      lineageKey: sourceLineageKey,
       label,
       sourceMessageId,
       outcome,
@@ -684,6 +687,7 @@ export async function runCaptureOperation({
     if (!(error instanceof CaptureWireError)) throw error;
     diagnosticStore.record(chatKey, {
       operationId,
+      lineageKey: sourceLineageKey,
       label,
       sourceMessageId,
       outcome: 'invalid-response',

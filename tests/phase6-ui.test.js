@@ -929,7 +929,8 @@ test('a failed rebuild shows Resume from message N on its status and in the rebu
 
   const source = fs.readFileSync('ui.js', 'utf8');
   // One press answers one named failure; repeat clicks are ignored while it runs.
-  assert.match(source, /if \(ui\.resumePending\) return;[\s\S]{0,400}onMaintenanceAction\('rebuild', \{ rebuild: \{ resume: true, fromMessageId \} \}\)/);
+  assert.match(source, /'\[data-wsa-resume-rebuild\]', 'wsaResumeMessage', 'data-wsa-resume-message', fromMessageId => \(\{ resume: true, fromMessageId \}\)/);
+  assert.match(source, /if \(ui\.namedRebuildPending\) return;[\s\S]{0,400}onMaintenanceAction\('rebuild', \{ rebuild: request\(fromMessageId\) \}\)/);
 });
 
 test('bulk select mode marks rows, offers bulk lifecycle actions, and never touches history rows', async () => {
@@ -1039,7 +1040,7 @@ test('missed live captures show a Recapture button only when the partial rebuild
   const state = createState('chat:test:missed');
   const runtimeInfo = { chatMessages: 60, earliestPartialStart: 1, captureFailures: [21, 33] };
   const model = buildWorldStateUiModel(state, { runtimeInfo });
-  assert.deepEqual(model.maintenance.rebuild.captureFailures, { count: 2, messageIds: [21, 33], fromMessageId: 21, recoverable: true });
+  assert.deepEqual(model.maintenance.rebuild.captureFailures, { count: 2, messageIds: [21, 33], fromMessageId: 21, bootstrapRequired: false, recoverable: true });
 
   const world = renderWorldStatePanel(model, {});
   assert.match(world, /2 live captures failed and were never recovered \(messages 21, 33\)/);
@@ -1053,8 +1054,15 @@ test('missed live captures show a Recapture button only when the partial rebuild
   const trimmedHtml = renderWorldStatePanel(trimmed, {});
   assert.doesNotMatch(trimmedHtml, /data-wsa-recapture-failed/);
   assert.match(trimmedHtml, /needs a Full chat rebuild[\s\S]*data-wsa-open-rebuild/);
+  // Inside the already-open rebuild sheet there is no dead Open rebuild button.
+  assert.doesNotMatch(renderWorldStatePanel(trimmed, { rebuildOpen: true }).split('data-wsa-rebuild-sheet')[1], /Missed captures[\s\S]{0,600}data-wsa-open-rebuild/);
   const bootstrap = buildWorldStateUiModel(state, { runtimeInfo: { ...runtimeInfo, bootstrapRequired: true } });
   assert.equal(bootstrap.maintenance.rebuild.captureFailures.recoverable, false);
+  assert.match(renderWorldStatePanel(bootstrap, {}), /no durable World State baseline yet/);
+  // A failure at message 0 restarts from a clean root, so it is recoverable even when history is trimmed.
+  const atZero = buildWorldStateUiModel(state, { runtimeInfo: { ...runtimeInfo, earliestPartialStart: 30, captureFailures: [0, 33] } });
+  assert.equal(atZero.maintenance.rebuild.captureFailures.recoverable, true);
+  assert.match(renderWorldStatePanel(atZero, {}), /Recapture from message 0/);
 
   // No failures, no notice; a running rebuild hides the button.
   assert.doesNotMatch(renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 60 } }), {}), /Missed captures/);
@@ -1064,5 +1072,5 @@ test('missed live captures show a Recapture button only when the partial rebuild
   assert.doesNotMatch(renderWorldStatePanel(running, {}), /data-wsa-recapture-failed/);
 
   const source = fs.readFileSync('ui.js', 'utf8');
-  assert.match(source, /if \(ui\.recapturePending\) return;[\s\S]{0,500}onMaintenanceAction\('rebuild', \{ rebuild: \{ recaptureFailed: true, fromMessageId \} \}\)/);
+  assert.match(source, /'\[data-wsa-recapture-failed\]', 'wsaRecaptureFrom', 'data-wsa-recapture-from', fromMessageId => \(\{ recaptureFailed: true, fromMessageId \}\)/);
 });
