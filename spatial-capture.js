@@ -493,6 +493,14 @@ export function processSpatialCapture({
         rejected.push({ stage: 'spatial-admission', index, reason: 'generated location name is not grounded in accepted narration' });
         continue;
       }
+      // An update may rename a place only to a name the narration actually uses; otherwise it keeps its name.
+      if (isUpdate) {
+        const known = visibleById.get(proposal.locationId);
+        if (known?.name && norm(known.name) !== norm(proposal.name)
+          && !locationNameGrounded(proposal.name, proposal.evidence, exchangeById)) {
+          proposal.name = known.name;
+        }
+      }
 
       if (!isUpdate) {
         const nameKey = norm(proposal.name);
@@ -508,13 +516,14 @@ export function processSpatialCapture({
 
       if (proposal.coordinate && coordKnown(proposal.coordinate)) {
         const normCoord = normalizeCoordinate(proposal.coordinate);
-        if (activeProfile?.bounds && !validateBounds(normCoord.x, normCoord.y, activeProfile.bounds)) {
+        // Automatic coordinate firewall: narrative_explicit only if accepted source text explicitly contains matching x/y.
+        // Grounding is checked first: an invented coordinate is simply dropped and never costs the place itself;
+        // only a narrated coordinate outside the profile bounds rejects the proposal.
+        coordGrounded = isCoordinateGroundedInNarration(normCoord, proposal.evidence, exchangeById, activeProfile?.decimalStep);
+        if (coordGrounded && activeProfile?.bounds && !validateBounds(normCoord.x, normCoord.y, activeProfile.bounds)) {
           rejected.push({ stage: 'spatial-coordinate', index, reason: 'explicit coordinate is outside profile bounds' });
           continue;
         }
-
-        // Automatic coordinate firewall: narrative_explicit only if accepted source text explicitly contains matching x/y
-        coordGrounded = isCoordinateGroundedInNarration(normCoord, proposal.evidence, exchangeById, activeProfile?.decimalStep);
         if (coordGrounded) {
           finalCoord = {
             x: normCoord.x,

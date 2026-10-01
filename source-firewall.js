@@ -278,7 +278,11 @@ export function applyCaptureSourceFirewall(mutation, {
   }
 
   if (candidate.anchors !== undefined) {
+    const proposedAnchors = candidate.anchors.length;
     candidate.anchors = candidate.anchors.filter(anchor => anchorSupported(anchor, evidenceSupport, existing, assertionText));
+    // An update whose proposed anchors were all unsupported keeps the record's anchors (the reducer would
+    // otherwise replace them with []); an explicit empty list from the provider still clears them.
+    if (existing && proposedAnchors && !candidate.anchors.length) delete candidate.anchors;
   }
 
   if (supportingEvidence.every(item => item.attributed)) {

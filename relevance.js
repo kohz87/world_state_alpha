@@ -11,9 +11,23 @@ function tokens(value) {
   return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];
 }
 
+// Function words carry no topical signal: shared 'a'/'the'/'in' must never make an unrelated record or
+// place look relevant. English only by necessity; content words in any script still match.
+export const RELEVANCE_STOPWORDS = Object.freeze(new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'nor', 'so', 'yet', 'of', 'to', 'in', 'on', 'at', 'by', 'for', 'from',
+  'with', 'into', 'onto', 'over', 'under', 'up', 'down', 'out', 'off', 'about', 'as', 'than', 'then', 'that',
+  'this', 'these', 'those', 'there', 'here', 'it', 'its', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'am', 'do', 'does', 'did', 'has', 'have', 'had', 'will', 'would', 'can', 'could', 'should', 'may', 'might',
+  'must', 'shall', 'not', 'no', 'i', 'me', 'my', 'we', 'us', 'our', 'you', 'your', 'he', 'him', 'his', 'she',
+  'her', 'they', 'them', 'their', 'what', 'which', 'who', 'whom', 'when', 'where', 'why', 'how', 'all', 'any',
+  'some', 'each', 'if', 'while', 'still', 'now', 'just', 'very', 'too', 'also',
+]));
+
 function tokenSet(value) {
   return new Set(tokens(value));
 }
+
+
 
 function boundedInt(value, fallback, min, max) {
   const number = Number(value);
@@ -26,8 +40,10 @@ function overlapScore(leftText, rightText) {
   const right = tokenSet(rightText);
   if (!left.size || !right.size) return 0;
 
+  // Function words never count as shared evidence, but the summary's full size still calibrates the
+  // single-token gate and the denominator exactly as before.
   const shared = [];
-  for (const token of left) if (right.has(token)) shared.push(token);
+  for (const token of left) if (right.has(token) && !RELEVANCE_STOPWORDS.has(token)) shared.push(token);
   if (!shared.length) return 0;
 
   if (shared.length === 1) {
@@ -70,18 +86,43 @@ function recordRecency(record, currentMessageId) {
   return 0;
 }
 
+const RELEVANCE_RECENT_PHRASE_TOKENS = 160;
+const RELEVANCE_LOOKUP_TOKENS = 192;
+
+function lookupTokens(list, { newestFirst = false, keepStopwords = false } = {}) {
+  const out = [];
+  const seen = new Set();
+  const ordered = newestFirst ? [...list].reverse() : list;
+  for (const token of ordered) {
+    if (seen.has(token) || (!keepStopwords && RELEVANCE_STOPWORDS.has(token))) continue;
+    seen.add(token);
+    out.push(token);
+    if (out.length >= RELEVANCE_LOOKUP_TOKENS) break;
+  }
+  return out;
+}
+
 function prepareContext({ recentText = '', loreText = '', currentMessageId = null } = {}) {
   const recentNorm = normalizeText(recentText);
   const loreNorm = normalizeText(loreText);
-  const recentTokenList = tokens(recentNorm).slice(0, 96);
-  const loreTokenList = tokens(loreNorm).slice(0, 64);
+  const recentAll = tokens(recentNorm);
+  const loreAll = tokens(loreNorm);
+  // The recent window is joined oldest-first, so the bounded phrase scan takes its newest tokens; scoring
+  // still sees every token. Candidate token lookups walk newest-first and skip function words.
+  const recentTokenList = recentAll.slice(-RELEVANCE_RECENT_PHRASE_TOKENS);
+  const loreTokenList = loreAll.slice(0, 64);
   return {
     recentNorm,
     loreNorm,
     recentTokenList,
     loreTokenList,
-    recentTokens: new Set(recentTokenList),
-    loreTokens: new Set(loreTokenList),
+    recentTokens: new Set(recentAll),
+    loreTokens: new Set(loreAll),
+    recentLookupTokens: lookupTokens(recentAll, { newestFirst: true }),
+    loreLookupTokens: lookupTokens(loreAll.slice(0, 64)),
+    // An anchor may itself be a function word used as a name ('Will', 'May'); anchor lookups keep them.
+    recentAnchorTokens: lookupTokens(recentAll, { newestFirst: true, keepStopwords: true }),
+    loreAnchorTokens: lookupTokens(loreAll.slice(0, 64), { keepStopwords: true }),
     currentMessageId,
   };
 }
@@ -511,10 +552,14 @@ export function selectBackgroundDevelopments(index, {
   };
 }
 
-function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384) {
+// newestFirst walks start positions from the end, so the phrase budget covers the newest text first.
+function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384, { newestFirst = false } = {}) {
   const out = [];
   const seen = new Set();
-  for (let start = 0; start < tokenList.length && out.length < maxPhrases; start += 1) {
+  const starts = tokenList.map((_, index) => index);
+  if (newestFirst) starts.reverse();
+  for (const start of starts) {
+    if (out.length >= maxPhrases) break;
     let phrase = '';
     for (let width = 1; width <= maxWords && start + width <= tokenList.length; width += 1) {
       phrase = width === 1 ? tokenList[start] : phrase + ' ' + tokenList[start + width - 1];
@@ -550,7 +595,7 @@ function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
     }
   };
 
-  for (const phrase of phraseCandidates(context.recentTokenList)) {
+  for (const phrase of phraseCandidates(context.recentTokenList, 6, 384, { newestFirst: true })) {
     phraseLookups += 1;
     visitPosting(index.anchorPhrases.get(phrase), 1000 + Math.min(100, phrase.length));
   }
@@ -566,13 +611,13 @@ function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
     visitPosting(index.anchorBigrams.get(gram), 120);
   }
 
-  for (const token of context.recentTokens) visitPosting(index.anchorTokens.get(token), 300);
-  for (const token of context.loreTokens) visitPosting(index.anchorTokens.get(token), 100);
+  for (const token of context.recentAnchorTokens) visitPosting(index.anchorTokens.get(token), 300);
+  for (const token of context.loreAnchorTokens) visitPosting(index.anchorTokens.get(token), 100);
 
-  for (const token of context.recentTokens) {
+  for (const token of context.recentLookupTokens) {
     visitPosting(index.summaryTokens.get(token), token.length >= 4 ? 10 : 2);
   }
-  for (const token of context.loreTokens) {
+  for (const token of context.loreLookupTokens) {
     visitPosting(index.summaryTokens.get(token), token.length >= 4 ? 4 : 1);
   }
 

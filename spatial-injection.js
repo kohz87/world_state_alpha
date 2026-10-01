@@ -34,10 +34,13 @@ function locationLine(loc) {
 }
 
 function relationLine(rel, locMap) {
-  const from = locMap.get(rel.fromId)?.name || 'known anchor';
-  const to = locMap.get(rel.toId)?.name || 'target';
+  // Both ends must be places shown in this injection; a placeholder name would read as a real place.
+  const from = singleLine(locMap.get(rel.fromId)?.name);
+  const to = singleLine(locMap.get(rel.toId)?.name);
+  if (!from || !to) return '';
   const dir = rel.direction ? ` ${rel.direction} of ` : ' connected to ';
-  const dist = Number.isFinite(rel.distanceKm) ? ` (${rel.distanceKm} km)` : '';
+  const mode = rel.distanceMode === 'route' ? ' by route' : rel.distanceMode === 'straight_line' ? ' straight-line' : '';
+  const dist = Number.isFinite(rel.distanceKm) ? ` (${rel.distanceKm} km${mode})` : '';
   return `- ${to} is${dir}${from}${dist}`;
 }
 
@@ -97,9 +100,10 @@ export function renderSpatialInjection(selectedLocations = [], relations = [], r
   for (const entry of entries) {
     const loc = entry?.location || entry;
     if (!loc || loc.status === 'archived') continue;
-    locMap.set(loc.id, loc);
     const line = fitLine(locationLine(loc), text, budget);
     if (!line) continue;
+    // Only places whose line actually made it in may be named by a relation line.
+    locMap.set(loc.id, loc);
     text += `\n${line}`;
     included.push({
       locationId: loc.id,

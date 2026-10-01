@@ -55,12 +55,10 @@ function normalizeEvaluation(raw) {
   if (outcome === 'stable') return evaluation;
 
   if (Object.hasOwn(raw, 'summary')) evaluation.summary = text(raw.summary, LIMITS.summaryChars);
-  if (Object.hasOwn(raw, 'trend')) {
-    evaluation.trend = RECORD_TRENDS.includes(raw.trend) ? raw.trend : null;
-  }
-  if (Object.hasOwn(raw, 'anchors')) {
-    evaluation.anchors = uniqueStrings(raw.anchors, LIMITS.anchorsPerRecord, LIMITS.anchorChars);
-  }
+  // Optional fields that are empty or invalid mean "unchanged", never "clear".
+  if (RECORD_TRENDS.includes(raw.trend)) evaluation.trend = raw.trend;
+  const anchors = uniqueStrings(raw.anchors, LIMITS.anchorsPerRecord, LIMITS.anchorChars);
+  if (anchors.length) evaluation.anchors = anchors;
 
   if ((outcome === 'resolve' || outcome === 'supersede') && !evaluation.summary) {
     throw new EvolutionWireError(`${outcome} evaluation requires a compact current summary`);
@@ -92,9 +90,12 @@ function normalizeDerived(raw) {
 }
 
 export function parseEvolutionJson(rawText) {
-  const raw = String(rawText ?? '').trim();
+  // Same envelope rule as capture: one JSON object, optionally wrapped in a single json code fence.
+  const input = String(rawText ?? '').trim();
+  const fenced = input.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const raw = fenced ? fenced[1].trim() : input;
   if (!raw.startsWith('{') || !raw.endsWith('}')) {
-    throw new EvolutionWireError('evolution response must be one JSON object with no prose or markdown');
+    throw new EvolutionWireError('evolution response must be one JSON object, optionally wrapped in a single json code fence, with no surrounding prose');
   }
   let parsed;
   try {
