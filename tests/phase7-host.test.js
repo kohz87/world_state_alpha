@@ -537,7 +537,7 @@ test('host bulk lifecycle action validates every selected record and commits one
 test('host Recapture failed messages is a guarded From-message rebuild at the earliest unrecovered failure', () => {
   const source = fs.readFileSync('index.js', 'utf8');
   // Listed failures are current assistant replies whose lineage still matches (another swipe's failure is not listed).
-  assert.match(source, /unrecoveredCaptureFailures\(diagnosticStore\.recoveryRows\(chatKey\)\)[\s\S]{0,300}messageRole\(chat\[messageId\]\) === 'assistant'[\s\S]{0,160}lineage\[messageId\]\?\.lineageKey === lineageKey/);
+  assert.match(source, /unrecoveredCaptureFailures\(diagnosticStore\.recoveryRows\(chatKey\)\)[\s\S]{0,300}messageRole\(chat\[messageId\]\) === 'assistant'[\s\S]{0,400}lineage\[item\.messageId\]\?\.lineageKey === item\.lineageKey/);
   assert.match(source, /captureFailures: pendingCaptureFailures\(chatKey\)/);
   // The saved log is merged first, so another device's recovery is honoured.
   assert.match(source, /if \(recapture\) \{[\s\S]{0,200}await readOperationLog\(chatKey\)[\s\S]{0,200}diagnosticStore\.merge\(chatKey, saved\)/);

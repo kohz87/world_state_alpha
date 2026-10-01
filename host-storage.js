@@ -138,6 +138,7 @@ export function createSillyTavernWorldStateStorageAdapter({
     } catch (cause) {
       const error = new Error('World State Alpha JSON file is invalid.');
       error.cause = cause;
+      error.code = 'WORLD_STATE_JSON_INVALID';
       error.retryable = false;
       throw error;
     }

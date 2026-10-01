@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.9.0-alpha.44 - Audit batch 3: Missed captures gaps
+
+Fixes from the whole-codebase audit for the Missed captures feature (alpha.41). Each was reproduced first and has a regression test that fails on 0.9.0-alpha.43.
+
+### Fixed
+
+- **Switching chats mid-capture lost that reply silently.** The capture was logged as "stale", which counted as never attempted, so the reply was never captured or offered. It is now listed under **Missed captures** when you come back.
+  - A capture whose own reply you swiped, edited or deleted before it finished is settled instead, because that version is gone and the new one is captured on its own.
+  - A capture abandoned before its request was even sent is logged too.
+- **A save undone by a mid-save chat switch looked done.** The capture had already logged "applied", so nothing listed it. A capture dropped after its result, or saved and then rolled back because the chat changed, is now a missed capture.
+- **Hiding or unhiding an earlier message dropped an existing missed capture.** Hiding changes every later message's lineage key, so the failure no longer matched. Capture rows that matter for recovery now also carry a key that ignores hidden flags, so the failure stays listed and a later capture still clears it. A hidden failed reply itself stays listed.
+- **Recapture after a hide refused to start.** The partial rebuild checked only the newest message, missed the hide, and then could not prove its own starting point. It now reconciles the whole branch first.
+- **A failed Operations log read could erase other devices' rows.** Any read error was treated as an empty log, and the next save wrote this session's rows over the file.
+  - A save now waits and retries instead; only a missing or corrupt file counts as empty.
+  - A rename leaves unread rows in the old file.
+  - A failed load is retried.
+- **Hardened after code review of this batch.**
+  - The hide-insensitive key is checked against the messages as they were when the capture began, so an earlier message edited mid-capture never makes an abandoned version look current.
+  - A "superseded" row settles only its own capture attempt. An earlier failure of the same reply, for example one you swiped away from and back to, stays listed, and log trimming keeps it.
+  - A capture's success row still carries its key while the saved log is loading, so a failure loaded afterwards is still cleared.
+  - Stale rows from releases before lineage was recorded are still ignored.
+  - A postponed log save is flushed when you leave the chat or hide the page. Rows whose save never succeeds are kept and saved the next time that chat's log loads.
+  - A rename retries an unread log before giving up.
+  - A slow failed load no longer cancels a newer one.
+  - The panel computes missed-capture keys in one pass and remembers them.
+
+### Architecture
+
+- Core contract updated: `stale` captures count as missed, `superseded` settles one version, a hide-insensitive Operations-log key (never used for branch ownership), a full reconcile before a partial rebuild, and no overwrite of an unreadable log. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1. The Operations log rows gain one optional field.
+
+### Validation
+
+- New `tests/audit-batch3.test.js` and updated Missed captures cases; each fails on the previous release.
+- Live in SillyTavern with a stub model:
+  - a chat switch mid-capture is offered as Recapture on return;
+  - a failure survives `/hide 1` and reopening the chat, and Recapture then completes;
+  - an edit mid-capture leaves nothing missed;
+  - a quick reply during a capture loses nothing;
+  - a log save during two failed reads keeps another device's row.
+  - On alpha.43 the first two showed nothing to recapture.
+- Not verified with a real model or across two real devices.
+
 ## 0.9.0-alpha.43 - Audit batch 2: capture and injection quality
 
 Fixes from the whole-codebase audit, each reproduced first and covered by a regression test that fails on 0.9.0-alpha.42.
