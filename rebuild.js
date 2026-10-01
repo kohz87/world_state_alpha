@@ -1,5 +1,5 @@
 import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, reconcileBranch, seedRootCheckpoint } from './branch.js';
-import { CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
+import { CAPTURE_LIMITS, captureDue, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
@@ -516,6 +516,24 @@ export async function runManualRebuild({
     errorMessage: 'Rebuild was cancelled before canonical state replacement.',
   });
 
+  const reportProgress = async (messageId, boundary) => {
+    if (typeof onProgress !== 'function') return;
+    try {
+      await onProgress({
+        operationId,
+        messageId,
+        processedBoundaries,
+        totalBoundaries: plan.metrics.assistantBoundaries,
+        providerCalls,
+        ...boundary,
+        currentRecords: (candidate.records || []).filter(record => record?.status === 'active').length,
+        places: (candidate.spatial?.locations || []).filter(location => location?.status !== 'archived').length,
+      });
+    } catch {
+      // Progress reporting is presentation-only and must never fail an atomic rebuild.
+    }
+  };
+
   for (const window of plan.windows) {
     if (resumeFromMessageId !== null && window.messageId < resumeFromMessageId) continue;
     if (signal?.aborted) return cancelledResult(window.messageId);
@@ -533,32 +551,13 @@ export async function runManualRebuild({
     }
 
     // A boundary whose assistant reply has no narration left after sanitization (an empty or image-only
-    // reply, or only <writer_state>/tracker blocks) has nothing to capture. Live capture skips it too, so
-    // the rebuild advances past it without a provider call instead of failing on it every time.
-    const boundaryRow = normalizeCaptureExchange(window.exchange).at(-1);
-    if (!boundaryRow || boundaryRow.messageId !== window.messageId || boundaryRow.role !== 'assistant' || !boundaryRow.content.trim()) {
+    // reply, or only <writer_state>/tracker blocks) has nothing to capture. Live capture skips it with the
+    // same captureDue rule, so the rebuild advances past it without a provider call instead of failing.
+    if (!captureDue({ exchange: window.exchange, sourceMessageId: window.messageId })) {
       candidate = commitMutationBoundary(candidate, candidate, chat.slice(0, window.messageId + 1), window.messageId, 'rebuild');
       receipts.push({ messageId: window.messageId, outcome: 'empty-boundary', providerCalls: 0, applied: 0, rejected: 0, aliasRepairs: 0, completenessHints: 0, rejections: [] });
       processedBoundaries += 1;
-      if (typeof onProgress === 'function') {
-        try {
-          await onProgress({
-            operationId,
-            messageId: window.messageId,
-            processedBoundaries,
-            totalBoundaries: plan.metrics.assistantBoundaries,
-            providerCalls,
-            boundaryApplied: 0,
-            boundaryRejected: 0,
-            aliasRepairs: 0,
-            completenessHints: 0,
-            currentRecords: (candidate.records || []).filter(record => record?.status === 'active').length,
-            places: (candidate.spatial?.locations || []).filter(location => location?.status !== 'archived').length,
-          });
-        } catch {
-          // Progress reporting is presentation-only and must never fail an atomic rebuild.
-        }
-      }
+      await reportProgress(window.messageId, { boundaryApplied: 0, boundaryRejected: 0, aliasRepairs: 0, completenessHints: 0 });
       continue;
     }
 
@@ -679,25 +678,12 @@ export async function runManualRebuild({
       );
     }
     processedBoundaries += 1;
-    if (typeof onProgress === 'function') {
-      try {
-        await onProgress({
-          operationId,
-          messageId: window.messageId,
-          processedBoundaries,
-          totalBoundaries: plan.metrics.assistantBoundaries,
-          providerCalls,
-          boundaryApplied,
-          boundaryRejected: allRejected.length,
-          aliasRepairs: Number(result.aliasRepairs) || 0,
-          completenessHints: Number(result.completenessHints) || 0,
-          currentRecords: (candidate.records || []).filter(record => record?.status === 'active').length,
-          places: (candidate.spatial?.locations || []).filter(location => location?.status !== 'archived').length,
-        });
-      } catch {
-        // Progress reporting is presentation-only and must never fail an atomic rebuild.
-      }
-    }
+    await reportProgress(window.messageId, {
+      boundaryApplied,
+      boundaryRejected: allRejected.length,
+      aliasRepairs: Number(result.aliasRepairs) || 0,
+      completenessHints: Number(result.completenessHints) || 0,
+    });
   }
 
   if (signal?.aborted) return cancelledResult(null);

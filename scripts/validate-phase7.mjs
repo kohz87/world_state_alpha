@@ -225,9 +225,10 @@ if (!uploaded?.name?.startsWith('world-state-alpha-') || !uploaded?.data) {
   throw new Error('Phase 7 host upload namespace/payload failed');
 }
 
+// Another writer's revision 2 (different content): a byte-identical body would be this write already landed.
 const sidecar = encodeSidecar({
   chatKey: 'chat:alice:test',
-  state: createState('chat:alice:test'),
+  state: { ...createState('chat:alice:test'), lastCaptureMessage: 7 },
   revision: 2,
 });
 let uploadAttempts = 0;

@@ -20,6 +20,12 @@ Fixes from a whole-codebase audit, each reproduced first and covered by a regres
 - **Bulk select could resolve the wrong records** when World State was replaced while rows were ticked. Selections are now pinned to the exact row ticked and dropped if it changes.
 - **Import could freeze a chat.** The file picker opened from inside the chat's work queue; if it opened late it never opened and all World State work for that chat waited forever. Import and base-map import now pick the file first.
 
+- Hardening from code review:
+  - a first write is locked and checked as the physical file it uploads to, and a retried write that already landed is recognised instead of reported as a conflict;
+  - a rename destination counts as empty only with no records, places, routes, relations, profile or base map;
+  - Add place still allows a campaign place that shares a base-map name (only campaign places are ever overwritten);
+  - rebuild uses capture's own skip rule for empty replies.
+
 ### Architecture
 
 - Core contract updated for the journal-floor rule, empty rebuild boundaries, and rename/first-write rules. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.

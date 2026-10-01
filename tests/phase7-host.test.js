@@ -1278,12 +1278,15 @@ test('batch-1 host guards: file pickers before the queue, Places edits from cano
   assert.match(source, /if \(actionId === 'import_base_map'\) \{\s*const startEpoch = epoch\(chatKey\);\s*const file = payload\?\.file;/);
 
   // Lock and Save read the place's coordinate from canonical state, not the display projection.
-  assert.match(source, /const currentLocationCoordinate = location => \{[\s\S]{0,200}resolveEffectiveLocations\(state\.spatial, baseMap\)/);
+  assert.match(source, /const currentLocationCoordinate = location => \{[\s\S]{0,120}effectiveLocations\(state\)/);
+  assert.equal((source.match(/const effectiveLocations = currentState =>/g) || []).length, 1);
   assert.match(source, /const priorCoord = currentLocationCoordinate\(payload\.location\);/);
   assert.match(source, /const curCoord = currentLocationCoordinate\(payload\.location\);\s*if \(!Number\.isFinite\(curCoord\.x\) \|\| !Number\.isFinite\(curCoord\.y\)\)/);
   assert.doesNotMatch(source, /payload\.location\.coordinate \|\| \{\}/);
   // Add place refuses an existing active name instead of overwriting that place.
   assert.match(source, /if \(existingPlace\) \{\s*notify\('warning', 'A place named '/);
+  // Only active campaign places are merge targets, so only they block Add (a base-map name may be reused).
+  assert.match(source, /const existingPlace = \(state\.spatial\?\.locations \|\| \[\]\)\s*\.find\(item => item\.status === 'active'/);
 
   // Rename carries the server's (authoritative) source state and may reuse a still-retired destination.
   const migration = source.slice(source.indexOf('async function migrateWorldStateChatKey('), source.indexOf('async function migrateWorldStateChatKey(') + 6000);
@@ -1291,6 +1294,46 @@ test('batch-1 host guards: file pickers before the queue, Places edits from cano
   assert.doesNotMatch(migration, /if \(!sourceState\) sourceState = recoveredSource\.payload\.state;/);
   assert.match(migration, /const unchangedSinceRetired = Boolean\(destinationTombstone\) && !newPointer/);
   assert.match(migration, /if \(!unchangedSinceRetired && !empty\) \{/);
+  // Empty means nothing at all: no records, places, routes, relations, profile or base map.
+  assert.match(migration, /!\(spatial\.routes \|\| \[\]\)\.length && !\(spatial\.relations \|\| \[\]\)\.length\s*&& !spatial\.profile && !spatial\.baseMapRef\?\.id/);
   assert.match(migration, /pointer: destinationBase,/);
   assert.match(migration, /delete settings\.sidecarTombstones\[newKey\];/);
+});
+
+test('a retried first write that already landed is recognised, and logical and physical writes share one lock', async () => {
+  const logical = 'world_state_alpha/retry.json';
+  const physical = worldStateHostDeterministicPath(logical);
+  const body = encodeSidecar({ chatKey: 'chat:a:retry', state: createState('chat:a:retry'), revision: 1 });
+  let serverText = null;
+  let uploads = 0;
+  const adapter = createSillyTavernWorldStateStorageAdapter({
+    fetchFn: async (url, options = {}) => {
+      if (url === physical && options.method === 'GET') {
+        const snapshot = serverText;
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return snapshot === null ? response({ status: 404 }) : response({ text: snapshot });
+      }
+      if (url === '/api/files/upload') {
+        uploads += 1;
+        serverText = Buffer.from(JSON.parse(options.body).data, 'base64').toString('utf8');
+        return response({ json: { path: physical } });
+      }
+      throw new Error('unexpected URL ' + url);
+    },
+  });
+  assert.equal((await adapter.write({ path: logical, expectedRevision: 0, body })).revision, 1);
+  // The response was lost and the same write is retried: it is reported committed, not as a conflict.
+  assert.deepEqual(await adapter.write({ path: logical, expectedRevision: 0, body }), { path: physical, revision: 1 });
+  assert.equal(uploads, 1);
+
+  // A first write and a pointer write to the same file serialize: exactly one wins, the other conflicts.
+  serverText = null;
+  uploads = 0;
+  const other = encodeSidecar({ chatKey: 'chat:a:retry', state: { ...createState('chat:a:retry'), lastCaptureMessage: 3 }, revision: 1 });
+  const results = await Promise.all([
+    adapter.write({ path: logical, expectedRevision: 0, body }),
+    adapter.write({ path: physical, expectedRevision: 0, body: other }),
+  ]);
+  assert.equal(uploads, 1);
+  assert.equal(results.filter(item => item.conflict).length, 1);
 });

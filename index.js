@@ -894,7 +894,10 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
     const retiredRevision = Number(destinationTombstone?.pointer?.revision);
     const unchangedSinceRetired = Boolean(destinationTombstone) && !newPointer
       && Number.isInteger(retiredRevision) && Number(destinationOrphan.pointer?.revision) === retiredRevision;
-    const empty = !(orphanState.records || []).length && !(orphanState.spatial?.locations || []).length;
+    const spatial = orphanState.spatial || {};
+    const empty = !(orphanState.records || []).length
+      && !(spatial.locations || []).length && !(spatial.routes || []).length && !(spatial.relations || []).length
+      && !spatial.profile && !spatial.baseMapRef?.id;
     if (!unchangedSinceRetired && !empty) {
       console.warn('[World State Alpha] identity migration refused because the destination already has World State continuity:', newKey);
       return false;
@@ -3768,8 +3771,9 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
 
   // The panel's place projection carries display fields only; coordinates come from canonical state
   // (the effective location, base map included), never from the click payload.
+  const effectiveLocations = currentState => resolveEffectiveLocations(currentState.spatial, baseMap);
   const currentLocationCoordinate = location => {
-    const effective = resolveEffectiveLocations(state.spatial, baseMap)
+    const effective = effectiveLocations(state)
       .find(item => item.id === location?.id || (location?.overrideId && item.overrideId === location.overrideId));
     return effective?.coordinate ? { ...effective.coordinate } : {};
   };
@@ -3816,7 +3820,6 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     return { outcome: 'applied', state: working, applied: combined };
   };
 
-  const effectiveLocations = currentState => resolveEffectiveLocations(currentState.spatial, baseMap);
   const findEffectiveByName = (currentState, name) => {
     const needle = String(name || '').trim().toLowerCase();
     if (!needle) return null;
@@ -3913,10 +3916,11 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
   if (actionId === 'add_location_modal') {
     const name = window.prompt('Location name:');
     if (!name?.trim()) return;
-    // The reducer consolidates a nameless-id upsert onto an active place with the same name, so adding an
-    // existing name would silently overwrite that place's type, context and coordinates. Refuse instead.
-    const existingPlace = resolveEffectiveLocations(state.spatial, baseMap)
-      .find(item => item.status !== 'archived' && String(item.name || '').trim().toLowerCase() === name.trim().toLowerCase());
+    // The reducer consolidates a nameless-id upsert onto an active campaign place with the same name, so
+    // adding that name would silently overwrite its type, context and coordinates. Refuse instead (a
+    // base-map name is never merged into, so a campaign place may still share it).
+    const existingPlace = (state.spatial?.locations || [])
+      .find(item => item.status === 'active' && String(item.name || '').trim().toLowerCase() === name.trim().toLowerCase());
     if (existingPlace) {
       notify('warning', 'A place named ' + existingPlace.name + ' already exists. Open it in Places to edit it instead.');
       return;
