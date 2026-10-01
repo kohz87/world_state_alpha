@@ -14,7 +14,7 @@ Fixes from the whole-codebase audit, each reproduced first and covered by a regr
   - an unknown trend word (for example "worsening") cleared the trend;
   - an evolution reply with empty optional fields wiped anchors and trend, and could replace anchors outright. Evolution can now only add anchors.
   - An explicit empty anchor list or `null` trend from capture still clears, as before.
-- **One reply could rewrite history.** A reply that resolved a record and then updated it ("still holds firm") rewrote the resolved record; the later change is now refused. Two near-identical creates in one reply no longer become two records.
+- **One reply could rewrite history.** A reply that resolved a record and then updated it ("still holds firm") rewrote the resolved record; the later change is now refused. Two near-identical creates in one reply no longer become two records; the second is merged into the first, keeping its extra anchors and evidence.
 - **Evolution rejected a reply in a ```json code block**, which capture already accepts, and lost that elapsed-time catch-up.
 - **A time skip was missed** when the same phrase first appeared in dialogue (`"Two weeks later is too late," she said. Two weeks later, …`).
 - **Hidden messages.** Live capture re-read user turns that a hidden reply had already answered; it now treats a hidden reply as the end of its exchange, like rebuild. A rebuild with hidden messages excluded no longer sends hidden user turns.
@@ -23,6 +23,14 @@ Fixes from the whole-codebase audit, each reproduced first and covered by a regr
   - Injection could show the literal words "target"/"known anchor" for a relation to a place not shown; such relations are now left out, and road distances say "by route".
   - Capture could rename a place to a name never narrated.
   - An invented out-of-bounds coordinate threw away an otherwise valid new place; the coordinate is now dropped instead.
+- **Hardened after code review of this batch.**
+  - a bold label bullet (`- **Location:** …`) still ends the checklist section;
+  - a record anchored on a name made of function words ("The Who") is still found;
+  - the newest matching phrase is preferred when the recent window is long;
+  - evolution anchors are merged with the record's existing anchors, keeping their order;
+  - ignoring function words no longer inflates the overlap score of short records;
+  - a relation is never shown to a place that was dropped for lack of budget;
+  - a real time skip later in a message is still found after an earlier dialogue match.
 
 ### Architecture
 

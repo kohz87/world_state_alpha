@@ -145,3 +145,40 @@ test('Places: no placeholder names in injection, no ungrounded renames, and an i
   assert.equal(placed.spatial.locations.length, 1);
   assert.equal(placed.spatial.locations[0].coordinate.x, null);
 });
+
+test('review hardening: header bullets close the checklist section; function-word names and newest phrases are still found', async () => {
+  const hints = extractWorldStateCompletenessHints([{ messageId: 6, is_user: false, is_system: false, mes: '<World_State>\n- **📡 Off-Screen:** Orson harassing traders\n- **🌱 Planted Seeds:** brush-thieves targeting wheels\n- **🎯 Arc Phase:** Setup phase begins now\n</World_State>' }]);
+  assert.deepEqual(hints.map(item => item.text), ['Orson harassing traders']);
+
+  const { buildRelevanceIndex, selectRelevantRecords } = await import('../relevance.js');
+  const rec = (id, summary, anchors) => ({ id, kind: 'fact', summary, status: 'active', trend: null, anchors, createdAtMessage: 1, lastChangedMessage: null, lastEvaluatedMessage: null, timeAnchor: '', evidenceIds: [], causedBy: [], affects: [] });
+  const filler = n => Array.from({ length: n }, (_, i) => 'filler' + i).join(' ');
+  const named = { records: [rec('will', 'Will keeps the ferry at the river.', ['Will'])], links: [] };
+  const text = filler(80) + ' I go see will.';
+  assert.deepEqual(selectRelevantRecords(named, { index: buildRelevanceIndex(named), recentText: text }).selected.map(item => item.record.id), ['will']);
+
+  // A long older window full of another record's words must not crowd out a multi-word anchor in the newest
+  // message: the bounded phrase scan starts from the newest end.
+  const words = Array.from({ length: 80 }, (_, i) => 'alpha' + i);
+  const crowded = { records: [rec('older', words.join(' '), ['old harbor district']), rec('watch', 'The Iron Watch holds the bridge.', ['Iron Watch'])], links: [] };
+  const window = words.join(' ') + ' ' + words.join(' ') + ' Then the Iron Watch arrives.';
+  const picked = selectRelevantRecords(crowded, { index: buildRelevanceIndex(crowded), recentText: window, candidateCap: 1 });
+  assert.ok(picked.selected.some(item => item.record.id === 'watch'));
+});
+
+test('review hardening: a later real time skip survives an earlier rejected one; a dropped place is never named; merged duplicates keep anchors', () => {
+  assert.equal(detectElapsedHintFromExchange([{ messageId: 4, role: 'assistant', lineageKey: 'k4', content: 'They planned to leave two weeks later. Three weeks later, the caravan reached the pass.' }])?.raw, 'Three weeks later');
+
+  const mk = (id, name, context) => ({ id, name, type: 'village', status: 'active', baseRefId: null, coordinate: { x: null, y: null, authority: 'unknown', locked: false }, context, routeRefs: [], createdAtMessage: 1, lastChangedMessage: 1, evidenceIds: [], notes: '' });
+  const spatial = createSpatialState();
+  spatial.locations.push(mk('a', 'Applecross', 'coast'), mk('m', 'Old Mill', 'x'.repeat(500)));
+  spatial.relations.push({ id: 'r1', fromId: 'a', toId: 'm', direction: 'north', distanceKm: 5, distanceMode: 'route', notes: '', evidenceIds: [] });
+  const tight = buildSpatialInjection(spatial, { recentText: 'Applecross and the Old Mill', budgetTokens: 70 });
+  const shown = new Set(tight.included.map(item => item.name));
+  if (!shown.has('Old Mill')) assert.doesNotMatch(tight.text, /Old Mill is/);
+
+  const create = (summary, anchors) => ({ action: 'create', kind: 'development', summary, anchors, evidence: [{ sourceMessageId: 2, claim: 'Soldiers of the Iron Watch now blockade the Brindle bridge' }] });
+  const merged = capture(createState('b2'), 'Soldiers of the Iron Watch now blockade the Brindle bridge, turning back every cart.', [create('The Iron Watch blockades the Brindle bridge', ['Iron Watch']), create('The Iron Watch blockades the Brindle bridge.', ['Iron Watch', 'Brindle bridge'])], []);
+  assert.equal(merged.state.records.length, 1);
+  assert.deepEqual(merged.state.records[0].anchors, ['Iron Watch', 'Brindle bridge']);
+});

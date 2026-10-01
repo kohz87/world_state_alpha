@@ -226,6 +226,8 @@ function establishedElapsedContext(source, found) {
   return context;
 }
 
+const ELAPSED_MATCH_ATTEMPTS = 6;
+
 export function detectElapsedHintFromExchange(exchange = []) {
   const rows = Array.isArray(exchange) ? exchange : [];
   for (let index = rows.length - 1; index >= 0; index -= 1) {
@@ -238,13 +240,19 @@ export function detectElapsedHintFromExchange(exchange = []) {
       sourceMessageId: rawMessage.messageId,
       lineageKey: typeof rawMessage.lineageKey === 'string' ? rawMessage.lineageKey : '',
     };
-    // The detector reads the first match only; if that one is rejected (for example a quoted mention), try
-    // the narration with dialogue removed so a real time skip later in the message is not hidden.
+    // A rejected match (a quoted mention, a plan such as 'planned to leave two weeks later') must not hide a
+    // real time skip later in the message: walk the following matches, then the narration without dialogue.
     for (const text of [source, narrationOnly(source)]) {
-      const found = extractElapsedHint(text, provenance);
-      if (!found) continue;
-      const context = establishedElapsedContext(text, found);
-      if (context) return { ...found, context };
+      let rest = text;
+      for (let attempt = 0; attempt < ELAPSED_MATCH_ATTEMPTS && rest.trim(); attempt += 1) {
+        const found = extractElapsedHint(rest, provenance);
+        if (!found) break;
+        const context = establishedElapsedContext(rest, found);
+        if (context) return { ...found, context };
+        const at = rest.indexOf(found.raw);
+        if (at < 0) break;
+        rest = rest.slice(at + found.raw.length);
+      }
     }
   }
   return null;

@@ -100,9 +100,10 @@ export function renderSpatialInjection(selectedLocations = [], relations = [], r
   for (const entry of entries) {
     const loc = entry?.location || entry;
     if (!loc || loc.status === 'archived') continue;
-    locMap.set(loc.id, loc);
     const line = fitLine(locationLine(loc), text, budget);
     if (!line) continue;
+    // Only places whose line actually made it in may be named by a relation line.
+    locMap.set(loc.id, loc);
     text += `\n${line}`;
     included.push({
       locationId: loc.id,

@@ -50,10 +50,13 @@ function nonAsciiBigrams(value, max = 64) {
   return out;
 }
 
-function phraseCandidates(tokenList, maxWords = 4, maxPhrases = 256) {
+function phraseCandidates(tokenList, maxWords = 4, maxPhrases = 256, { newestFirst = false } = {}) {
   const out = [];
   const seen = new Set();
-  for (let start = 0; start < tokenList.length && out.length < maxPhrases; start += 1) {
+  const starts = tokenList.map((_, index) => index);
+  if (newestFirst) starts.reverse();
+  for (const start of starts) {
+    if (out.length >= maxPhrases) break;
     let phrase = '';
     for (let width = 1; width <= maxWords && start + width <= tokenList.length; width += 1) {
       phrase = width === 1 ? tokenList[start] : phrase + ' ' + tokenList[start + width - 1];
@@ -315,7 +318,7 @@ export function selectRelevantLocations(spatialState, {
   };
 
   // 1. Phrase candidates from recent text
-  for (const phrase of phraseCandidates(recentTokenList)) {
+  for (const phrase of phraseCandidates(recentTokenList, 4, 256, { newestFirst: true })) {
     visitPosting(spatialIndex.namePhrases.get(phrase), 100);
     visitPosting(spatialIndex.routeNames.get(phrase), 60);
   }

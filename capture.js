@@ -1,7 +1,7 @@
 import { chatLineage, fingerprintMessage } from './branch.js';
 import { CaptureWireError, parseCaptureJson, validateCaptureEnvelope } from './capture-wire.js';
 import { createDiagnosticStore } from './diagnostics.js';
-import { consolidateCreateCandidate, duplicateSimilarity } from './duplicate.js';
+import { DUPLICATE_THRESHOLD, consolidateCreateCandidate, duplicateSimilarity, mergeAnchors } from './duplicate.js';
 import { hashText, stableStringify } from './hash.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
@@ -74,7 +74,9 @@ export function extractWorldStateCompletenessHints(exchange = []) {
       for (const rawLine of block.split(/\r?\n/u)) {
         // Inside a section a bullet is an entry even when it contains a colon ('- The Iron Watch: ...');
         // only non-bullet lines can start or end a section.
-        if (section && /^\s*[-*]\s+/u.test(rawLine)) {
+        // A bullet that is itself a bold section label ('- **🌱 Planted Seeds:** …') still switches or closes
+        // the section like any heading.
+        if (section && /^\s*[-*]\s+/u.test(rawLine) && !/^\s*[-*]\s+\*\*[^*\n]{1,80}?:\s*\*\*/u.test(rawLine)) {
           if (pushHint(message.messageId, section, rawLine)) return hints;
           continue;
         }
@@ -132,7 +134,7 @@ function messageText(message) {
   return '';
 }
 
-function roleOf(message) {
+export function roleOf(message) {
   if (message?.role === 'user' || message?.is_user === true) return 'user';
   if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
   return 'system';
@@ -474,9 +476,15 @@ export function processCaptureResponse({
 
     // The duplicate gate only sees records that existed before this response; a second near-identical
     // create in the same response would otherwise become a separate record for one condition.
-    if (admittedMutation.action === 'create'
-      && accepted.some(item => item.action === 'create' && duplicateSimilarity(admittedMutation, item) >= 0.78)) {
-      rejected.push(rejectedEntry('duplicate-gate', 'duplicates another create in this response', { index }));
+    // One condition proposed twice in the same response is merged into the first create (anchors and
+    // evidence), using the duplicate gate's own threshold.
+    const sameResponseDuplicate = admittedMutation.action === 'create'
+      ? accepted.find(item => item.action === 'create' && duplicateSimilarity(admittedMutation, item) >= DUPLICATE_THRESHOLD)
+      : null;
+    if (sameResponseDuplicate) {
+      sameResponseDuplicate.anchors = mergeAnchors(sameResponseDuplicate.anchors || [], admittedMutation.anchors || []);
+      sameResponseDuplicate.evidence = [...(sameResponseDuplicate.evidence || []), ...(admittedMutation.evidence || [])].slice(0, 4);
+      rejected.push(rejectedEntry('duplicate-gate', 'merged into another create in this response', { index }));
       continue;
     }
 

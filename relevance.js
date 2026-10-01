@@ -27,9 +27,7 @@ function tokenSet(value) {
   return new Set(tokens(value));
 }
 
-function contentTokenSet(value) {
-  return new Set(tokens(value).filter(token => !RELEVANCE_STOPWORDS.has(token)));
-}
+
 
 function boundedInt(value, fallback, min, max) {
   const number = Number(value);
@@ -38,12 +36,14 @@ function boundedInt(value, fallback, min, max) {
 }
 
 function overlapScore(leftText, rightText) {
-  const left = contentTokenSet(leftText);
-  const right = contentTokenSet(rightText);
+  const left = tokenSet(leftText);
+  const right = tokenSet(rightText);
   if (!left.size || !right.size) return 0;
 
+  // Function words never count as shared evidence, but the summary's full size still calibrates the
+  // single-token gate and the denominator exactly as before.
   const shared = [];
-  for (const token of left) if (right.has(token)) shared.push(token);
+  for (const token of left) if (right.has(token) && !RELEVANCE_STOPWORDS.has(token)) shared.push(token);
   if (!shared.length) return 0;
 
   if (shared.length === 1) {
@@ -89,12 +89,12 @@ function recordRecency(record, currentMessageId) {
 const RELEVANCE_RECENT_PHRASE_TOKENS = 160;
 const RELEVANCE_LOOKUP_TOKENS = 192;
 
-function lookupTokens(list, { newestFirst = false } = {}) {
+function lookupTokens(list, { newestFirst = false, keepStopwords = false } = {}) {
   const out = [];
   const seen = new Set();
   const ordered = newestFirst ? [...list].reverse() : list;
   for (const token of ordered) {
-    if (seen.has(token) || RELEVANCE_STOPWORDS.has(token)) continue;
+    if (seen.has(token) || (!keepStopwords && RELEVANCE_STOPWORDS.has(token))) continue;
     seen.add(token);
     out.push(token);
     if (out.length >= RELEVANCE_LOOKUP_TOKENS) break;
@@ -120,6 +120,9 @@ function prepareContext({ recentText = '', loreText = '', currentMessageId = nul
     loreTokens: new Set(loreAll),
     recentLookupTokens: lookupTokens(recentAll, { newestFirst: true }),
     loreLookupTokens: lookupTokens(loreAll.slice(0, 64)),
+    // An anchor may itself be a function word used as a name ('Will', 'May'); anchor lookups keep them.
+    recentAnchorTokens: lookupTokens(recentAll, { newestFirst: true, keepStopwords: true }),
+    loreAnchorTokens: lookupTokens(loreAll.slice(0, 64), { keepStopwords: true }),
     currentMessageId,
   };
 }
@@ -549,10 +552,14 @@ export function selectBackgroundDevelopments(index, {
   };
 }
 
-function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384) {
+// newestFirst walks start positions from the end, so the phrase budget covers the newest text first.
+function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384, { newestFirst = false } = {}) {
   const out = [];
   const seen = new Set();
-  for (let start = 0; start < tokenList.length && out.length < maxPhrases; start += 1) {
+  const starts = tokenList.map((_, index) => index);
+  if (newestFirst) starts.reverse();
+  for (const start of starts) {
+    if (out.length >= maxPhrases) break;
     let phrase = '';
     for (let width = 1; width <= maxWords && start + width <= tokenList.length; width += 1) {
       phrase = width === 1 ? tokenList[start] : phrase + ' ' + tokenList[start + width - 1];
@@ -588,7 +595,7 @@ function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
     }
   };
 
-  for (const phrase of phraseCandidates(context.recentTokenList)) {
+  for (const phrase of phraseCandidates(context.recentTokenList, 6, 384, { newestFirst: true })) {
     phraseLookups += 1;
     visitPosting(index.anchorPhrases.get(phrase), 1000 + Math.min(100, phrase.length));
   }
@@ -604,8 +611,8 @@ function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
     visitPosting(index.anchorBigrams.get(gram), 120);
   }
 
-  for (const token of context.recentLookupTokens) visitPosting(index.anchorTokens.get(token), 300);
-  for (const token of context.loreLookupTokens) visitPosting(index.anchorTokens.get(token), 100);
+  for (const token of context.recentAnchorTokens) visitPosting(index.anchorTokens.get(token), 300);
+  for (const token of context.loreAnchorTokens) visitPosting(index.anchorTokens.get(token), 100);
 
   for (const token of context.recentLookupTokens) {
     visitPosting(index.summaryTokens.get(token), token.length >= 4 ? 10 : 2);

@@ -1,4 +1,4 @@
-import { duplicateSimilarity } from './duplicate.js';
+import { duplicateSimilarity, mergeAnchors } from './duplicate.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange, normalizeElapsedHint } from './elapsed.js';
 import { EvolutionWireError, parseEvolutionJson, validateEvolutionEnvelope } from './evolution-wire.js';
@@ -10,8 +10,6 @@ import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.j
 import { clone, reduceMutations } from './state-core.js';
 
 export const EVOLUTION_RESPONSE_TOKENS = 2600;
-const EVOLUTION_ANCHOR_CAP = 20;
-
 export const EVOLUTION_LIMITS = Object.freeze({
   targets: 6,
   relevantTargets: 4,
@@ -307,7 +305,7 @@ export function buildEvolutionPrompt(context, {
     clip(loreText, EVOLUTION_LIMITS.loreChars) || '(none)',
     '',
     'OUTPUT SHAPE:',
-    '{"evaluations":[{"recordId":"shown-id","outcome":"stable|update|resolve|supersede","summary":"required for resolve/supersede; replacement when update needs it","trend":"emerging|rising|stable|falling|uncertain when update needs it","anchors":["optional replacement anchors"],"reason":"causal explanation grounded in shown state/support","supportIds":["only IDs allowed for this target"]}],"derived":[{"summary":"optional one new development","trend":"optional","anchors":["..."],"causeRecordIds":["target-id"],"reason":"strict causal explanation","supportIds":["shown support IDs"]}]}',
+    '{"evaluations":[{"recordId":"shown-id","outcome":"stable|update|resolve|supersede","summary":"required for resolve/supersede; replacement when update needs it","trend":"emerging|rising|stable|falling|uncertain when update needs it","anchors":["optional additional anchors"],"reason":"causal explanation grounded in shown state/support","supportIds":["only IDs allowed for this target"]}],"derived":[{"summary":"optional one new development","trend":"optional","anchors":["..."],"causeRecordIds":["target-id"],"reason":"strict causal explanation","supportIds":["shown support IDs"]}]}',
     'Return exactly one evaluation for every target. Use outcome "stable" when change is not causally justified.',
     'Do not output a derived development unless its creation gate is clearly satisfied.',
   ].join('\n');
@@ -413,7 +411,7 @@ function evaluationMutation(evaluation, context) {
       // Evolution has no narration to ground new anchors against, so it can add to a development's anchors
       // but never drop the ones retrieval already finds it by.
       const target = context.targets.find(item => item.record.id === evaluation.recordId)?.record;
-      mutation.anchors = [...new Set([...(target?.anchors || []), ...evaluation.anchors])].slice(0, EVOLUTION_ANCHOR_CAP);
+      mutation.anchors = mergeAnchors(target?.anchors || [], evaluation.anchors);
     }
   }
   if ((evaluation.outcome === 'resolve' || evaluation.outcome === 'supersede') && evaluation.summary) {

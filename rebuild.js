@@ -1,5 +1,5 @@
 import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, reconcileBranch, seedRootCheckpoint } from './branch.js';
-import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
+import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, normalizeCaptureExchange, roleOf, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
@@ -13,11 +13,6 @@ export const REBUILD_LIMITS = Object.freeze({
   lifecycleRecentMessages: 12,
 });
 
-function roleOf(message) {
-  if (message?.role === 'user' || message?.is_user === true) return 'user';
-  if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
-  return 'system';
-}
 
 function rebuildRoleOf(message, includeHiddenMessages) {
   if (message?.is_system === true) {

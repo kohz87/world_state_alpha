@@ -38,7 +38,7 @@ export function duplicateSimilarity(candidate, record) {
   return anchorEvidence ? (0.6 * anchorScore) + (0.4 * summaryScore) : summaryScore;
 }
 
-function mergeAnchors(existing = [], incoming = [], max = 20) {
+export function mergeAnchors(existing = [], incoming = [], max = 20) {
   const out = [];
   const seen = new Set();
   for (const value of [...existing, ...incoming]) {
@@ -66,10 +66,12 @@ function explicitNewEpisodeRelated(candidate, prior, score, threshold) {
   return strongSharedAnchor && sharedSummaryTokens >= 2;
 }
 
+export const DUPLICATE_THRESHOLD = 0.78;
+
 export function consolidateCreateCandidate(
   mutation,
   visibleRecords = [],
-  { threshold = 0.78, resolvedThreshold = 0.70, newEpisodeThreshold = 0.55 } = {},
+  { threshold = DUPLICATE_THRESHOLD, resolvedThreshold = 0.70, newEpisodeThreshold = 0.55 } = {},
 ) {
   if (mutation?.action !== 'create') return { ok: true, mutation, duplicate: null };
   const records = Array.isArray(visibleRecords) ? visibleRecords : [];
