@@ -11,7 +11,7 @@ It is the world-level sibling of [NPC State Delta](https://github.com/kohz87/npc
 | NPC State Delta | "What is true about *this character* right now?" |
 | **World State Alpha** | "What is true about *the wider world* right now?" |
 
-> **Status:** `0.9.0-alpha.43`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
+> **Status:** `0.9.0-alpha.44`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
 
 ---
 
@@ -92,7 +92,7 @@ Swipe, edit or delete that original reply, and the record goes away with it.
   - Shows progress and can be cancelled.
   - If one message fails (for example the model returns broken JSON), **Resume from message N** re-sends just that message and continues, instead of redoing the whole rebuild. It works as long as the chat and World State haven't changed since the failure.
   - The current state is only replaced after the whole rebuild succeeds.
-  - **Missed captures:** if a live capture failed (timeout, provider error, broken JSON), the World view shows it with **Recapture from message N**. That runs a From-message rebuild starting at the earliest failed message, after a confirmation that says how many replies it will re-read. It never runs by itself.
+  - **Missed captures:** if a live capture failed (timeout, provider error, broken JSON, or you switched chats before it finished), the World view shows it with **Recapture from message N**. That runs a From-message rebuild starting at the earliest failed message, after a confirmation that says how many replies it will re-read. It never runs by itself.
 - **Export / import** World State bundles, with a preview and confirmation.
 - **Manual lifecycle:** mark any record resolved or superseded, with a note explaining why.
   - **Bulk:** use **Select records** on the World panel to tick many active records (or **Select all shown**, up to 100) and mark them resolved or superseded in one step with a single note. It is all-or-nothing, and one rollback undoes it.
