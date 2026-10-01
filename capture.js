@@ -575,6 +575,7 @@ export async function runCaptureOperation({
   chatKey,
   sourceMessageId,
   sourceLineageKey,
+  sourceContentLineageKey = '',
   route = undefined,
   operationId = '',
   timeoutMs = undefined,
@@ -592,6 +593,18 @@ export async function runCaptureOperation({
 } = {}) {
   const diagnosticStore = diagnostics || createDiagnosticStore();
   const startedAt = Date.now();
+  // The hide-insensitive lineage key (or a getter given the row outcome) that
+  // lets a missed capture survive hiding/unhiding an earlier message.
+  const contentKey = outcome => {
+    try {
+      const value = typeof sourceContentLineageKey === 'function'
+        ? sourceContentLineageKey(outcome)
+        : sourceContentLineageKey;
+      return typeof value === 'string' ? value : '';
+    } catch {
+      return '';
+    }
+  };
 
   if (!captureDue({ exchange, lastCaptureMessage: state?.lastCaptureMessage, sourceMessageId })) {
     return { outcome: 'skipped', state: clone(state), providerCalls: 0, rejected: [], applied: [] };
@@ -614,6 +627,19 @@ export async function runCaptureOperation({
   }
   const current = () => isCurrent(snapshotToken);
   if (!current()) {
+    // Recorded so a capture abandoned by a chat switch is listed as missed; a
+    // swipe, edit or delete changes the message's lineage and drops the row.
+    diagnosticStore.record(chatKey, {
+      operationId,
+      lineageKey: sourceLineageKey,
+      contentLineageKey: contentKey('stale'),
+      label,
+      sourceMessageId,
+      outcome: 'stale',
+      code: 'WORLD_STATE_CAPTURE_STALE',
+      detail: 'Operation became stale before the provider request was sent.',
+      durationMs: Date.now() - startedAt,
+    });
     return { outcome: 'stale', state: clone(state), providerCalls: 0, rejected: [], applied: [], snapshotToken };
   }
 
@@ -646,6 +672,7 @@ export async function runCaptureOperation({
     diagnosticStore.record(chatKey, {
       operationId,
       lineageKey: sourceLineageKey,
+      contentLineageKey: contentKey(outcome),
       label,
       sourceMessageId,
       outcome,
@@ -676,6 +703,7 @@ export async function runCaptureOperation({
     diagnosticStore.record(chatKey, {
       operationId,
       lineageKey: sourceLineageKey,
+      contentLineageKey: contentKey('stale'),
       label,
       sourceMessageId,
       outcome: 'stale',
@@ -716,6 +744,7 @@ export async function runCaptureOperation({
     diagnosticStore.record(chatKey, {
       operationId,
       lineageKey: sourceLineageKey,
+      contentLineageKey: contentKey(outcome),
       label,
       sourceMessageId,
       outcome,
@@ -755,6 +784,7 @@ export async function runCaptureOperation({
     diagnosticStore.record(chatKey, {
       operationId,
       lineageKey: sourceLineageKey,
+      contentLineageKey: contentKey('invalid-response'),
       label,
       sourceMessageId,
       outcome: 'invalid-response',

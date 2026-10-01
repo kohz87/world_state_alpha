@@ -1557,11 +1557,13 @@ test('unrecovered live capture failures come only from the Operations log and cl
     row('capture', 'invalid-response', 5),
     row('capture', 'timeout', 7),
     row('capture', 'failure', 9),
-    row('capture', 'stale', 11), // never attempted: not a failure
+    row('capture', 'skipped', 11), // not due: not a failure
     row('evolution', 'failure', 13), // other operations never count
     row('rebuild', 'applied', 15, 'rebuild:20:1:0:15'), // a rebuild boundary alone proves nothing
   ];
   assert.deepEqual(ids(rows), [5, 7, 9]);
+  // An abandoned (stale) capture is missed; the host drops it when the message's lineage changed.
+  assert.deepEqual(ids([...rows, row('capture', 'stale', 11)]), [5, 7, 9, 11]);
 
   // A later successful capture of that message recovers it; a later failure brings it back.
   assert.deepEqual(ids([...rows, row('capture', 'no-change', 7)]), [5, 9]);
@@ -1581,7 +1583,7 @@ test('unrecovered live capture failures come only from the Operations log and cl
 
   // Swipes: another swipe's success at the same message does not clear this swipe's failure.
   const swipes = [row('capture', 'failure', 9, '', 'lnA'), row('capture', 'applied', 9, '', 'lnB')];
-  assert.deepEqual(unrecoveredCaptureFailures(swipes), [{ messageId: 9, lineageKey: 'lnA' }]);
+  assert.deepEqual(unrecoveredCaptureFailures(swipes), [{ messageId: 9, lineageKey: 'lnA', contentLineageKey: '' }]);
   assert.deepEqual(ids([...swipes, row('capture', 'applied', 9, '', 'lnA')]), []);
   // Rows logged before lineage was recorded match any lineage.
   assert.deepEqual(ids([row('capture', 'failure', 9), row('capture', 'applied', 9, '', 'lnB')]), []);
@@ -1598,7 +1600,7 @@ test('Operations log trimming never drops a still-unrecovered capture failure', 
   for (let id = 50; id < 90; id += 1) store.record('chat:a', { label: 'rebuild', outcome: 'applied', sourceMessageId: id, operationId: 'rebuild:90:1:50:' + id });
   const rows = store.records('chat:a');
   assert.equal(rows.length, 8);
-  assert.deepEqual(unrecoveredCaptureFailures(store.recoveryRows('chat:a')), [{ messageId: 5, lineageKey: 'ln5' }]);
+  assert.deepEqual(unrecoveredCaptureFailures(store.recoveryRows('chat:a')), [{ messageId: 5, lineageKey: 'ln5', contentLineageKey: '' }]);
   // The recovered failure at 7 is not pinned; the newest rows fill the rest, in time order.
   assert.equal(rows[0].sourceMessageId, 5);
   assert.deepEqual(rows.slice(1).map(item => item.sourceMessageId), [83, 84, 85, 86, 87, 88, 89]);
@@ -1606,7 +1608,7 @@ test('Operations log trimming never drops a still-unrecovered capture failure', 
   assert.equal(mergeOperationRows(rows, [], 4)[0].sourceMessageId, 5);
   assert.equal(trimOperationRows(rows, 8).length, 8);
   // The light view carries only what detection reads.
-  assert.deepEqual(Object.keys(store.recoveryRows('chat:a')[0]).sort(), ['at', 'label', 'lineageKey', 'operationId', 'outcome', 'sourceMessageId']);
+  assert.deepEqual(Object.keys(store.recoveryRows('chat:a')[0]).sort(), ['at', 'contentLineageKey', 'label', 'lineageKey', 'operationId', 'outcome', 'sourceMessageId']);
 });
 
 test('only rows that change missed-capture recovery skip the Operations log quiet period', async () => {
@@ -1616,7 +1618,9 @@ test('only rows that change missed-capture recovery skip the Operations log quie
   // Ordinary successes wait for the quiet period unless a failure is listed.
   assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'applied', sourceMessageId: 4 }), false);
   assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'applied', sourceMessageId: 4 }, { failuresListed: true }), true);
-  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'stale', sourceMessageId: 4 }, { failuresListed: true }), false);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'skipped', sourceMessageId: 4 }, { failuresListed: true }), false);
+  // An abandoned capture is saved at once like any other missed capture.
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'stale', sourceMessageId: 4 }), true);
   assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'rebuild-completed' }, { failuresListed: true }), true);
   assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'applied' }, { failuresListed: true }), false);
   assert.equal(affectsCaptureRecovery({ label: 'reset', outcome: 'applied' }, { failuresListed: true }), true);

@@ -7,8 +7,8 @@ import {
   saveSettings,
 } from '../../../../script.js';
 
-import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
-import { assistantBoundaryExchange, CAPTURE_LIMITS, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
+import { chatLineage, commitMutationBoundary, contentLineageKey, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
+import { assistantBoundaryExchange, CAPTURE_LIMITS, hiddenConversationRole, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { affectsCaptureRecovery, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
@@ -147,6 +147,7 @@ const hostStorage = createSillyTavernWorldStateStorageAdapter({
 const OPERATION_LOG_FORMAT = 'world_state_alpha_operations';
 const OPERATION_LOG_VERSION = 1;
 const OPERATION_LOG_SAVE_DELAY_MS = 1500;
+const OPERATION_LOG_SAVE_RETRIES = 3;
 const OPERATION_LOG_TEXT_CHARS = 6000;
 const operationLogLoads = new Map();
 const operationLogTimers = new Map();
@@ -165,6 +166,18 @@ async function readOperationLog(chatKey) {
   return raw.operations;
 }
 
+// A missing or corrupt log merges as empty. Any other read failure (offline,
+// HTTP 5xx, 403) throws, so a save never replaces rows other sessions wrote
+// with this session's rows alone.
+async function readOperationLogForMerge(chatKey) {
+  try {
+    return await readOperationLog(chatKey);
+  } catch (error) {
+    if (error?.code === 'WORLD_STATE_JSON_INVALID') return [];
+    throw error;
+  }
+}
+
 function hydrateOperationLog(chatKey) {
   if (!chatKey || chatKey === 'no-chat') return Promise.resolve();
   if (!operationLogLoads.has(chatKey)) {
@@ -176,6 +189,8 @@ function hydrateOperationLog(chatKey) {
         }
       })
       .catch(error => {
+        // Retried on the next hydration or save, so other sessions' rows still load.
+        operationLogLoads.delete(chatKey);
         console.warn('[World State Alpha] saved Operations log could not be loaded; new operations are still recorded.', error);
       }));
   }
@@ -202,11 +217,22 @@ function operationLogBody(chatKey, operations) {
 }
 
 // `snapshot` saves rows of a chat leaving the cache without re-hydrating it.
-function saveOperationLog(chatKey, snapshot = null) {
+// When the saved log cannot be read the save is postponed (a few retries), never
+// written over it: the rows stay in this session meanwhile.
+function saveOperationLog(chatKey, snapshot = null, attempt = 0) {
   return queueOperationLogWrite(chatKey, async () => {
     try {
       if (retiredOperationLogs.has(chatKey)) return;
-      const server = await readOperationLog(chatKey).catch(() => []);
+      let server;
+      try {
+        server = await readOperationLogForMerge(chatKey);
+      } catch (error) {
+        if (attempt < OPERATION_LOG_SAVE_RETRIES) {
+          setTimeout(() => void saveOperationLog(chatKey, snapshot, attempt + 1), OPERATION_LOG_SAVE_DELAY_MS * (attempt + 2));
+        }
+        console.warn('[World State Alpha] saved Operations log could not be read; saving it later so rows from other sessions are kept.', error);
+        return;
+      }
       if (!snapshot && !operationLogLoads.has(chatKey)) {
         diagnosticStore.merge(chatKey, server);
         operationLogLoads.set(chatKey, Promise.resolve());
@@ -255,15 +281,19 @@ function retireOperationLog(chatKey, successorKey = '') {
   return queueOperationLogWrite(chatKey, async () => {
     try {
       if (successorKey) {
-        const rows = mergeOperationRows(
-          await readOperationLog(chatKey).catch(() => []),
-          diagnosticStore.records(chatKey),
-          OPERATION_LOG_LIMIT,
-        );
+        let server = null;
+        try {
+          server = await readOperationLogForMerge(chatKey);
+        } catch (error) {
+          console.warn('[World State Alpha] renamed chat\'s Operations log could not be read; it is left in place.', error);
+        }
+        const rows = mergeOperationRows(server || [], diagnosticStore.records(chatKey), OPERATION_LOG_LIMIT);
         if (rows.length) {
           diagnosticStore.merge(successorKey, rows);
           scheduleOperationLogSave(successorKey);
         }
+        // Unread rows are never cleared: they stay in the old file rather than being lost.
+        if (server === null) return;
       }
       await hostStorage.uploadJsonFile(operationLogFile(chatKey), operationLogBody(chatKey, []));
     } catch (error) {
@@ -562,18 +592,36 @@ function epoch(chatKey) {
   return Number(stateEpochs.get(chatKey) || 0);
 }
 
+// Hide-insensitive keys by current lineage key (a pure function of it), so a
+// re-rendered panel does not re-hash the chat. Bounded; cleared when full.
+const contentLineageKeyMemo = new Map();
+const CONTENT_LINEAGE_MEMO_LIMIT = 256;
+
+function currentContentLineageKey(chat, lineage, messageId) {
+  const entry = lineage[messageId];
+  if (!entry?.lineageKey || !chat[messageId] || fingerprintMessage(chat[messageId]) !== entry.fingerprint) return '';
+  if (!contentLineageKeyMemo.has(entry.lineageKey)) {
+    if (contentLineageKeyMemo.size >= CONTENT_LINEAGE_MEMO_LIMIT) contentLineageKeyMemo.clear();
+    contentLineageKeyMemo.set(entry.lineageKey, contentLineageKey(chat, messageId));
+  }
+  return contentLineageKeyMemo.get(entry.lineageKey);
+}
+
 // Live captures that failed and were never recovered, limited to messages that
-// are still assistant replies on the current chat. Operations-log derived only.
-// A failure recorded on another swipe or an abandoned branch is not listed:
-// its lineage key must match the message's key on the current branch.
+// are still assistant replies (hidden or not) on the current chat.
+// Operations-log derived only. A failure recorded on another swipe or an
+// abandoned branch is not listed: its lineage key must match the message's key
+// on the current branch, or, after hiding/unhiding a message, its
+// hide-insensitive key must.
 function pendingCaptureFailures(chatKey) {
   const chat = getContext().chat || [];
   const lineage = stateCache.get(chatKey)?.lineage || [];
   const ids = unrecoveredCaptureFailures(diagnosticStore.recoveryRows(chatKey))
-    .filter(({ messageId, lineageKey }) => messageId < chat.length
-      && messageRole(chat[messageId]) === 'assistant'
+    .filter(({ messageId, lineageKey, contentLineageKey: contentKey }) => messageId < chat.length
+      && (messageRole(chat[messageId]) === 'assistant' || hiddenConversationRole(chat[messageId]) === 'assistant')
       && messageText(chat[messageId]).trim()
-      && (!lineageKey || lineage[messageId]?.lineageKey === lineageKey))
+      && (!lineageKey || lineage[messageId]?.lineageKey === lineageKey
+        || Boolean(contentKey && currentContentLineageKey(chat, lineage, messageId) === contentKey)))
     .map(item => item.messageId);
   return [...new Set(ids)].sort((a, b) => a - b);
 }
@@ -2184,6 +2232,20 @@ async function handleAssistantMessage(messageId) {
     const exchange = assistantBoundaryExchange(liveChat, messageId, currentState?.lineage);
     const sourceLineageKey = currentState?.lineage?.[messageId]?.lineageKey || '';
     if (!sourceLineageKey) return;
+    // The hide-insensitive key is hashed only for rows that can list or clear a
+    // missed capture, from the messages as they were when this capture began
+    // (a chat switch replaces the live chat's contents).
+    const captureMessages = liveChat.slice(0, messageId + 1);
+    const storyFingerprint = message => fingerprintMessage({ ...message, is_system: false });
+    const sourceStoryFingerprint = storyFingerprint(liveChat[messageId]);
+    let captureContentKey = null;
+    const sourceContentLineageKey = outcome => {
+      const settled = outcome === 'applied' || outcome === 'no-change';
+      if (settled && !unrecoveredCaptureFailures(diagnosticStore.recoveryRows(chatKey))
+        .some(failure => failure.messageId === messageId)) return '';
+      if (captureContentKey === null) captureContentKey = contentLineageKey(captureMessages, messageId);
+      return captureContentKey;
+    };
 
     const before = stateCache.get(chatKey);
     const index = getRelevanceIndex(chatKey, before);
@@ -2266,6 +2328,7 @@ async function handleAssistantMessage(messageId) {
       chatKey,
       sourceMessageId: messageId,
       sourceLineageKey,
+      sourceContentLineageKey,
       route: routeSettings(),
       operationId: 'capture:' + messageId + ':' + epoch(chatKey),
       isCurrent,
@@ -2276,19 +2339,48 @@ async function handleAssistantMessage(messageId) {
       spatialProfile: resolveSpatialProfile(before.spatial, baseMap),
     });
 
-    if (!isCurrent() || result.outcome === 'stale' || result.outcome === 'skipped') return;
-    const committed = commitMutationBoundary(before, result.state, liveChat, messageId, 'capture', { lineage: before.lineage });
-    // The capture row above is written before the sidecar save; if that save fails, record the boundary
-    // as a failure so the Operations log never shows a lost capture as recovered.
+    // The capture row above is written before the sidecar save; if the result is dropped or that save
+    // fails, record the boundary as a failure so the Operations log never shows a lost capture as recovered.
     const recordUnsaved = (code, detail) => diagnosticStore.record(chatKey, {
       operationId: 'capture:' + messageId + ':unsaved:' + Date.now(),
       label: 'capture',
       sourceMessageId: messageId,
       lineageKey: sourceLineageKey,
+      contentLineageKey: sourceContentLineageKey('not-saved'),
       outcome: 'not-saved',
       code,
       detail,
     });
+    // A capture whose own message was swiped, edited or deleted (hiding aside) has nothing to recover:
+    // that version is gone and the new one is captured on its own, so settle its row instead.
+    const messageSuperseded = () => {
+      if (currentChatKey() !== chatKey) return false;
+      const live = (getContext().chat || [])[messageId];
+      return !live || storyFingerprint(live) !== sourceStoryFingerprint;
+    };
+    const recordSuperseded = () => diagnosticStore.record(chatKey, {
+      operationId: 'capture:' + messageId + ':superseded:' + Date.now(),
+      label: 'capture',
+      sourceMessageId: messageId,
+      lineageKey: sourceLineageKey,
+      outcome: 'superseded',
+      code: 'WORLD_STATE_CAPTURE_SUPERSEDED',
+      detail: 'The message changed before its capture finished; nothing to recover for that version.',
+    });
+    const recordAbandoned = detail => (messageSuperseded()
+      ? recordSuperseded()
+      : recordUnsaved('WORLD_STATE_CAPTURE_STALE', detail));
+    if (result.outcome === 'skipped') return;
+    if (result.outcome !== 'applied' && result.outcome !== 'no-change' && messageSuperseded()) {
+      recordSuperseded();
+      return;
+    }
+    if (result.outcome === 'stale') return;
+    if (!isCurrent()) {
+      if (result.outcome === 'applied') recordAbandoned('Capture was discarded because the chat changed before it was saved.');
+      return;
+    }
+    const committed = commitMutationBoundary(before, result.state, liveChat, messageId, 'capture', { lineage: before.lineage });
     let persisted;
     try {
       persisted = await persistGuardedMutation({
@@ -2305,6 +2397,9 @@ async function handleAssistantMessage(messageId) {
     }
     if (persisted.conflict) {
       recordUnsaved('WORLD_STATE_REVISION_CONFLICT', 'Capture was discarded because another session saved newer World State first.');
+    } else if (persisted.stale) {
+      // Not written, or written and then compensated back to the prior state.
+      recordAbandoned('Capture was discarded because the chat changed while it was being saved.');
     }
     if (persisted.stale) {
       resetRelevanceIndex(chatKey, before);
@@ -3055,8 +3150,9 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     }
 
     if (startMessageId > 0) {
-      const branch = extendCurrentBranchFast(chatKey)
-        || await reconcileCurrentBranch(chatKey, { persistRestore: true });
+      // A full reconcile, not the tail-only fast path: hiding or unhiding an earlier message changes
+      // the prefix this rebuild must prove without touching the latest message.
+      const branch = await reconcileCurrentBranch(chatKey, { persistRestore: true });
       if (currentChatKey() !== chatKey) return;
       if (branch?.failClosed) {
         notify(

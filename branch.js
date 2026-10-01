@@ -63,6 +63,22 @@ export function chatLineage(chat = []) {
   return out;
 }
 
+// The lineage key of `messageId` with every message's hidden flag ignored, so
+// hiding or unhiding a message (is_system only) does not change it while any
+// swipe, edit or delete still does. Used only to match Operations-log rows
+// (missed captures) across hide/unhide; never for branch ownership.
+export function contentLineageKey(chat = [], messageId) {
+  const rows = Array.isArray(chat) ? chat : [];
+  if (!Number.isInteger(messageId) || messageId < 0 || messageId >= rows.length) return '';
+  let parent = 'root';
+  for (let index = 0; index <= messageId; index += 1) {
+    const message = rows[index];
+    const shown = message && typeof message === 'object' ? { ...message, is_system: false } : message;
+    parent = deterministicId('cl', [parent, fingerprintMessage(shown)]);
+  }
+  return parent;
+}
+
 function rewriteOwnedLineageMetadata(value, previousLineage, nextLineage) {
   if (Array.isArray(value)) {
     return value.map(item => rewriteOwnedLineageMetadata(item, previousLineage, nextLineage));

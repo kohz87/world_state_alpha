@@ -23,6 +23,7 @@ export function sanitizeCaptureDiagnostic(raw = {}) {
     at: int(raw.at, Date.now()),
     sourceMessageId: Number.isInteger(raw.sourceMessageId) ? raw.sourceMessageId : null,
     lineageKey: clean(raw.lineageKey, 80),
+    contentLineageKey: clean(raw.contentLineageKey, 80),
     outcome: clean(raw.outcome, 48),
     code: clean(raw.code, 80),
     detail: clean(raw.detail, 320),
@@ -128,8 +129,12 @@ export function rebuildStartFromOperationId(operationId) {
   return match ? Number(match[1]) : null;
 }
 
-const CAPTURE_SETTLED = new Set(['applied', 'no-change']);
-const CAPTURE_NOT_ATTEMPTED = new Set(['stale', 'skipped']);
+// 'superseded': the host saw the capture's own message swiped, edited or
+// deleted before it finished, so nothing is left to recover on that lineage.
+const CAPTURE_SETTLED = new Set(['applied', 'no-change', 'superseded']);
+// A 'stale' capture was abandoned (chat switch, setting change, edit): it is a
+// missed capture unless its message's lineage changed, which the host checks.
+const CAPTURE_NOT_ATTEMPTED = new Set(['skipped']);
 const PINNED_FAILURES = 40;
 
 function recoveryView(row) {
@@ -139,6 +144,7 @@ function recoveryView(row) {
     at: int(row?.at),
     sourceMessageId: Number.isInteger(row?.sourceMessageId) ? row.sourceMessageId : null,
     lineageKey: row?.lineageKey || '',
+    contentLineageKey: row?.contentLineageKey || '',
     operationId: row?.operationId || '',
   };
 }
@@ -163,6 +169,14 @@ export function affectsCaptureRecovery(row, { failuresListed = false } = {}) {
   return failuresListed && isCaptureRecovery(row);
 }
 
+// Rows from before lineage was recorded match any lineage. Otherwise the
+// lineage keys must match, or the hide-insensitive keys when both rows carry
+// one (hiding or unhiding an earlier message changes only the lineage key).
+function sameCaptureLineage(failure, row) {
+  if (!failure.lineageKey || !row.lineageKey || failure.lineageKey === row.lineageKey) return true;
+  return Boolean(failure.contentLineageKey && failure.contentLineageKey === row.contentLineageKey);
+}
+
 // Walks the log in time order. A failure is identified by message and the
 // message's lineage key (so another swipe's capture does not clear it), and is
 // cleared by a later successful capture of the same message and lineage, a
@@ -178,12 +192,14 @@ function unrecoveredFailureRows(rows = []) {
     .map(item => item.row);
   for (const row of ordered) {
     if (isCaptureFailure(row)) {
+      for (const [key, failure] of [...failed]) {
+        if (failure.sourceMessageId === row.sourceMessageId && failure.lineageKey && row.lineageKey
+          && failure.lineageKey !== row.lineageKey && sameCaptureLineage(failure, row)) failed.delete(key);
+      }
       failed.set(row.sourceMessageId + '\u0001' + (row.lineageKey || ''), row);
     } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId) && CAPTURE_SETTLED.has(row.outcome)) {
       for (const [key, failure] of [...failed]) {
-        if (failure.sourceMessageId !== row.sourceMessageId) continue;
-        // Rows from before lineage was recorded match any lineage.
-        if (!failure.lineageKey || !row.lineageKey || failure.lineageKey === row.lineageKey) failed.delete(key);
+        if (failure.sourceMessageId === row.sourceMessageId && sameCaptureLineage(failure, row)) failed.delete(key);
       }
     } else if (row.label === 'rebuild' && row.outcome === 'rebuild-completed') {
       const start = rebuildStartFromOperationId(row.operationId);
@@ -196,11 +212,11 @@ function unrecoveredFailureRows(rows = []) {
   return [...failed.values()];
 }
 
-// Failed live captures nothing has recovered: [{ messageId, lineageKey }], by message.
+// Failed live captures nothing has recovered: [{ messageId, lineageKey, contentLineageKey }], by message.
 // Derived only from the non-canonical Operations log; it never changes World State.
 export function unrecoveredCaptureFailures(rows = []) {
   return unrecoveredFailureRows(rows)
-    .map(row => ({ messageId: row.sourceMessageId, lineageKey: row.lineageKey || '' }))
+    .map(row => ({ messageId: row.sourceMessageId, lineageKey: row.lineageKey || '', contentLineageKey: row.contentLineageKey || '' }))
     .sort((a, b) => (a.messageId - b.messageId) || (a.lineageKey < b.lineageKey ? -1 : a.lineageKey > b.lineageKey ? 1 : 0));
 }
 
