@@ -150,22 +150,21 @@ export function createSillyTavernWorldStateStorageAdapter({
     return withWriterLock(target, async () => {
       const expected = Math.max(0, Math.trunc(Number(expectedRevision) || 0));
 
-      if (!isLogicalPath(target)) {
-        const currentText = await read(target);
-        if (currentText === null) {
-          if (expected !== 0) return { conflict: true };
-        } else {
-          let current;
-          try {
-            current = decodeSidecar(currentText);
-          } catch (error) {
-            error.retryable = false;
-            throw error;
-          }
-          if (Number(current.revision || 0) !== expected) return { conflict: true };
+      // A logical path (a chat's first write, before it has a pointer) uploads to the same deterministic
+      // file another device or tab may already have written, so it gets the same revision check: never
+      // overwrite an existing sidecar blindly.
+      const currentText = await read(isLogicalPath(target) ? worldStateHostDeterministicPath(target) : target);
+      if (currentText === null) {
+        if (expected !== 0) return { conflict: true };
+      } else {
+        let current;
+        try {
+          current = decodeSidecar(currentText);
+        } catch (error) {
+          error.retryable = false;
+          throw error;
         }
-      } else if (expected !== 0) {
-        return { conflict: true };
+        if (Number(current.revision || 0) !== expected) return { conflict: true };
       }
 
       const decoded = decodeSidecar(body);

@@ -1074,3 +1074,46 @@ test('missed live captures show a Recapture button only when the partial rebuild
   const source = fs.readFileSync('ui.js', 'utf8');
   assert.match(source, /'\[data-wsa-recapture-failed\]', 'wsaRecaptureFrom', 'data-wsa-recapture-from', fromMessageId => \(\{ recaptureFailed: true, fromMessageId \}\)/);
 });
+
+test('a bulk selection never drifts onto a different record when World State is replaced', async () => {
+  const { createWorldStateUiController } = await import('../ui.js');
+  const listeners = {};
+  const root = {
+    innerHTML: '',
+    addEventListener(type, fn) { listeners[type] = fn; },
+    removeEventListener() {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  // A fake click target whose closest() answers exactly one selector.
+  const target = (selector, dataset = {}) => ({ closest: wanted => (wanted === selector ? { dataset } : null) });
+  const click = el => listeners.click({ target: el, preventDefault() {} });
+
+  let state = createState('chat:test:drift');
+  state.records = [
+    record('a', { summary: 'Guild owns the docks.', created: 3, changed: 3 }),
+    record('b', { summary: 'Bridge is out.', created: 4, changed: 4 }),
+  ];
+  const sent = [];
+  const ctl = createWorldStateUiController({
+    root,
+    getState: () => state,
+    onRecordAction: async (action, payload) => { sent.push(payload.records.map(item => item.summary)); },
+  });
+  ctl.refresh();
+  await click(target('[data-wsa-bulk-toggle]'));
+  const rowIndex = ctl.refresh().views.current.findIndex(item => item.summary === 'Guild owns the docks.');
+  await click(target('[data-wsa-record-index]', { wsaRecordIndex: String(rowIndex) }));
+
+  // The records are replaced (a rebuild or newer revision): row positions now hold different records.
+  state = createState('chat:test:drift');
+  state.records = [
+    record('b', { summary: 'Bridge is out.', created: 4, changed: 4 }),
+    record('a', { summary: 'Guild owns the docks.', created: 3, changed: 3 }),
+  ];
+  ctl.refresh();
+  await click(target('[data-wsa-bulk-action]', { wsaBulkAction: 'resolve' }));
+  // The stale selection was dropped instead of resolving whatever now sits at that position.
+  assert.deepEqual(sent, []);
+  ctl.destroy();
+});

@@ -776,3 +776,41 @@ test('emptying the journal by rollback keeps the floor so trimmed history is not
   assert.equal(cut.state.rollbackJournal.length, 0);
   assert.equal(cut.state.rollbackJournalFloorMessageId, 6);
 });
+
+test('a commit after a rollback onto the journal floor never claims a base below the floor', async () => {
+  const branch = await import('../branch.js');
+  const caps = { maxJournalEntries: 4, maxCheckpoints: 3 };
+  const chat = Array.from({ length: 14 }, (_, i) => ({ name: 'N', is_user: false, is_system: false, mes: 'beat ' + i }));
+  let state = branch.reconcileBranch(branch.seedRootCheckpoint(createState('floor')), chat).state;
+  for (let i = 0; i < chat.length; i += 1) {
+    const r = reduceMutations(state, {
+      chatKey: 'floor', messageId: i, lineageKey: state.lineage[i].lineageKey, operation: 'capture',
+      mutations: [{ action: 'create', kind: 'fact', summary: 'Fact from message ' + i, evidence: [{ claim: 'beat ' + i }] }],
+    });
+    state = branch.commitMutationBoundary(state, r.state, chat, i, 'capture', { ...caps, lineage: state.lineage });
+  }
+  const floor = state.rollbackJournalFloorMessageId;
+  assert.ok(floor > 1);
+
+  // Delete back so the chat ends at the floor message: the journal empties and the state keeps the floor's fact.
+  let live = chat.slice(0, floor + 1);
+  let rec = branch.reconcileBranch(state, live);
+  assert.equal(rec.state.rollbackJournal.length, 0);
+  assert.equal(rec.state.rollbackJournalFloorMessageId, floor);
+  assert.ok(rec.state.records.some(record => record.summary === 'Fact from message ' + floor));
+  state = rec.state;
+
+  // A manual action at that head must not lower the floor below it.
+  const resolved = reduceMutations(state, {
+    chatKey: 'floor', messageId: floor, lineageKey: state.lineage[floor].lineageKey, operation: 'manual',
+    mutations: [{ action: 'resolve', recordId: state.records[0].id, evidence: [{ claim: 'operator note' }] }],
+  });
+  state = branch.commitMutationBoundary(state, resolved.state, live, floor, 'manual', { ...caps, lineage: state.lineage });
+  assert.ok(state.rollbackJournalFloorMessageId >= floor);
+
+  // Swiping the floor message can no longer keep its abandoned fact: it fails closed instead.
+  live = live.slice(0, floor).concat([{ name: 'N', is_user: false, is_system: false, mes: 'a different reply' }]);
+  rec = branch.reconcileBranch(state, live);
+  const keptAbandoned = rec.state.records.some(record => record.summary === 'Fact from message ' + floor);
+  assert.ok(rec.failClosed || !keptAbandoned, rec.action + ' kept the abandoned fact');
+});

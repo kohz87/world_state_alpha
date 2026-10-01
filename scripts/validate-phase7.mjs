@@ -163,7 +163,8 @@ for (const [reason, stateExpr] of [['capture', 'result.state'], ['evolution', 'p
   }
 }
 for (const label of ['import', 'reset']) {
-  const actionAt = index.indexOf("if (actionId === '" + label + "')");
+  // The queued action body; the entry point only picks the import file before queueing.
+  const actionAt = index.indexOf("if (actionId === '" + label + "')", index.indexOf('async function applyMaintenanceActionNow('));
   const nextActionAt = index.indexOf("if (actionId === '", actionAt + 1);
   const actionBody = index.slice(actionAt, nextActionAt > actionAt ? nextActionAt : undefined);
   const persistAt = actionBody.indexOf('await persistState(chatKey, next, { allowBootstrapRecovery: true })');

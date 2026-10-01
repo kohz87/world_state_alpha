@@ -1627,3 +1627,58 @@ test('only rows that change missed-capture recovery skip the Operations log quie
   store.record('chat:a', { label: 'capture', outcome: 'timeout', sourceMessageId: 4, lineageKey: 'ln4', responseJson: '{}' });
   assert.deepEqual(seen, [['chat:a', 'capture', 'timeout', 'ln4', false]]);
 });
+
+test('rebuild advances past an assistant reply with no narration instead of failing on it every time', async () => {
+  const { runManualRebuild } = await import('../rebuild.js');
+  const chat = [
+    { name: 'Narrator', is_user: false, is_system: false, mes: 'The gate of Brindle is shut. Soldiers of the Iron Watch now hold the bridge.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'I look around.' },
+    { name: 'Narrator', is_user: false, is_system: false, mes: '<writer_state>plan: nothing</writer_state>' },
+    { name: 'You', is_user: true, is_system: false, mes: 'I wait.' },
+    { name: 'Narrator', is_user: false, is_system: false, mes: 'Nothing changes; the Iron Watch still holds the bridge.' },
+  ];
+  const sent = [];
+  const dispatcher = async (_ctx, _options, scope) => {
+    sent.push(scope.operationId);
+    return { text: '{"mutations":[]}', receipt: { route: 'test', dispatched: true } };
+  };
+  const result = await runManualRebuild({ ctx: {}, state: createState('chat-empty'), chat, chatKey: 'chat-empty', isCurrent: () => true, dispatcher });
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.processedBoundaries, 3);
+  assert.deepEqual(result.receipts.map(item => [item.messageId, item.outcome]), [[0, 'no-change'], [2, 'empty-boundary'], [4, 'no-change']]);
+  // No provider call for the empty reply, and its lineage is still committed.
+  assert.equal(sent.length, 2);
+  assert.equal(result.state.lineage.length, chat.length);
+});
+
+test('a full rebuild root checkpoint keeps Spatial, so rolling back to the root never wipes places or the profile', async () => {
+  const { runManualRebuild } = await import('../rebuild.js');
+  const { reconcileBranch } = await import('../branch.js');
+  const { normalizeState } = await import('../state-core.js');
+  const chat = [
+    { name: 'You', is_user: true, is_system: false, mes: 'I arrive at Brindle.' },
+    { name: 'Narrator', is_user: false, is_system: false, mes: 'Soldiers of the Iron Watch hold the Brindle bridge.' },
+    { name: 'You', is_user: true, is_system: false, mes: 'I wait.' },
+    { name: 'Narrator', is_user: false, is_system: false, mes: 'The Iron Watch still holds the bridge.' },
+  ];
+  const dispatcher = async () => ({ text: '{"mutations":[],"spatialMutations":[]}', receipt: { route: 'test', dispatched: true } });
+  const original = createState('chat-root');
+  original.spatial.locations.push({ id: 'loc_1', name: 'Brindle', type: 'town', status: 'active', coordinate: { x: 1, y: 2, authority: 'manual' } });
+  original.spatial.profile = { system: 'cartesian2d', northAxis: '+y', unitKm: 1 };
+  const base = normalizeState(original);
+  const edited = chat.map(message => ({ ...message }));
+  edited[0].mes = 'I arrive at Brindle at dusk.';
+
+  // Reality-only rebuild preserves the disabled Spatial state, including in its root snapshot.
+  const realityOnly = await runManualRebuild({ ctx: {}, state: base, chat, chatKey: 'chat-root', isCurrent: () => true, dispatcher });
+  assert.equal(realityOnly.outcome, 'completed');
+  assert.equal(realityOnly.state.checkpoints.find(item => item.messageId === -1)?.snapshot?.spatial?.locations?.length, 1);
+  const afterEdit = reconcileBranch(realityOnly.state, edited);
+  assert.equal(afterEdit.state.spatial.locations.length, 1);
+  assert.ok(afterEdit.state.spatial.profile);
+
+  // Spatial-enabled rebuild keeps its profile in the root snapshot too.
+  const spatial = await runManualRebuild({ ctx: {}, state: base, chat, chatKey: 'chat-root', isCurrent: () => true, dispatcher, spatialEnabled: true, spatialProfile: base.spatial.profile });
+  assert.ok(spatial.state.checkpoints.find(item => item.messageId === -1)?.snapshot?.spatial?.profile);
+  assert.ok(reconcileBranch(spatial.state, edited).state.spatial.profile);
+});

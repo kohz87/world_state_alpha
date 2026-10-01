@@ -939,7 +939,8 @@ test('host publishes mutated canonical state only after durable sidecar success'
     assert.ok(commitAt >= 0 && persistAt > commitAt && staleAt > persistAt && publishAt > staleAt, reason + ' must durably guard and reject stale persistence before cache publication');
   }
   for (const label of ['import', 'reset']) {
-    const actionAt = source.indexOf("if (actionId === '" + label + "')");
+    // The queued action body (the entry point only picks the import file before queueing).
+    const actionAt = source.indexOf("if (actionId === '" + label + "')", source.indexOf('async function applyMaintenanceActionNow('));
     const nextActionAt = source.indexOf("if (actionId === '", actionAt + 1);
     const actionBody = source.slice(actionAt, nextActionAt > actionAt ? nextActionAt : undefined);
     const persistAt = actionBody.indexOf('await persistState(chatKey, next, { allowBootstrapRecovery: true })');
@@ -1234,4 +1235,62 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
   assert.match(source.slice(forgetStart, forgetStart + 200), /rebuildResumes\.delete\(chatKey\)/);
   assert.match(source, /: null\)\)\(rebuildResumes\.get\(chatKey\)\),/);
   assert.doesNotMatch(fs.readFileSync('storage.js', 'utf8'), /resume/i);
+});
+
+test('a first write to a logical sidecar path is revision-checked against the deterministic file', async () => {
+  const logical = 'world_state_alpha/first-write.json';
+  const physical = worldStateHostDeterministicPath(logical);
+  const existing = encodeSidecar({ chatKey: 'chat:a:first', state: createState('chat:a:first'), revision: 3 });
+  let serverText = existing;
+  const calls = [];
+  const adapter = createSillyTavernWorldStateStorageAdapter({
+    fetchFn: async (url, options = {}) => {
+      calls.push([url, options.method]);
+      if (url === physical && options.method === 'GET') return serverText === null ? response({ status: 404 }) : response({ text: serverText });
+      if (url === '/api/files/upload') return response({ json: { path: physical } });
+      throw new Error('unexpected URL ' + url);
+    },
+  });
+  const firstBody = encodeSidecar({ chatKey: 'chat:a:first', state: createState('chat:a:first'), revision: 1 });
+
+  // Another device already saved revision 3: a blind first write would replace it with revision 1.
+  assert.deepEqual(await adapter.write({ path: logical, expectedRevision: 0, body: firstBody }), { conflict: true });
+  assert.deepEqual(calls, [[physical, 'GET']]);
+
+  // With no sidecar on the server the first write goes through.
+  serverText = null;
+  calls.length = 0;
+  const written = await adapter.write({ path: logical, expectedRevision: 0, body: firstBody });
+  assert.equal(written.revision, 1);
+  assert.deepEqual(calls.map(call => call[0]), [physical, '/api/files/upload']);
+});
+
+test('batch-1 host guards: file pickers before the queue, Places edits from canonical state, safe renames', () => {
+  const source = fs.readFileSync('index.js', 'utf8');
+  const maintenanceEntry = source.slice(source.indexOf('async function applyMaintenanceAction('), source.indexOf('async function applyMaintenanceActionNow('));
+  const spatialEntry = source.slice(source.indexOf('async function applySpatialAction('), source.indexOf('async function applySpatialActionNow('));
+  // Import pickers open from the click, before queueChatWork, never inside the chat queue.
+  assert.ok(maintenanceEntry.indexOf("actionId === 'import'") < maintenanceEntry.indexOf('queueChatWork('));
+  assert.match(maintenanceEntry, /const file = await chooseImportFile\(\);[\s\S]*payload = \{ \.\.\.payload, file \};/);
+  assert.ok(spatialEntry.indexOf("actionId === 'import_base_map'") < spatialEntry.indexOf('queueChatWork('));
+  assert.equal((source.match(/await chooseImportFile\(\)/g) || []).length, 2);
+  assert.match(source, /if \(actionId === 'import'\) \{\s*const file = payload\?\.file;/);
+  assert.match(source, /if \(actionId === 'import_base_map'\) \{\s*const startEpoch = epoch\(chatKey\);\s*const file = payload\?\.file;/);
+
+  // Lock and Save read the place's coordinate from canonical state, not the display projection.
+  assert.match(source, /const currentLocationCoordinate = location => \{[\s\S]{0,200}resolveEffectiveLocations\(state\.spatial, baseMap\)/);
+  assert.match(source, /const priorCoord = currentLocationCoordinate\(payload\.location\);/);
+  assert.match(source, /const curCoord = currentLocationCoordinate\(payload\.location\);\s*if \(!Number\.isFinite\(curCoord\.x\) \|\| !Number\.isFinite\(curCoord\.y\)\)/);
+  assert.doesNotMatch(source, /payload\.location\.coordinate \|\| \{\}/);
+  // Add place refuses an existing active name instead of overwriting that place.
+  assert.match(source, /if \(existingPlace\) \{\s*notify\('warning', 'A place named '/);
+
+  // Rename carries the server's (authoritative) source state and may reuse a still-retired destination.
+  const migration = source.slice(source.indexOf('async function migrateWorldStateChatKey('), source.indexOf('async function migrateWorldStateChatKey(') + 6000);
+  assert.match(migration, /sourceState = recoveredSource\.payload\.state;/);
+  assert.doesNotMatch(migration, /if \(!sourceState\) sourceState = recoveredSource\.payload\.state;/);
+  assert.match(migration, /const unchangedSinceRetired = Boolean\(destinationTombstone\) && !newPointer/);
+  assert.match(migration, /if \(!unchangedSinceRetired && !empty\) \{/);
+  assert.match(migration, /pointer: destinationBase,/);
+  assert.match(migration, /delete settings\.sidecarTombstones\[newKey\];/);
 });
