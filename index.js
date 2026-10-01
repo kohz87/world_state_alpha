@@ -43,7 +43,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.41';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.42';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -879,16 +879,32 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
   const settings = getWorldStateSettings();
   const oldPointer = settings.dataFiles?.[oldKey] || null;
   const newPointer = settings.dataFiles?.[newKey] || null;
-  if (newPointer || settings.sidecarTombstones?.[newKey]) {
-    console.warn('[World State Alpha] identity migration refused because the destination already has World State ownership:', newKey);
-    return false;
-  }
 
-  const destinationOrphan = await recoverExistingSidecarPointer(newKey, null);
+  // The destination identity now names this very chat. Whatever is stored there may be replaced only when
+  // it holds nothing to protect: still exactly what a rename retired (for example renaming a chat back to
+  // its earlier name), or an empty state (SillyTavern activates the renamed chat before the rename event,
+  // which can already have saved an empty state for it). Any other destination data is never overwritten.
+  const destinationTombstone = settings.sidecarTombstones?.[newKey] || null;
+  const destinationOrphan = await recoverExistingSidecarPointer(newKey, newPointer || destinationTombstone?.pointer || null);
   assertOwnershipEpoch(oldKey, oldOwnerEpoch);
   assertOwnershipEpoch(newKey, newOwnerEpoch);
+  let destinationBase = null;
   if (destinationOrphan?.payload?.state) {
-    console.warn('[World State Alpha] identity migration refused because the destination deterministic sidecar already exists:', newKey);
+    const orphanState = destinationOrphan.payload.state;
+    const retiredRevision = Number(destinationTombstone?.pointer?.revision);
+    const unchangedSinceRetired = Boolean(destinationTombstone) && !newPointer
+      && Number.isInteger(retiredRevision) && Number(destinationOrphan.pointer?.revision) === retiredRevision;
+    const spatial = orphanState.spatial || {};
+    const empty = !(orphanState.records || []).length
+      && !(spatial.locations || []).length && !(spatial.routes || []).length && !(spatial.relations || []).length
+      && !spatial.profile && !spatial.baseMapRef?.id;
+    if (!unchangedSinceRetired && !empty) {
+      console.warn('[World State Alpha] identity migration refused because the destination already has World State continuity:', newKey);
+      return false;
+    }
+    destinationBase = destinationOrphan.pointer;
+  } else if (newPointer) {
+    console.warn('[World State Alpha] identity migration refused because the destination ownership could not be read:', newKey);
     return false;
   }
 
@@ -898,7 +914,9 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
   assertOwnershipEpoch(oldKey, oldOwnerEpoch);
   if (recoveredSource?.payload?.state) {
     sourcePointer = recoveredSource.pointer;
-    if (!sourceState) sourceState = recoveredSource.payload.state;
+    // The server sidecar is authoritative: another device may have saved a newer revision than this
+    // session's cache, and the rename must carry that continuity rather than retire it.
+    sourceState = recoveredSource.payload.state;
   }
 
   if (!sourceState) {
@@ -915,7 +933,7 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
     adapter: hostStorage,
     chatKey: newKey,
     state: migrated,
-    pointer: null,
+    pointer: destinationBase,
     appVersion: WORLD_STATE_ALPHA_VERSION,
   });
   assertOwnershipEpoch(oldKey, oldOwnerEpoch);
@@ -932,6 +950,7 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
   }
 
   settings.dataFiles[newKey] = committed;
+  delete settings.sidecarTombstones[newKey];
   settings.sidecarTombstones[oldKey] = {
     reason: 'renamed',
     pointer: retiredSourcePointer ? structuredClone(retiredSourcePointer) : null,
@@ -2835,6 +2854,15 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
     return;
   }
 
+  // Open the file picker straight from the click, before queueing: behind other chat work the browser's
+  // user activation can expire, the picker then never opens and never settles, and the chat queue would
+  // wait on it forever.
+  if (actionId === 'import') {
+    const file = await chooseImportFile();
+    if (!file || currentChatKey() !== chatKey) return;
+    payload = { ...payload, file };
+  }
+
   return queueChatWork(chatKey, () => applyMaintenanceActionNow(actionId, payload, chatKey));
 }
 
@@ -2857,7 +2885,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
   }
 
   if (actionId === 'import') {
-    const file = await chooseImportFile();
+    const file = payload?.file;
     if (!file || currentChatKey() !== chatKey) return;
     const text = await file.text();
     if (currentChatKey() !== chatKey) return;
@@ -3707,6 +3735,12 @@ async function applyRecordActionNow(actionId, payload, chatKey) {
 async function applySpatialAction(actionId, payload = {}, expectedChatKey = currentChatKey()) {
   const chatKey = String(expectedChatKey || '');
   if (!chatKey || chatKey === 'no-chat' || currentChatKey() !== chatKey) return;
+  // Same as Import: pick the base-map file before queueing, never from inside the chat queue.
+  if (actionId === 'import_base_map') {
+    const file = await chooseImportFile();
+    if (!file || currentChatKey() !== chatKey) return;
+    payload = { ...payload, file };
+  }
   return queueChatWork(chatKey, () => applySpatialActionNow(actionId, payload, chatKey));
 }
 
@@ -3734,6 +3768,15 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
   if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
   const chat = getContext().chat || [];
   const messageId = chat.length ? chat.length - 1 : null;
+
+  // The panel's place projection carries display fields only; coordinates come from canonical state
+  // (the effective location, base map included), never from the click payload.
+  const effectiveLocations = currentState => resolveEffectiveLocations(currentState.spatial, baseMap);
+  const currentLocationCoordinate = location => {
+    const effective = effectiveLocations(state)
+      .find(item => item.id === location?.id || (location?.overrideId && item.overrideId === location.overrideId));
+    return effective?.coordinate ? { ...effective.coordinate } : {};
+  };
 
   const persistSpatialState = async (nextState, message) => {
     const persisted = await persistGuardedMutation({
@@ -3777,7 +3820,6 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     return { outcome: 'applied', state: working, applied: combined };
   };
 
-  const effectiveLocations = currentState => resolveEffectiveLocations(currentState.spatial, baseMap);
   const findEffectiveByName = (currentState, name) => {
     const needle = String(name || '').trim().toLowerCase();
     if (!needle) return null;
@@ -3874,6 +3916,15 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
   if (actionId === 'add_location_modal') {
     const name = window.prompt('Location name:');
     if (!name?.trim()) return;
+    // The reducer consolidates a nameless-id upsert onto an active campaign place with the same name, so
+    // adding that name would silently overwrite its type, context and coordinates. Refuse instead (a
+    // base-map name is never merged into, so a campaign place may still share it).
+    const existingPlace = (state.spatial?.locations || [])
+      .find(item => item.status === 'active' && String(item.name || '').trim().toLowerCase() === name.trim().toLowerCase());
+    if (existingPlace) {
+      notify('warning', 'A place named ' + existingPlace.name + ' already exists. Open it in Places to edit it instead.');
+      return;
+    }
     const type = window.prompt('Location type (e.g. inn, hamlet, ford, ruin):', 'landmark') || 'landmark';
     const xRaw = window.prompt('Coordinate X (leave blank if unknown):', '');
     const yRaw = window.prompt('Coordinate Y (leave blank if unknown):', '');
@@ -3946,7 +3997,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     }
 
     const targetId = payload.location.overrideId || payload.location.id;
-    const priorCoord = payload.location.coordinate || {};
+    const priorCoord = currentLocationCoordinate(payload.location);
     const priorX = Number.isFinite(priorCoord.x) ? priorCoord.x : null;
     const priorY = Number.isFinite(priorCoord.y) ? priorCoord.y : null;
     const nextLocked = Boolean(fd.locked && fd.x !== null);
@@ -4028,7 +4079,11 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
   }
 
   if (actionId === 'toggle_lock' && payload.location) {
-    const curCoord = payload.location.coordinate || {};
+    const curCoord = currentLocationCoordinate(payload.location);
+    if (!Number.isFinite(curCoord.x) || !Number.isFinite(curCoord.y)) {
+      notify('error', 'This place has no coordinates to lock.');
+      return;
+    }
     const nextLocked = !curCoord.locked;
     const res = applySpatialManualMutation({
       state,
@@ -4145,7 +4200,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
 
   if (actionId === 'import_base_map') {
     const startEpoch = epoch(chatKey);
-    const file = await chooseImportFile();
+    const file = payload?.file;
     if (!file || currentChatKey() !== chatKey || epoch(chatKey) !== startEpoch) return;
     const rawText = await file.text();
     if (currentChatKey() !== chatKey || epoch(chatKey) !== startEpoch) return;

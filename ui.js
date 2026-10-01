@@ -1793,7 +1793,9 @@ export function createWorldStateUiController({
     menuOpen: false,
     mobileMoreOpen: false,
     rebuildOpen: false,
-    bulk: { active: false, keys: new Set() },
+    // key -> fingerprint of the row the operator ticked (keys are list positions, so a selection is only
+    // kept while that position still shows the same record).
+    bulk: { active: false, keys: new Map() },
     bulkScope: '',
     scrollMemory: createScrollMemory(),
     dismissedRebuildOperationId: '',
@@ -1946,10 +1948,16 @@ export function createWorldStateUiController({
     return rows;
   }
 
+  function rowFingerprint(row) {
+    return JSON.stringify([row?.kind, row?.summary, row?.createdAtMessage ?? null, row?.lastChangedMessage ?? null]);
+  }
+
   function pruneBulkSelection(currentModel) {
     if (!ui.bulk.keys.size) return;
     const live = activeRowsByKey(currentModel);
-    for (const key of [...ui.bulk.keys]) if (!live.has(key)) ui.bulk.keys.delete(key);
+    for (const [key, fingerprint] of [...ui.bulk.keys]) {
+      if (!live.has(key) || rowFingerprint(live.get(key)) !== fingerprint) ui.bulk.keys.delete(key);
+    }
   }
 
   async function copyOperationJson(button) {
@@ -2196,7 +2204,7 @@ export function createWorldStateUiController({
     if (closest(event.target, '[data-wsa-bulk-select-all]')) {
       const shown = selectedRecordRows(model()).filter(row => row.status === 'active' && row.key);
       ui.bulk.keys.clear();
-      for (const row of shown.slice(0, WORLD_STATE_UI_LIMITS.bulkSelection)) ui.bulk.keys.add(row.key);
+      for (const row of shown.slice(0, WORLD_STATE_UI_LIMITS.bulkSelection)) ui.bulk.keys.set(row.key, rowFingerprint(row));
       refresh();
       return;
     }
@@ -2206,7 +2214,9 @@ export function createWorldStateUiController({
       const action = clean(bulkAction.dataset?.wsaBulkAction, 24);
       if (!['resolve', 'supersede'].includes(action) || ui.bulkPending) return;
       const shown = new Map(selectedRecordRows(model()).filter(row => row.status === 'active').map(row => [row.key, row]));
-      const records = [...ui.bulk.keys].map(key => shown.get(key)).filter(Boolean)
+      const records = [...ui.bulk.keys]
+        .map(([key, fingerprint]) => shown.get(key) && rowFingerprint(shown.get(key)) === fingerprint ? shown.get(key) : null)
+        .filter(Boolean)
         .slice(0, WORLD_STATE_UI_LIMITS.bulkSelection)
         .map(row => ({
           key: row.key,
@@ -2237,7 +2247,7 @@ export function createWorldStateUiController({
         const row = Number.isInteger(index) && index >= 0 ? rows[index] : null;
         if (row?.key && row.status === 'active') {
           if (ui.bulk.keys.has(row.key)) ui.bulk.keys.delete(row.key);
-          else if (ui.bulk.keys.size < WORLD_STATE_UI_LIMITS.bulkSelection) ui.bulk.keys.add(row.key);
+          else if (ui.bulk.keys.size < WORLD_STATE_UI_LIMITS.bulkSelection) ui.bulk.keys.set(row.key, rowFingerprint(row));
         }
         refresh();
         return;

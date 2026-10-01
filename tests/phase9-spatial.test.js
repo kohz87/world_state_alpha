@@ -2644,3 +2644,52 @@ test('Manual Spatial API always records operator provenance even without a custo
   assert.equal(evidence.sourceClass, 'manual');
   assert.equal(evidence.claim, 'Manual spatial edit');
 });
+
+test('a narrated revisit or route mention never wipes established place or route details', async () => {
+  const { validateSpatialMutation } = await import('../spatial-wire.js');
+  const { reduceSpatialMutations, createSpatialState } = await import('../spatial-core.js');
+  const evidence = [{ sourceMessageId: 2, claim: 'Back in Applecross' }];
+  const revisit = validateSpatialMutation({ action: 'upsert_location', locationId: 'loc_a', name: 'Applecross', admissionReason: 'revisited', evidence });
+  // Omitted optional fields stay omitted instead of arriving as '' / [] / 'landmark'.
+  for (const key of ['type', 'context', 'notes', 'routeRefs']) assert.equal(Object.hasOwn(revisit, key), false, key);
+  const mention = validateSpatialMutation({ action: 'upsert_route', name: 'Kings Road', evidence: [{ sourceMessageId: 2, claim: 'the ruts of the Kings Road' }] });
+  for (const key of ['type', 'endpoints', 'waypoints', 'context']) assert.equal(Object.hasOwn(mention, key), false, key);
+
+  let spatial = createSpatialState();
+  spatial.locations.push({
+    id: 'loc_a', name: 'Applecross', type: 'village', status: 'active', baseRefId: null,
+    coordinate: { x: null, y: null, authority: 'unknown', locked: false },
+    context: 'A fishing village on the cold coast', routeRefs: ['Kings Road'], notes: 'Smells of tar',
+    createdAtMessage: 1, lastChangedMessage: 1, evidenceIds: [],
+  });
+  spatial.routes.push({ id: 'rt_kings', name: 'Kings Road', type: 'road', endpoints: ['loc_a', 'loc_b'], waypoints: ['loc_c'], context: 'Coast road', evidenceIds: [] });
+  const result = reduceSpatialMutations(spatial, {
+    chatKey: 'chat:revisit', messageId: 2, lineageKey: 'ln2', operation: 'capture', mutations: [revisit, mention],
+  });
+  const place = result.spatial.locations.find(item => item.id === 'loc_a');
+  assert.equal(place.type, 'village');
+  assert.equal(place.context, 'A fishing village on the cold coast');
+  assert.equal(place.notes, 'Smells of tar');
+  assert.deepEqual(place.routeRefs, ['Kings Road']);
+  const route = result.spatial.routes.find(item => item.id === 'rt_kings');
+  assert.deepEqual([route.type, route.endpoints, route.waypoints, route.context], ['road', ['loc_a', 'loc_b'], ['loc_c'], 'Coast road']);
+
+  // A new automatic route without a type is still a generic 'route'.
+  const created = reduceSpatialMutations(createSpatialState(), {
+    chatKey: 'chat:revisit', messageId: 3, lineageKey: 'ln3', operation: 'capture',
+    mutations: [validateSpatialMutation({ action: 'upsert_route', name: 'Salt Track', evidence: [{ sourceMessageId: 3, claim: 'the Salt Track' }] })],
+  });
+  assert.equal(created.spatial.routes[0]?.type, 'route');
+});
+
+test('a narrated relation mention without a distance keeps the stored distance mode', async () => {
+  const { reduceSpatialMutations, createSpatialState } = await import('../spatial-core.js');
+  const spatial = createSpatialState();
+  spatial.relations.push({ id: 'rel_1', fromId: 'loc_a', toId: 'loc_b', direction: 'north', distanceKm: 30, distanceMode: 'route', notes: '', evidenceIds: [] });
+  const result = reduceSpatialMutations(spatial, {
+    chatKey: 'chat:rel', messageId: 4, lineageKey: 'ln4', operation: 'capture',
+    mutations: [{ action: 'upsert_relation', fromId: 'loc_a', toId: 'loc_b', direction: 'north', distanceKm: null, distanceMode: 'unspecified', evidence: [{ sourceMessageId: 4, claim: 'north of' }] }],
+  });
+  const relation = result.spatial.relations.find(item => item.id === 'rel_1');
+  assert.deepEqual([relation.distanceKm, relation.distanceMode], [30, 'route']);
+});

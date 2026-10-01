@@ -163,7 +163,8 @@ for (const [reason, stateExpr] of [['capture', 'result.state'], ['evolution', 'p
   }
 }
 for (const label of ['import', 'reset']) {
-  const actionAt = index.indexOf("if (actionId === '" + label + "')");
+  // The queued action body; the entry point only picks the import file before queueing.
+  const actionAt = index.indexOf("if (actionId === '" + label + "')", index.indexOf('async function applyMaintenanceActionNow('));
   const nextActionAt = index.indexOf("if (actionId === '", actionAt + 1);
   const actionBody = index.slice(actionAt, nextActionAt > actionAt ? nextActionAt : undefined);
   const persistAt = actionBody.indexOf('await persistState(chatKey, next, { allowBootstrapRecovery: true })');
@@ -224,9 +225,10 @@ if (!uploaded?.name?.startsWith('world-state-alpha-') || !uploaded?.data) {
   throw new Error('Phase 7 host upload namespace/payload failed');
 }
 
+// Another writer's revision 2 (different content): a byte-identical body would be this write already landed.
 const sidecar = encodeSidecar({
   chatKey: 'chat:alice:test',
-  state: createState('chat:alice:test'),
+  state: { ...createState('chat:alice:test'), lastCaptureMessage: 7 },
   revision: 2,
 });
 let uploadAttempts = 0;

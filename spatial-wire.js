@@ -80,16 +80,22 @@ function normalizeLocationMutation(raw) {
   if (evidenceRaw.length === 0 || evidenceRaw.length > SPATIAL_WIRE_LIMITS.evidencePerMutation) {
     throw new SpatialWireError('spatial mutation requires 1-4 evidence items');
   }
+  // Optional fields are emitted only when the model supplied a value: the reducer treats a present key as
+  // an explicit change, so a defaulted '' or [] would wipe an established place on every revisit.
+  const type = text(raw.type, SPATIAL_LIMITS.typeChars);
+  const context = text(raw.context, SPATIAL_LIMITS.contextChars);
+  const routeRefs = uniqueStrings(raw.routeRefs, SPATIAL_WIRE_LIMITS.routeRefs);
+  const notes = text(raw.notes, SPATIAL_WIRE_LIMITS.noteChars);
   return {
     action: 'upsert_location',
     ...(locationId ? { locationId } : {}),
     name,
-    type: text(raw.type, SPATIAL_LIMITS.typeChars) || 'landmark',
-    context: text(raw.context, SPATIAL_LIMITS.contextChars),
+    ...(type ? { type } : {}),
+    ...(context ? { context } : {}),
     coordinate: coordinate(raw.coordinate),
     relative: relative(raw.relative),
-    routeRefs: uniqueStrings(raw.routeRefs, SPATIAL_WIRE_LIMITS.routeRefs),
-    notes: text(raw.notes, SPATIAL_WIRE_LIMITS.noteChars),
+    ...(routeRefs.length ? { routeRefs } : {}),
+    ...(notes ? { notes } : {}),
     admissionReason: raw.admissionReason,
     evidence: evidenceRaw.map(evidenceItem),
   };
@@ -124,14 +130,19 @@ function normalizeRouteMutation(raw) {
   if (evidenceRaw.length === 0 || evidenceRaw.length > SPATIAL_WIRE_LIMITS.evidencePerMutation) {
     throw new SpatialWireError('spatial route requires 1-4 evidence items');
   }
+  // As for places: a later mention of a known route must not erase its type, endpoints or waypoints.
+  const type = text(raw.type, SPATIAL_LIMITS.typeChars);
+  const endpoints = uniqueStrings(raw.endpoints, 8);
+  const waypoints = uniqueStrings(raw.waypoints, 16);
+  const context = text(raw.context, SPATIAL_LIMITS.contextChars);
   return {
     action: 'upsert_route',
     ...(routeId ? { routeId } : {}),
     name,
-    type: text(raw.type, SPATIAL_LIMITS.typeChars) || 'route',
-    endpoints: uniqueStrings(raw.endpoints, 8),
-    waypoints: uniqueStrings(raw.waypoints, 16),
-    context: text(raw.context, SPATIAL_LIMITS.contextChars),
+    ...(type ? { type } : {}),
+    ...(endpoints.length ? { endpoints } : {}),
+    ...(waypoints.length ? { waypoints } : {}),
+    ...(context ? { context } : {}),
     evidence: evidenceRaw.map(evidenceItem),
   };
 }

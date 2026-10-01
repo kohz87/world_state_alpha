@@ -147,28 +147,32 @@ export function createSillyTavernWorldStateStorageAdapter({
     const target = text(path);
     if (!target) throw new Error('World State Alpha sidecar path is required.');
 
-    return withWriterLock(target, async () => {
+    // A logical path (a chat's first write, before it has a pointer) uploads to the same deterministic
+    // file another device or tab may already have written, so it is locked and revision-checked as that
+    // physical file: never overwrite an existing sidecar blindly.
+    const physical = isLogicalPath(target) ? worldStateHostDeterministicPath(target) : target;
+    return withWriterLock(physical, async () => {
       const expected = Math.max(0, Math.trunc(Number(expectedRevision) || 0));
+      const decoded = decodeSidecar(body);
 
-      if (!isLogicalPath(target)) {
-        const currentText = await read(target);
-        if (currentText === null) {
-          if (expected !== 0) return { conflict: true };
-        } else {
-          let current;
-          try {
-            current = decodeSidecar(currentText);
-          } catch (error) {
-            error.retryable = false;
-            throw error;
-          }
-          if (Number(current.revision || 0) !== expected) return { conflict: true };
+      const currentText = await read(physical);
+      if (currentText === null) {
+        if (expected !== 0) return { conflict: true };
+      } else {
+        let current;
+        try {
+          current = decodeSidecar(currentText);
+        } catch (error) {
+          error.retryable = false;
+          throw error;
         }
-      } else if (expected !== 0) {
-        return { conflict: true };
+        // A retry of a write that already landed (its response was lost) finds exactly this body.
+        if (Number(current.revision || 0) === expected + 1 && current.checksum === decoded.checksum) {
+          return { path: physical, revision: current.revision };
+        }
+        if (Number(current.revision || 0) !== expected) return { conflict: true };
       }
 
-      const decoded = decodeSidecar(body);
       if (Number(decoded.revision || 0) !== expected + 1) {
         const error = new Error('World State Alpha sidecar body revision does not follow the expected revision.');
         error.retryable = false;

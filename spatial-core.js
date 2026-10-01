@@ -1149,8 +1149,14 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         const preserveManualRelation = automaticNarrative && hasManualEvidence;
         if (!preserveManualRelation) {
           if (direction) existingRel.direction = direction;
-          if (Number.isFinite(proposal.distanceKm)) existingRel.distanceKm = proposal.distanceKm;
-          if (proposal.distanceMode) existingRel.distanceMode = proposal.distanceMode;
+          if (Number.isFinite(proposal.distanceKm)) {
+            existingRel.distanceKm = proposal.distanceKm;
+            if (proposal.distanceMode) existingRel.distanceMode = proposal.distanceMode;
+          } else if (proposal.distanceMode && !automaticNarrative) {
+            existingRel.distanceMode = proposal.distanceMode;
+          }
+          // A narrated mention without a distance never relabels the stored distance's mode
+          // (a road distance must not turn into an unqualified, straight-line-looking one).
           if (proposal.notes) existingRel.notes = boundedText(proposal.notes, SPATIAL_LIMITS.notesChars);
         }
         addEntitySpatialEvidence(spatial, existingRel, [fromId, toId], proposal, context, chatKey, evidenceCounter);
@@ -1216,7 +1222,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         const rt = normalizeSpatialRoute({
           id,
           name,
-          type: proposal.type || 'road',
+          type: proposal.type || (automaticNarrative ? 'route' : 'road'),
           endpoints: proposal.endpoints || [],
           waypoints: proposal.waypoints || [],
           context: proposal.context || '',

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.9.0-alpha.42 - Audit batch 1: data safety
+
+Fixes from a whole-codebase audit, each reproduced first and covered by a regression test.
+
+### Fixed
+
+- **Rollback could keep abandoned changes.** After a delete rolled back exactly to the oldest kept change, a new change at that message (for example a manual resolve) recorded an undo base one message too early. Swiping or deleting that message then kept its old captures. Such an entry now never claims a base below the journal floor, so that rollback fails closed (asks for a rebuild) instead.
+- **A chat's first save could overwrite another device's World State.** The first write of a chat skipped the server's revision check. It is now checked like every other write; a newer server copy wins and is loaded.
+- **Renaming a chat could lose progress.** A rename moved this session's cached copy even when the server held a newer one (for example from your phone), then retired the newer one. The server copy is now what moves. Renaming a chat back to an earlier name was refused and left the chat empty; it now works.
+- **Rebuild and Recapture failed forever on an empty reply.** An assistant reply with no narration (empty, image-only, or only `<writer_state>`/tracker blocks) made every rebuild through it fail, and Resume failed again. Such a reply is now passed over without a model call, as live capture already did.
+- **Places data was wiped:**
+  - the Lock button erased a place's X/Y;
+  - each automatic revisit reset a place's type, description and notes, and mentioning a known road erased its endpoints and waypoints;
+  - a mention of a known relation without a distance relabelled a road distance as an unqualified one;
+  - Save on an unchanged place could downgrade its coordinate authority;
+  - Add place with an existing name silently overwrote that place; it is now refused.
+- **A full rebuild's starting snapshot lacked Places,** so a later rollback to the start wiped all places and the coordinate profile.
+- **Bulk select could resolve the wrong records** when World State was replaced while rows were ticked. Selections are now pinned to the exact row ticked and dropped if it changes.
+- **Import could freeze a chat.** The file picker opened from inside the chat's work queue; if it opened late it never opened and all World State work for that chat waited forever. Import and base-map import now pick the file first.
+
+- Hardening from code review:
+  - a first write is locked and checked as the physical file it uploads to, and a retried write that already landed is recognised instead of reported as a conflict;
+  - a rename destination counts as empty only with no records, places, routes, relations, profile or base map;
+  - Add place still allows a campaign place that shares a base-map name (only campaign places are ever overwritten);
+  - rebuild uses capture's own skip rule for empty replies.
+
+### Architecture
+
+- Core contract updated for the journal-floor rule, empty rebuild boundaries, and rename/first-write rules. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- Added regressions for each fix (journal floor, first-write conflict, empty boundary, Spatial wire/relations, root checkpoint, bulk drift via the real controller, and host source checks for pickers, Places lock/save/add and renames). Each new behavioural test fails on the previous code.
+- Live-checked in SillyTavern: renaming a chat away and back (and reloading) keeps its records; Lock keeps a place's coordinates; adding a duplicate place name is refused; a new chat's first capture still saves.
+
 ## 0.9.0-alpha.41 - Live capture catches what rebuild catches
 
 ### Fixed

@@ -47,7 +47,7 @@ for (const required of [
   "'WORLD_STATE_REBUILD_BOUNDARY_LIMIT'",
   "'WORLD_STATE_REBUILD_CURRENT_GUARD_REQUIRED'",
   "result.outcome === 'applied' || result.outcome === 'no-change'",
-  "candidate.spatial = clone(original.spatial)",
+  "root.spatial = clone(original.spatial)",
   "'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE'",
   "reconcileBranch(original, prefix)",
   "startMessageId",

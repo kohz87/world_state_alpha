@@ -286,11 +286,15 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
       // state that may be provably exact further back than messageId - 1: from
       // the earliest checkpoint on this branch whose snapshot it equals.
       const provenBase = head || journal.length ? null : unjournaledStateSince(before, lineage, messageId - 1);
+      // Otherwise the state is only known exact from the journal floor. After a rollback lands on the floor,
+      // the state already holds that message's own changes, so undoing this entry cannot reach messageId - 1:
+      // never claim a base below the floor (rolling that message back must fail closed, not keep its changes).
+      const floor = Number.isInteger(before.rollbackJournalFloorMessageId) ? before.rollbackJournalFloorMessageId : -1;
       journal.push({
         seq,
         prevSeq: Math.max(0, Number(head?.seq) || 0),
         messageId,
-        beforeMessageId: Number.isInteger(head?.messageId) ? head.messageId : (provenBase ?? messageId - 1),
+        beforeMessageId: Number.isInteger(head?.messageId) ? head.messageId : (provenBase ?? Math.max(messageId - 1, floor)),
         lineageKey: boundary.lineageKey,
         parentLineageKey: boundary.parentLineageKey,
         reason: String(reason || 'mutation'),
