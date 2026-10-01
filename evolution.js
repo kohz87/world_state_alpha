@@ -10,6 +10,8 @@ import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.j
 import { clone, reduceMutations } from './state-core.js';
 
 export const EVOLUTION_RESPONSE_TOKENS = 2600;
+const EVOLUTION_ANCHOR_CAP = 20;
+
 export const EVOLUTION_LIMITS = Object.freeze({
   targets: 6,
   relevantTargets: 4,
@@ -407,7 +409,12 @@ function evaluationMutation(evaluation, context) {
   if (evaluation.outcome === 'update') {
     if (evaluation.summary) mutation.summary = evaluation.summary;
     if (Object.hasOwn(evaluation, 'trend')) mutation.trend = evaluation.trend;
-    if (Object.hasOwn(evaluation, 'anchors')) mutation.anchors = evaluation.anchors;
+    if (Array.isArray(evaluation.anchors) && evaluation.anchors.length) {
+      // Evolution has no narration to ground new anchors against, so it can add to a development's anchors
+      // but never drop the ones retrieval already finds it by.
+      const target = context.targets.find(item => item.record.id === evaluation.recordId)?.record;
+      mutation.anchors = [...new Set([...(target?.anchors || []), ...evaluation.anchors])].slice(0, EVOLUTION_ANCHOR_CAP);
+    }
   }
   if ((evaluation.outcome === 'resolve' || evaluation.outcome === 'supersede') && evaluation.summary) {
     mutation.summary = evaluation.summary;

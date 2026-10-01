@@ -234,14 +234,18 @@ export function detectElapsedHintFromExchange(exchange = []) {
     if (messageRole(rawMessage) === 'system') continue;
     const message = sanitizeExchangeMessage(rawMessage);
     const source = messageText(message);
-    const found = extractElapsedHint(source, {
+    const provenance = {
       sourceMessageId: rawMessage.messageId,
       lineageKey: typeof rawMessage.lineageKey === 'string' ? rawMessage.lineageKey : '',
-    });
-    if (!found) continue;
-    const context = establishedElapsedContext(source, found);
-    if (!context) continue;
-    return { ...found, context };
+    };
+    // The detector reads the first match only; if that one is rejected (for example a quoted mention), try
+    // the narration with dialogue removed so a real time skip later in the message is not hidden.
+    for (const text of [source, narrationOnly(source)]) {
+      const found = extractElapsedHint(text, provenance);
+      if (!found) continue;
+      const context = establishedElapsedContext(text, found);
+      if (context) return { ...found, context };
+    }
   }
   return null;
 }

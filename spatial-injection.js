@@ -34,10 +34,13 @@ function locationLine(loc) {
 }
 
 function relationLine(rel, locMap) {
-  const from = locMap.get(rel.fromId)?.name || 'known anchor';
-  const to = locMap.get(rel.toId)?.name || 'target';
+  // Both ends must be places shown in this injection; a placeholder name would read as a real place.
+  const from = singleLine(locMap.get(rel.fromId)?.name);
+  const to = singleLine(locMap.get(rel.toId)?.name);
+  if (!from || !to) return '';
   const dir = rel.direction ? ` ${rel.direction} of ` : ' connected to ';
-  const dist = Number.isFinite(rel.distanceKm) ? ` (${rel.distanceKm} km)` : '';
+  const mode = rel.distanceMode === 'route' ? ' by route' : rel.distanceMode === 'straight_line' ? ' straight-line' : '';
+  const dist = Number.isFinite(rel.distanceKm) ? ` (${rel.distanceKm} km${mode})` : '';
   return `- ${to} is${dir}${from}${dist}`;
 }
 

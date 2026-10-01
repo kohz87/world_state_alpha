@@ -1,5 +1,5 @@
 import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, reconcileBranch, seedRootCheckpoint } from './branch.js';
-import { CAPTURE_LIMITS, captureDue, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
+import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
@@ -16,43 +16,6 @@ export const REBUILD_LIMITS = Object.freeze({
 function roleOf(message) {
   if (message?.role === 'user' || message?.is_user === true) return 'user';
   if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
-  return 'system';
-}
-
-const SYSTEM_MESSAGE_TYPES = new Set([
-  'help',
-  'welcome',
-  'empty',
-  'generic',
-  'narrator',
-  'comment',
-  'slash_commands',
-  'formatting',
-  'hotkeys',
-  'macros',
-  'welcome_prompt',
-  'assistant_note',
-]);
-
-function hiddenConversationRole(message) {
-  if (message?.is_system !== true) return roleOf(message);
-
-  const extra = message?.extra && typeof message.extra === 'object' ? message.extra : {};
-  const type = String(extra.type || '').trim().toLowerCase();
-  if (extra.isSmallSys === true || extra.uses_system_ui === true || Array.isArray(extra.tool_invocations)) return 'system';
-  if (SYSTEM_MESSAGE_TYPES.has(type)) return 'system';
-
-  if (message?.is_user === true || message?.role === 'user') return 'user';
-  if (message?.role === 'assistant') return 'assistant';
-  if (type === 'assistant_message') return 'assistant';
-
-  if (typeof message?.original_avatar === 'string' && message.original_avatar.trim()) return 'assistant';
-  if (Array.isArray(message?.swipes) || Number.isInteger(message?.swipe_id)) return 'assistant';
-  if (message?.gen_started || message?.gen_finished) return 'assistant';
-  if (typeof extra.api === 'string' && extra.api.trim()) return 'assistant';
-  if (typeof extra.model === 'string' && extra.model.trim()) return 'assistant';
-  if (Number.isInteger(extra.gen_id)) return 'assistant';
-
   return 'system';
 }
 
@@ -119,7 +82,11 @@ export function planChronologicalRebuild(chat = [], {
     const exchange = raw.map((message, offset) => {
       const sourceMessageId = previousAssistant + 1 + offset;
       const role = rebuildRoleOf(message, includeHiddenMessages);
-      const virtual = role === 'system' ? clone(message) : virtualizeRebuildMessage(message, role);
+      // A row that stays out of the conversation (genuine system rows, or hidden rows when hidden messages
+      // are excluded) is marked as system so capture never reads a hidden user turn as current evidence.
+      const virtual = role === 'system'
+        ? { ...clone(message), role: 'system', is_user: false, is_system: true }
+        : virtualizeRebuildMessage(message, role);
       if (message?.is_system === true && role !== 'system') hiddenMessagesIncluded += 1;
       return {
         ...virtual,

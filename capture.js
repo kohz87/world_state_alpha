@@ -1,7 +1,7 @@
 import { chatLineage, fingerprintMessage } from './branch.js';
 import { CaptureWireError, parseCaptureJson, validateCaptureEnvelope } from './capture-wire.js';
 import { createDiagnosticStore } from './diagnostics.js';
-import { consolidateCreateCandidate } from './duplicate.js';
+import { consolidateCreateCandidate, duplicateSimilarity } from './duplicate.js';
 import { hashText, stableStringify } from './hash.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
@@ -72,6 +72,12 @@ export function extractWorldStateCompletenessHints(exchange = []) {
     for (const block of blocks) {
       let section = '';
       for (const rawLine of block.split(/\r?\n/u)) {
+        // Inside a section a bullet is an entry even when it contains a colon ('- The Iron Watch: ...');
+        // only non-bullet lines can start or end a section.
+        if (section && /^\s*[-*]\s+/u.test(rawLine)) {
+          if (pushHint(message.messageId, section, rawLine)) return hints;
+          continue;
+        }
         const parsed = parseWorldStateSectionLine(rawLine);
         if (parsed) {
           section = parsed.section === 'other' ? '' : parsed.section;
@@ -132,6 +138,45 @@ function roleOf(message) {
   return 'system';
 }
 
+const SYSTEM_MESSAGE_TYPES = new Set([
+  'help',
+  'welcome',
+  'empty',
+  'generic',
+  'narrator',
+  'comment',
+  'slash_commands',
+  'formatting',
+  'hotkeys',
+  'macros',
+  'welcome_prompt',
+  'assistant_note',
+]);
+
+// A hidden (is_system) row is still a conversation turn when it carries ordinary user/assistant markers;
+// genuine system/tool/UI rows stay system. Shared by live capture and rebuild.
+export function hiddenConversationRole(message) {
+  if (message?.is_system !== true) return roleOf(message);
+
+  const extra = message?.extra && typeof message.extra === 'object' ? message.extra : {};
+  const type = String(extra.type || '').trim().toLowerCase();
+  if (extra.isSmallSys === true || extra.uses_system_ui === true || Array.isArray(extra.tool_invocations)) return 'system';
+  if (SYSTEM_MESSAGE_TYPES.has(type)) return 'system';
+
+  if (message?.is_user === true || message?.role === 'user') return 'user';
+  if (message?.role === 'assistant') return 'assistant';
+  if (type === 'assistant_message') return 'assistant';
+
+  if (typeof message?.original_avatar === 'string' && message.original_avatar.trim()) return 'assistant';
+  if (Array.isArray(message?.swipes) || Number.isInteger(message?.swipe_id)) return 'assistant';
+  if (message?.gen_started || message?.gen_finished) return 'assistant';
+  if (typeof extra.api === 'string' && extra.api.trim()) return 'assistant';
+  if (typeof extra.model === 'string' && extra.model.trim()) return 'assistant';
+  if (Number.isInteger(extra.gen_id)) return 'assistant';
+
+  return 'system';
+}
+
 export function assistantBoundaryExchange(chat = [], endMessageId, knownLineage = null) {
   const rows = Array.isArray(chat) ? chat : [];
   if (!Number.isInteger(endMessageId) || endMessageId < 0 || endMessageId >= rows.length) return [];
@@ -142,7 +187,10 @@ export function assistantBoundaryExchange(chat = [], endMessageId, knownLineage 
     : chatLineage(rows);
   let startMessageId = 0;
   for (let index = endMessageId - 1; index >= 0; index -= 1) {
-    if (roleOf(rows[index]) === 'assistant') {
+    // A hidden assistant reply still ended its exchange (rebuild treats it as a boundary by default), so the
+    // user turns it answered are not captured again as current evidence for this reply.
+    const row = rows[index];
+    if (roleOf(row) === 'assistant' || (row?.is_system === true && hiddenConversationRole(row) === 'assistant')) {
       startMessageId = index + 1;
       break;
     }
@@ -160,7 +208,10 @@ export function assistantBoundaryExchange(chat = [], endMessageId, knownLineage 
 
 function clip(value, max) {
   const text = String(value ?? '').trim();
+  if (!(max > 0)) return '';
   if (text.length <= max) return text;
+  // Too small for head + marker + tail: a plain prefix keeps the result within max.
+  if (max < 80) return text.slice(0, max);
   const head = Math.floor(max * 0.55);
   const tail = max - head - 24;
   return `${text.slice(0, head)}\n...[bounded]...\n${text.slice(-tail)}`;
@@ -419,6 +470,14 @@ export function processCaptureResponse({
         continue;
       }
       admittedMutation = rebound.mutation;
+    }
+
+    // The duplicate gate only sees records that existed before this response; a second near-identical
+    // create in the same response would otherwise become a separate record for one condition.
+    if (admittedMutation.action === 'create'
+      && accepted.some(item => item.action === 'create' && duplicateSimilarity(admittedMutation, item) >= 0.78)) {
+      rejected.push(rejectedEntry('duplicate-gate', 'duplicates another create in this response', { index }));
+      continue;
     }
 
     if (evidenceSourceClass) {

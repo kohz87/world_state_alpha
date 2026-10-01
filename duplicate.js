@@ -113,7 +113,7 @@ export function consolidateCreateCandidate(
           recordId: record.id,
           summary: mutation.summary,
           status: record.status,
-          trend: mutation.trend,
+          ...(Object.hasOwn(mutation, 'trend') ? { trend: mutation.trend } : {}),
           anchors: mergeAnchors(record.anchors, mutation.anchors),
           reason: mutation.reason,
           evidence: mutation.evidence,
@@ -171,7 +171,7 @@ export function consolidateCreateCandidate(
         summary: mutation.summary,
         ...(action === 'update' ? {
           status: record.status,
-          trend: mutation.trend,
+          ...(Object.hasOwn(mutation, 'trend') ? { trend: mutation.trend } : {}),
           anchors: mergeAnchors(record.anchors, mutation.anchors),
         } : {}),
         reason: mutation.reason,

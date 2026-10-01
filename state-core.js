@@ -417,6 +417,7 @@ export function reduceMutations(inputState, batch) {
   const appendedLinks = [];
   const evidenceCounter = { value: 0 };
   const linkCounter = { value: 0 };
+  const endedInBatch = new Set();
 
   if (proposals.some(item => item?.action && item.action !== 'noop')
     && (context.messageId === null || !context.lineageKey)) {
@@ -482,6 +483,12 @@ export function reduceMutations(inputState, batch) {
       rejected.push({ mutation, reason: 'target record does not exist' });
       continue;
     }
+    // Once an earlier mutation in this batch has resolved or superseded the record, a later one in the same
+    // batch must not rewrite that ended history (for example resolve, then 'still holds firm' update).
+    if (endedInBatch.has(record.id)) {
+      rejected.push({ mutation, reason: 'target record was already ended earlier in this batch' });
+      continue;
+    }
     const priorDomain = stableStringify({
       summary: record.summary,
       status: record.status,
@@ -509,9 +516,11 @@ export function reduceMutations(inputState, batch) {
       if (Object.hasOwn(mutation, 'causedBy')) record.causedBy = uniqueStrings(mutation.causedBy, LIMITS.linksPerRecord, 120);
       if (Object.hasOwn(mutation, 'affects')) record.affects = uniqueStrings(mutation.affects, LIMITS.linksPerRecord, 120);
     } else if (action === 'resolve') {
+      endedInBatch.add(record.id);
       record.status = 'resolved';
       if (boundedText(mutation.summary, LIMITS.summaryChars)) record.summary = boundedText(mutation.summary, LIMITS.summaryChars);
     } else if (action === 'supersede') {
+      endedInBatch.add(record.id);
       record.status = 'superseded';
       if (boundedText(mutation.summary, LIMITS.summaryChars)) record.summary = boundedText(mutation.summary, LIMITS.summaryChars);
     }

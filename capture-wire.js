@@ -100,9 +100,9 @@ function normalizeMutation(raw) {
   if (raw.anchors !== undefined) {
     mutation.anchors = uniqueStrings(raw.anchors, LIMITS.anchorsPerRecord, LIMITS.anchorChars);
   }
-  if (raw.trend !== undefined) {
-    mutation.trend = raw.trend === null ? null : (RECORD_TRENDS.includes(raw.trend) ? raw.trend : null);
-  }
+  // A known trend sets it and an explicit null clears it; an unknown string (for example 'worsening') is
+  // ignored rather than read as "clear the record's trend".
+  if (RECORD_TRENDS.includes(raw.trend) || raw.trend === null) mutation.trend = raw.trend;
 
   if (action === 'create') {
     if (!RECORD_KINDS.includes(raw.kind)) throw new CaptureWireError('create mutation requires kind=fact|development');

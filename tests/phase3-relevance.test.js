@@ -290,3 +290,36 @@ test('ranking is deterministic under equal scores', () => {
   const second = selectRelevantRecords(state([a, b]), { recentText: 'They approach the gate.' });
   assert.deepEqual(first.selected.map(item => item.record.id), second.selected.map(item => item.record.id));
 });
+
+test('indexed retrieval sees the newest message even after a long older reply', async () => {
+  const { buildRelevanceIndex } = await import('../relevance.js');
+  const st = state([
+    record('kestrel', 'The Kestrel smugglers run cargo through the eastern docks.', { anchors: ['Kestrel'] }),
+    record('mill', 'The old mill is abandoned.', { anchors: ['mill'] }),
+  ]);
+  // Recent window joined oldest-first: a 200-word older reply, then the new message naming Kestrel.
+  const older = Array.from({ length: 200 }, (_, i) => 'word' + i).join(' ');
+  const recentText = older + ' Later that night I ask around about the Kestrel.';
+  const indexed = selectRelevantRecords(st, { index: buildRelevanceIndex(st), recentText, maxRecords: 6 });
+  const plain = selectRelevantRecords(st, { recentText, maxRecords: 6 });
+  assert.deepEqual(indexed.selected.map(item => item.record.id), ['kestrel']);
+  assert.deepEqual(plain.selected.map(item => item.record.id), ['kestrel']);
+});
+
+test('shared function words alone never make a record or place relevant', async () => {
+  const { buildRelevanceIndex } = await import('../relevance.js');
+  const { selectRelevantLocations } = await import('../spatial-relevance.js');
+  const { createSpatialState } = await import('../spatial-core.js');
+  const scene = 'I walk into a tavern in the rain and order a drink.';
+  const st = state([record('blockade', 'A blockade holds the harbor.', { anchors: ['harbor blockade'] })]);
+  assert.deepEqual(selectRelevantRecords(st, { recentText: scene }).selected, []);
+  assert.deepEqual(selectRelevantRecords(st, { index: buildRelevanceIndex(st), recentText: scene }).selected, []);
+
+  const spatial = createSpatialState();
+  const place = (id, name, context) => ({ id, name, type: 'landmark', status: 'active', baseRefId: null, coordinate: { x: null, y: null, authority: 'unknown', locked: false }, context, routeRefs: [], notes: '', createdAtMessage: 1, lastChangedMessage: 1, evidenceIds: [] });
+  spatial.locations.push(place('mill', 'The Old Mill', 'A ruin in the north'), place('keep', 'Kestrel Keep', 'A fort on a cliff'));
+  assert.deepEqual(selectRelevantLocations(spatial, { recentText: scene }).selected, []);
+  // A real name mention still selects the place.
+  const named = selectRelevantLocations(spatial, { recentText: 'We ride toward Kestrel Keep at dawn.' });
+  assert.deepEqual(named.selected.map(item => item.location.id), ['keep']);
+});

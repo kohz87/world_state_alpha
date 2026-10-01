@@ -11,8 +11,24 @@ function tokens(value) {
   return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];
 }
 
+// Function words carry no topical signal: shared 'a'/'the'/'in' must never make an unrelated record or
+// place look relevant. English only by necessity; content words in any script still match.
+export const RELEVANCE_STOPWORDS = Object.freeze(new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'nor', 'so', 'yet', 'of', 'to', 'in', 'on', 'at', 'by', 'for', 'from',
+  'with', 'into', 'onto', 'over', 'under', 'up', 'down', 'out', 'off', 'about', 'as', 'than', 'then', 'that',
+  'this', 'these', 'those', 'there', 'here', 'it', 'its', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'am', 'do', 'does', 'did', 'has', 'have', 'had', 'will', 'would', 'can', 'could', 'should', 'may', 'might',
+  'must', 'shall', 'not', 'no', 'i', 'me', 'my', 'we', 'us', 'our', 'you', 'your', 'he', 'him', 'his', 'she',
+  'her', 'they', 'them', 'their', 'what', 'which', 'who', 'whom', 'when', 'where', 'why', 'how', 'all', 'any',
+  'some', 'each', 'if', 'while', 'still', 'now', 'just', 'very', 'too', 'also',
+]));
+
 function tokenSet(value) {
   return new Set(tokens(value));
+}
+
+function contentTokenSet(value) {
+  return new Set(tokens(value).filter(token => !RELEVANCE_STOPWORDS.has(token)));
 }
 
 function boundedInt(value, fallback, min, max) {
@@ -22,8 +38,8 @@ function boundedInt(value, fallback, min, max) {
 }
 
 function overlapScore(leftText, rightText) {
-  const left = tokenSet(leftText);
-  const right = tokenSet(rightText);
+  const left = contentTokenSet(leftText);
+  const right = contentTokenSet(rightText);
   if (!left.size || !right.size) return 0;
 
   const shared = [];
@@ -70,18 +86,40 @@ function recordRecency(record, currentMessageId) {
   return 0;
 }
 
+const RELEVANCE_RECENT_PHRASE_TOKENS = 160;
+const RELEVANCE_LOOKUP_TOKENS = 192;
+
+function lookupTokens(list, { newestFirst = false } = {}) {
+  const out = [];
+  const seen = new Set();
+  const ordered = newestFirst ? [...list].reverse() : list;
+  for (const token of ordered) {
+    if (seen.has(token) || RELEVANCE_STOPWORDS.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+    if (out.length >= RELEVANCE_LOOKUP_TOKENS) break;
+  }
+  return out;
+}
+
 function prepareContext({ recentText = '', loreText = '', currentMessageId = null } = {}) {
   const recentNorm = normalizeText(recentText);
   const loreNorm = normalizeText(loreText);
-  const recentTokenList = tokens(recentNorm).slice(0, 96);
-  const loreTokenList = tokens(loreNorm).slice(0, 64);
+  const recentAll = tokens(recentNorm);
+  const loreAll = tokens(loreNorm);
+  // The recent window is joined oldest-first, so the bounded phrase scan takes its newest tokens; scoring
+  // still sees every token. Candidate token lookups walk newest-first and skip function words.
+  const recentTokenList = recentAll.slice(-RELEVANCE_RECENT_PHRASE_TOKENS);
+  const loreTokenList = loreAll.slice(0, 64);
   return {
     recentNorm,
     loreNorm,
     recentTokenList,
     loreTokenList,
-    recentTokens: new Set(recentTokenList),
-    loreTokens: new Set(loreTokenList),
+    recentTokens: new Set(recentAll),
+    loreTokens: new Set(loreAll),
+    recentLookupTokens: lookupTokens(recentAll, { newestFirst: true }),
+    loreLookupTokens: lookupTokens(loreAll.slice(0, 64)),
     currentMessageId,
   };
 }
@@ -566,13 +604,13 @@ function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
     visitPosting(index.anchorBigrams.get(gram), 120);
   }
 
-  for (const token of context.recentTokens) visitPosting(index.anchorTokens.get(token), 300);
-  for (const token of context.loreTokens) visitPosting(index.anchorTokens.get(token), 100);
+  for (const token of context.recentLookupTokens) visitPosting(index.anchorTokens.get(token), 300);
+  for (const token of context.loreLookupTokens) visitPosting(index.anchorTokens.get(token), 100);
 
-  for (const token of context.recentTokens) {
+  for (const token of context.recentLookupTokens) {
     visitPosting(index.summaryTokens.get(token), token.length >= 4 ? 10 : 2);
   }
-  for (const token of context.loreTokens) {
+  for (const token of context.loreLookupTokens) {
     visitPosting(index.summaryTokens.get(token), token.length >= 4 ? 4 : 1);
   }
 

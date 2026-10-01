@@ -1,5 +1,6 @@
 import { SPATIAL_LIMITS } from './constants.js';
 import { resolveEffectiveLocations, resolveEffectiveRoutes } from './spatial-core.js';
+import { RELEVANCE_STOPWORDS } from './relevance.js';
 
 function normalizeText(value) {
   return String(value ?? '')
@@ -267,10 +268,16 @@ export function selectRelevantLocations(spatialState, {
 
   const recentNorm = normalizeText(recentText);
   const loreNorm = normalizeText(loreText);
-  const recentTokenList = tokens(recentNorm).slice(0, 96);
+  // The recent window is joined oldest-first: the bounded phrase scan takes its newest tokens, name matching
+  // sees every token, and token lookups skip function words so 'the'/'a'/'in' never select a place.
+  const recentAll = tokens(recentNorm);
+  const recentTokenList = recentAll.slice(-160);
   const loreTokenList = tokens(loreNorm).slice(0, 64);
-  const recentTokens = new Set(recentTokenList);
+  const recentTokens = new Set(recentAll);
   const loreTokens = new Set(loreTokenList);
+  const contentOnly = list => [...new Set(list)].filter(token => !RELEVANCE_STOPWORDS.has(token));
+  const recentLookup = contentOnly([...recentAll].reverse()).slice(0, 192);
+  const loreLookup = contentOnly(loreTokenList);
 
   if (!recentNorm && !loreNorm) {
     return {
@@ -323,11 +330,11 @@ export function selectRelevantLocations(spatialState, {
   for (const gram of nonAsciiBigrams(recentNorm, 64)) {
     visitPosting(spatialIndex.nameBigrams.get(gram), 50);
   }
-  for (const token of recentTokens) {
+  for (const token of recentLookup) {
     visitPosting(spatialIndex.nameTokens.get(token), 30);
     visitPosting(spatialIndex.contextTokens.get(token), 12);
   }
-  for (const token of loreTokens) {
+  for (const token of loreLookup) {
     visitPosting(spatialIndex.nameTokens.get(token), 15);
     visitPosting(spatialIndex.contextTokens.get(token), 6);
   }
@@ -344,6 +351,8 @@ export function selectRelevantLocations(spatialState, {
 
     if (recentMatch > 0) score += recentMatch * 10;
     if (loreMatch > 0) score += loreMatch * 4;
+    // Without a name match, one shared description word (seed 12) is too weak to inject a place.
+    if (recentMatch <= 0 && loreMatch <= 0 && seedScore < 24) continue;
 
     candidates.push({ location: loc, score, source: 'seed' });
   }
