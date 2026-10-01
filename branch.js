@@ -63,20 +63,38 @@ export function chatLineage(chat = []) {
   return out;
 }
 
-// The lineage key of `messageId` with every message's hidden flag ignored, so
-// hiding or unhiding a message (is_system only) does not change it while any
-// swipe, edit or delete still does. Used only to match Operations-log rows
-// (missed captures) across hide/unhide; never for branch ownership.
-export function contentLineageKey(chat = [], messageId) {
+// Lineage keys with every message's hidden flag ignored, so hiding or
+// unhiding a message (is_system only) does not change them while any swipe,
+// edit or delete still does. Used only to match Operations-log rows (missed
+// captures) across hide/unhide; never for branch ownership. One pass up to the
+// highest requested message. With `expectedLineage`, every message must still
+// be the one that lineage recorded (its hidden flag aside), else no key is
+// returned for it or any later message: an in-place edit since then never
+// borrows the old row's identity.
+export function contentLineageKeys(chat = [], messageIds = [], expectedLineage = null) {
   const rows = Array.isArray(chat) ? chat : [];
-  if (!Number.isInteger(messageId) || messageId < 0 || messageId >= rows.length) return '';
+  const wanted = new Set((Array.isArray(messageIds) ? messageIds : [])
+    .filter(id => Number.isInteger(id) && id >= 0 && id < rows.length));
+  const out = new Map();
+  if (!wanted.size) return out;
+  const last = Math.max(...wanted);
   let parent = 'root';
-  for (let index = 0; index <= messageId; index += 1) {
-    const message = rows[index];
-    const shown = message && typeof message === 'object' ? { ...message, is_system: false } : message;
-    parent = deterministicId('cl', [parent, fingerprintMessage(shown)]);
+  for (let index = 0; index <= last; index += 1) {
+    const message = rows[index] && typeof rows[index] === 'object' ? rows[index] : {};
+    const shown = { ...message, is_system: false };
+    const shownFingerprint = fingerprintMessage(shown);
+    if (Array.isArray(expectedLineage)) {
+      const expected = expectedLineage[index]?.fingerprint;
+      if (!expected || (expected !== shownFingerprint && expected !== fingerprintMessage({ ...message, is_system: true }))) break;
+    }
+    parent = deterministicId('cl', [parent, shownFingerprint]);
+    if (wanted.has(index)) out.set(index, parent);
   }
-  return parent;
+  return out;
+}
+
+export function contentLineageKey(chat = [], messageId, expectedLineage = null) {
+  return contentLineageKeys(chat, [messageId], expectedLineage).get(messageId) || '';
 }
 
 function rewriteOwnedLineageMetadata(value, previousLineage, nextLineage) {

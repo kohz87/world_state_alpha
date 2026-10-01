@@ -129,12 +129,14 @@ export function rebuildStartFromOperationId(operationId) {
   return match ? Number(match[1]) : null;
 }
 
-// 'superseded': the host saw the capture's own message swiped, edited or
-// deleted before it finished, so nothing is left to recover on that lineage.
-const CAPTURE_SETTLED = new Set(['applied', 'no-change', 'superseded']);
+const CAPTURE_SETTLED = new Set(['applied', 'no-change']);
+// 'superseded': the host saw this attempt's own message swiped, edited or
+// deleted before it finished. It settles that attempt (same operation id)
+// only, never an earlier failure of the same version.
+const CAPTURE_SUPERSEDED = 'superseded';
 // A 'stale' capture was abandoned (chat switch, setting change, edit): it is a
 // missed capture unless its message's lineage changed, which the host checks.
-const CAPTURE_NOT_ATTEMPTED = new Set(['skipped']);
+const CAPTURE_NOT_ATTEMPTED = new Set(['skipped', CAPTURE_SUPERSEDED]);
 const PINNED_FAILURES = 40;
 
 function recoveryView(row) {
@@ -150,12 +152,16 @@ function recoveryView(row) {
 }
 
 function isCaptureFailure(row) {
+  // A 'stale' row from before lineage was recorded (alpha.33-40) cannot be
+  // tied to a version, and those releases treated it as never attempted.
+  if (row.outcome === 'stale' && !row.lineageKey) return false;
   return row.label === 'capture' && Number.isInteger(row.sourceMessageId)
     && !CAPTURE_SETTLED.has(row.outcome) && !CAPTURE_NOT_ATTEMPTED.has(row.outcome);
 }
 
 function isCaptureRecovery(row) {
-  return (row.label === 'capture' && Number.isInteger(row.sourceMessageId) && CAPTURE_SETTLED.has(row.outcome))
+  return (row.label === 'capture' && Number.isInteger(row.sourceMessageId)
+    && (CAPTURE_SETTLED.has(row.outcome) || row.outcome === CAPTURE_SUPERSEDED))
     || (row.label === 'rebuild' && row.outcome === 'rebuild-completed')
     || ((row.label === 'import' || row.label === 'reset') && row.outcome === 'applied');
 }
@@ -181,35 +187,57 @@ function sameCaptureLineage(failure, row) {
 // message's lineage key (so another swipe's capture does not clear it), and is
 // cleared by a later successful capture of the same message and lineage, a
 // completed rebuild whose start covers it (a rebuild also drops parked
-// branches), or an import/reset that replaced the state. Returns the latest
-// row of each unrecovered failure.
-function unrecoveredFailureRows(rows = []) {
+// branches), or an import/reset that replaced the state. Returns each
+// unrecovered version's failure rows, oldest first.
+function unrecoveredFailureLists(rows = []) {
+  // Per message version: its unrecovered failure rows, oldest first. A
+  // 'superseded' row removes only its own attempt, so an earlier failure of
+  // the same version stays listed.
   const failed = new Map();
   const ordered = (Array.isArray(rows) ? rows : [])
     .filter(row => row && typeof row === 'object')
     .map((row, index) => ({ row, index }))
     .sort((a, b) => (int(a.row.at) - int(b.row.at)) || (a.index - b.index))
     .map(item => item.row);
+  const drop = (row, matches) => {
+    for (const [key, list] of [...failed]) {
+      if (list[0].sourceMessageId !== row.sourceMessageId) continue;
+      const kept = list.filter(failure => !matches(failure));
+      if (kept.length) failed.set(key, kept);
+      else failed.delete(key);
+    }
+  };
   for (const row of ordered) {
     if (isCaptureFailure(row)) {
-      for (const [key, failure] of [...failed]) {
+      // The same story message under another lineage (a hide or unhide since) is the same version.
+      let carried = [];
+      for (const [key, list] of [...failed]) {
+        const failure = list.at(-1);
         if (failure.sourceMessageId === row.sourceMessageId && failure.lineageKey && row.lineageKey
-          && failure.lineageKey !== row.lineageKey && sameCaptureLineage(failure, row)) failed.delete(key);
+          && failure.lineageKey !== row.lineageKey && sameCaptureLineage(failure, row)) {
+          carried = carried.concat(list);
+          failed.delete(key);
+        }
       }
-      failed.set(row.sourceMessageId + '\u0001' + (row.lineageKey || ''), row);
+      const key = row.sourceMessageId + '\u0001' + (row.lineageKey || '');
+      failed.set(key, [...carried, ...(failed.get(key) || []), row]);
     } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId) && CAPTURE_SETTLED.has(row.outcome)) {
-      for (const [key, failure] of [...failed]) {
-        if (failure.sourceMessageId === row.sourceMessageId && sameCaptureLineage(failure, row)) failed.delete(key);
-      }
+      drop(row, failure => sameCaptureLineage(failure, row));
+    } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId) && row.outcome === CAPTURE_SUPERSEDED) {
+      drop(row, failure => Boolean(failure.operationId) && failure.operationId === row.operationId);
     } else if (row.label === 'rebuild' && row.outcome === 'rebuild-completed') {
       const start = rebuildStartFromOperationId(row.operationId);
       if (start === null) continue;
-      for (const [key, failure] of [...failed]) if (failure.sourceMessageId >= start) failed.delete(key);
+      for (const [key, list] of [...failed]) if (list[0].sourceMessageId >= start) failed.delete(key);
     } else if ((row.label === 'import' || row.label === 'reset') && row.outcome === 'applied') {
       failed.clear();
     }
   }
   return [...failed.values()];
+}
+
+function unrecoveredFailureRows(rows = []) {
+  return unrecoveredFailureLists(rows).map(list => list.at(-1));
 }
 
 // Failed live captures nothing has recovered: [{ messageId, lineageKey, contentLineageKey }], by message.
@@ -226,7 +254,8 @@ export function unrecoveredCaptureFailures(rows = []) {
 export function trimOperationRows(rows = [], max = DEFAULT_LIMIT) {
   const list = Array.isArray(rows) ? rows : [];
   if (list.length <= max) return list.slice();
-  const pinned = new Set(unrecoveredFailureRows(list)
+  // Every row of a still-unrecovered version, so settling one attempt never exposes a trimmed earlier one.
+  const pinned = new Set(unrecoveredFailureLists(list).flat()
     .sort((a, b) => int(b.at) - int(a.at))
     .slice(0, Math.min(PINNED_FAILURES, Math.max(0, max - 1))));
   let drop = list.length - max;

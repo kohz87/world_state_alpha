@@ -17,23 +17,25 @@ const chat = () => [
   { name: 'Sera', is_user: false, is_system: false, mes: 'The bridge falls.' },
 ];
 
-test('a capture abandoned by a chat switch is a missed capture; one whose message was replaced settles', () => {
+test('a capture abandoned by a chat switch is a missed capture; one whose message was replaced settles that attempt only', () => {
   let at = 0;
-  const row = (outcome, lineageKey = 'lnA', extra = {}) => ({ label: 'capture', outcome, sourceMessageId: 4, lineageKey, at: ++at, ...extra });
+  const row = (outcome, operationId, lineageKey = 'lnA') => ({ label: 'capture', outcome, sourceMessageId: 4, operationId, lineageKey, at: ++at });
   const ids = rows => unrecoveredCaptureFailures(rows).map(item => item.messageId);
 
   // Before: 'stale' counted as never attempted, so the reply was silently lost.
-  assert.deepEqual(ids([row('stale')]), [4]);
-  assert.equal(affectsCaptureRecovery(row('stale')), true);
-  // The host settles a capture whose own message was swiped, edited or deleted.
-  assert.deepEqual(ids([row('stale'), row('superseded')]), []);
-  assert.deepEqual(ids([row('failure'), row('superseded')]), []);
-  // ...only for that version: another swipe's settle row does not clear it.
-  assert.deepEqual(ids([row('stale'), row('superseded', 'lnB')]), [4]);
+  assert.deepEqual(ids([row('stale', 'capture:4:1:1')]), [4]);
+  assert.equal(affectsCaptureRecovery(row('stale', 'capture:4:1:1')), true);
+  // The host settles an attempt whose own message was swiped, edited or deleted.
+  assert.deepEqual(ids([row('stale', 'capture:4:1:1'), row('superseded', 'capture:4:1:1')]), []);
+  assert.deepEqual(ids([row('failure', 'capture:4:1:1'), row('superseded', 'capture:4:1:1')]), []);
+  // ...that attempt only: an earlier failure of the same version (swiped away and back) stays missed.
+  assert.deepEqual(ids([row('timeout', 'capture:4:1:1'), row('stale', 'capture:4:3:2'), row('superseded', 'capture:4:3:2')]), [4]);
+  assert.deepEqual(ids([row('stale', 'capture:4:1:1'), row('superseded', 'capture:4:9:9', 'lnB')]), [4]);
   // A capture that was dropped or undone after its 'applied' row stays missed.
-  assert.deepEqual(ids([row('applied'), row('not-saved')]), [4]);
-  // 'skipped' (capture not due) is still not a failure.
-  assert.deepEqual(ids([row('skipped')]), []);
+  assert.deepEqual(ids([row('applied', 'capture:4:1:1'), row('not-saved', 'capture:4:unsaved:1')]), [4]);
+  // 'skipped' (capture not due) is still not a failure, nor is a legacy stale row without lineage.
+  assert.deepEqual(ids([row('skipped', 'capture:4:1:1')]), []);
+  assert.deepEqual(ids([row('stale', 'capture:4:1:1', '')]), []);
 });
 
 test('hiding or unhiding an earlier message keeps a missed capture matched and clearable', () => {
@@ -124,9 +126,14 @@ test('an unreadable Operations log is never treated as empty; only a missing or 
   assert.match(source, /async function readOperationLogForMerge\(chatKey\) \{[\s\S]*?if \(error\?\.code === 'WORLD_STATE_JSON_INVALID'\) return \[\];\s*throw error;/);
   const retire = source.slice(source.indexOf('function retireOperationLog('), source.indexOf('function notify('));
   assert.doesNotMatch(retire, /\.catch\(\(\) => \[\]\)/);
-  assert.match(retire, /if \(server === null\) return;\s*\}\s*await hostStorage\.uploadJsonFile\(operationLogFile\(chatKey\), operationLogBody\(chatKey, \[\]\)\);/);
-  // A failed load is retried later instead of being remembered as loaded.
-  assert.match(source, /\.catch\(error => \{\s*\/\/[^\n]*\n\s*operationLogLoads\.delete\(chatKey\);/);
+  // An unread rename is retried and never cleared.
+  assert.match(retire, /if \(server === null\) \{[\s\S]*?retireOperationLog\(chatKey, successorKey, attempt \+ 1\)[\s\S]*?return;\s*\}\s*\}\s*await hostStorage\.uploadJsonFile\(operationLogFile\(chatKey\), operationLogBody\(chatKey, \[\]\)\);/);
+  // A postponed save is a pending timer the flush on leave/hide sees; a snapshot that never saves is parked.
+  assert.match(save, /operationLogTimers\.set\(chatKey, setTimeout\(\(\) => \{\s*operationLogTimers\.delete\(chatKey\);\s*void saveOperationLog\(chatKey, null, attempt \+ 1\);/);
+  assert.match(save, /unsavedOperationRows\.set\(chatKey, mergeOperationRows\(/);
+  assert.match(source, /function restoreUnsavedOperationRows\(chatKey\) \{[\s\S]*?diagnosticStore\.merge\(chatKey, parked\);/);
+  // A failed load is retried later instead of being remembered as loaded, without dropping a newer load.
+  assert.match(source, /if \(operationLogLoads\.get\(chatKey\) === load\) operationLogLoads\.delete\(chatKey\);/);
 });
 
 test('the live capture handler records captures the chat switch or a mid-save switch threw away', () => {
@@ -138,9 +145,13 @@ test('the live capture handler records captures the chat switch or a mid-save sw
   assert.match(handler, /if \(!isCurrent\(\)\) \{\s*if \(result\.outcome === 'applied'\) recordAbandoned\(/);
   assert.match(handler, /result\.outcome !== 'applied' && result\.outcome !== 'no-change' && messageSuperseded\(\)/);
   // The hide-insensitive key is only hashed for rows that can list or clear a failure.
-  assert.match(handler, /if \(settled && !unrecoveredCaptureFailures\(diagnosticStore\.recoveryRows\(chatKey\)\)[\s\S]{0,80}\.some\(failure => failure\.messageId === messageId\)\) return '';/);
+  assert.match(handler, /if \(settled && operationLogsHydrated\.has\(chatKey\) && !unrecoveredCaptureFailures\(diagnosticStore\.recoveryRows\(chatKey\)\)[\s\S]{0,80}\.some\(failure => failure\.messageId === messageId\)\) return '';/);
+  // Keyed from the messages and fingerprints as they were when the capture began.
+  assert.match(handler, /contentLineageKey\(captureMessages, messageId, captureLineage\)/);
+  // A superseded row settles only its own attempt.
+  assert.match(handler, /outcome: 'superseded',[\s\S]{0,200}operationId: captureOperationId,|operationId: captureOperationId,[\s\S]{0,200}outcome: 'superseded',/);
   const pending = source.slice(source.indexOf('function pendingCaptureFailures('), source.indexOf('function capturesFailedBefore('));
-  assert.match(pending, /currentContentLineageKey\(chat, lineage, messageId\) === contentKey/);
+  assert.match(pending, /currentContentLineageKeys\(chat, lineage, needKeys\)/);
   assert.match(pending, /hiddenConversationRole\(chat\[messageId\]\) === 'assistant'/);
 });
 
@@ -148,4 +159,26 @@ test('Recapture after hiding an earlier message proves its prefix with a full re
   const source = fs.readFileSync('index.js', 'utf8');
   // Before: the tail-only fast path missed the hide, so the partial rebuild refused its own prefix.
   assert.match(source, /if \(startMessageId > 0\) \{\s*(?:\/\/[^\n]*\n\s*)*const branch = await reconcileCurrentBranch\(chatKey, \{ persistRestore: true \}\);/);
+});
+
+test('review hardening: keys are verified against the capture-start lineage; settling one attempt never exposes a trimmed failure', async () => {
+  const { trimOperationRows } = await import('../diagnostics.js');
+  const messages = chat();
+  const lineage = chatLineage(messages);
+  const key = contentLineageKey(messages, 4, lineage);
+  assert.equal(key, contentLineageKey(messages, 4));
+  // Hiding is still tolerated against the recorded fingerprints...
+  assert.equal(contentLineageKey(messages.map((message, index) => index === 1 ? { ...message, is_system: true } : message), 4, lineage), key);
+  // ...but an earlier message edited in place since then yields no key instead of the edited chat's.
+  assert.equal(contentLineageKey(messages.map((message, index) => index === 3 ? { ...message, mes: 'Go to the harbor.' } : message), 4, lineage), '');
+
+  // An earlier failure of a version stays pinned while a later attempt of it is open, then settled.
+  let at = 0;
+  const failure = { label: 'capture', outcome: 'timeout', sourceMessageId: 4, operationId: 'capture:4:1:1', lineageKey: 'lnA', at: ++at };
+  const rows = [failure, { label: 'capture', outcome: 'stale', sourceMessageId: 4, operationId: 'capture:4:2:2', lineageKey: 'lnA', at: ++at }];
+  for (let id = 0; id < 30; id += 1) rows.push({ label: 'rebuild', outcome: 'applied', sourceMessageId: 100 + id, operationId: 'rebuild:200:1:100:' + id, at: ++at });
+  const trimmed = trimOperationRows(rows, 6);
+  assert.ok(trimmed.includes(failure));
+  const settled = [...trimmed, { label: 'capture', outcome: 'superseded', sourceMessageId: 4, operationId: 'capture:4:2:2', lineageKey: 'lnA', at: ++at }];
+  assert.deepEqual(unrecoveredCaptureFailures(settled).map(item => item.messageId), [4]);
 });

@@ -1563,7 +1563,9 @@ test('unrecovered live capture failures come only from the Operations log and cl
   ];
   assert.deepEqual(ids(rows), [5, 7, 9]);
   // An abandoned (stale) capture is missed; the host drops it when the message's lineage changed.
-  assert.deepEqual(ids([...rows, row('capture', 'stale', 11)]), [5, 7, 9, 11]);
+  assert.deepEqual(ids([...rows, row('capture', 'stale', 11, 'capture:11:3:1', 'ln11')]), [5, 7, 9, 11]);
+  // A stale row from before lineage was recorded stays "never attempted", as those releases saved it.
+  assert.deepEqual(ids([...rows, row('capture', 'stale', 11)]), [5, 7, 9]);
 
   // A later successful capture of that message recovers it; a later failure brings it back.
   assert.deepEqual(ids([...rows, row('capture', 'no-change', 7)]), [5, 9]);
@@ -1620,7 +1622,9 @@ test('only rows that change missed-capture recovery skip the Operations log quie
   assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'applied', sourceMessageId: 4 }, { failuresListed: true }), true);
   assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'skipped', sourceMessageId: 4 }, { failuresListed: true }), false);
   // An abandoned capture is saved at once like any other missed capture.
-  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'stale', sourceMessageId: 4 }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'stale', sourceMessageId: 4, lineageKey: 'ln4' }), true);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'superseded', sourceMessageId: 4 }), false);
+  assert.equal(affectsCaptureRecovery({ label: 'capture', outcome: 'superseded', sourceMessageId: 4 }, { failuresListed: true }), true);
   assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'rebuild-completed' }, { failuresListed: true }), true);
   assert.equal(affectsCaptureRecovery({ label: 'rebuild', outcome: 'applied' }, { failuresListed: true }), false);
   assert.equal(affectsCaptureRecovery({ label: 'reset', outcome: 'applied' }, { failuresListed: true }), true);

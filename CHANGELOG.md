@@ -16,6 +16,15 @@ Fixes from the whole-codebase audit for the Missed captures feature (alpha.41). 
   - A save now waits and retries instead; only a missing or corrupt file counts as empty.
   - A rename leaves unread rows in the old file.
   - A failed load is retried.
+- **Hardened after code review of this batch.**
+  - The hide-insensitive key is checked against the messages as they were when the capture began, so an earlier message edited mid-capture never makes an abandoned version look current.
+  - A "superseded" row settles only its own capture attempt. An earlier failure of the same reply, for example one you swiped away from and back to, stays listed, and log trimming keeps it.
+  - A capture's success row still carries its key while the saved log is loading, so a failure loaded afterwards is still cleared.
+  - Stale rows from releases before lineage was recorded are still ignored.
+  - A postponed log save is flushed when you leave the chat or hide the page. Rows whose save never succeeds are kept and saved the next time that chat's log loads.
+  - A rename retries an unread log before giving up.
+  - A slow failed load no longer cancels a newer one.
+  - The panel computes missed-capture keys in one pass and remembers them.
 
 ### Architecture
 
