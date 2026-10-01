@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.9.0-alpha.43 - Audit batch 2: capture and injection quality
+
+Fixes from the whole-codebase audit, each reproduced first and covered by a regression test that fails on 0.9.0-alpha.42.
+
+### Fixed
+
+- **Injection ignored the newest message.** Retrieval only used the first 96 words of the recent window, which runs oldest-first, so a record named only in your latest message was often not even a candidate. The newest end of the window is now used, for records and Places.
+- **Common words made unrelated things "relevant".** Shared words like "a", "the", "in" counted as matches, so unrelated records and places filled the injection slots. Function words are now ignored, and a place needs a name match or more than one shared description word.
+- **Updates erased a record's details by accident.**
+  - an update whose proposed anchors were all unsupported wiped the record's anchors;
+  - a redundant create turned into an update reset the development's trend;
+  - an unknown trend word (for example "worsening") cleared the trend;
+  - an evolution reply with empty optional fields wiped anchors and trend, and could replace anchors outright. Evolution can now only add anchors.
+  - An explicit empty anchor list or `null` trend from capture still clears, as before.
+- **One reply could rewrite history.** A reply that resolved a record and then updated it ("still holds firm") rewrote the resolved record; the later change is now refused. Two near-identical creates in one reply no longer become two records.
+- **Evolution rejected a reply in a ```json code block**, which capture already accepts, and lost that elapsed-time catch-up.
+- **A time skip was missed** when the same phrase first appeared in dialogue (`"Two weeks later is too late," she said. Two weeks later, …`).
+- **Hidden messages.** Live capture re-read user turns that a hidden reply had already answered; it now treats a hidden reply as the end of its exchange, like rebuild. A rebuild with hidden messages excluded no longer sends hidden user turns.
+- **Capture prompt details.** World_State checklist bullets containing a colon ("- The Iron Watch: …") were dropped; the 12,000-character exchange budget could be overrun by about 58%.
+- **Places.**
+  - Injection could show the literal words "target"/"known anchor" for a relation to a place not shown; such relations are now left out, and road distances say "by route".
+  - Capture could rename a place to a name never narrated.
+  - An invented out-of-bounds coordinate threw away an otherwise valid new place; the coordinate is now dropped instead.
+
+### Architecture
+
+- Core contract updated: one-object envelope rule now covers evolution; relevance ignores function words and reads the newest window; in-response ended-record and duplicate rules; update omission/clear semantics; hidden-reply boundaries. Canonical schema stays 2; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- New `tests/audit-batch2.test.js` and relevance cases; each fails on the previous release.
+- Live in SillyTavern with a stub model: capture, a failed capture, Recapture, rebuild and reload still behave as before. How these changes affect capture quality with a real model remains to be seen in play.
+
 ## 0.9.0-alpha.42 - Audit batch 1: data safety
 
 Fixes from a whole-codebase audit, each reproduced first and covered by a regression test.
