@@ -1,8 +1,9 @@
-import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, reconcileBranch, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, firstStoryChange, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, normalizeCaptureExchange, roleOf, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
+import { applySpatialUndoPatch } from './spatial-core.js';
 import { canonicalDomain, clone, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
@@ -310,6 +311,62 @@ export function compareWorldStateSemantics(left, right) {
   };
 }
 
+function spatialHasContent(spatial) {
+  return Boolean(spatial?.locations?.length || spatial?.relations?.length || spatial?.routes?.length);
+}
+
+// With Spatial extraction off a rebuild still owns Spatial rollback. The
+// original journal says when each Spatial change happened, so the rebuild
+// replays it at the boundary where it happened (the first boundary at or after
+// the change) and rollback undoes places with the records of that reply.
+// Changes made after the chat's first real story change since the state was
+// saved are not replayed (hide/unhide is not a change). When the chat changed
+// at or below the journal floor while places existed, which places belong to
+// the current story cannot be told apart: the rebuild still runs (Reality must
+// stay recoverable) and keeps the places held at the floor, but says so.
+function disabledSpatialTimeline(original, chat) {
+  const journal = Array.isArray(original.rollbackJournal) ? original.rollbackJournal : [];
+  const floor = Number.isInteger(original.rollbackJournalFloorMessageId) ? original.rollbackJournalFloorMessageId : -1;
+  // Only Spatial patches are replayed; with none, Places stayed as they were since the floor.
+  if (!journal.some(entry => entry?.undo?.spatial)) {
+    const heldBeforeFloor = floor >= 0 && spatialHasContent(original.spatial);
+    return {
+      base: clone(original.spatial),
+      unprovableBelow: heldBeforeFloor ? floor : -1,
+      unverified: heldBeforeFloor && firstStoryChange(original.lineage, chat) <= floor,
+      at: () => clone(original.spatial),
+    };
+  }
+  const divergence = firstStoryChange(original.lineage, chat);
+  const bySeq = new Map(journal.map(entry => [entry.seq, entry]));
+  const steps = [];
+  let spatial = clone(original.spatial);
+  let seq = Math.max(0, Number(original.rollbackHead?.seq) || 0);
+  while (seq > 0) {
+    const entry = bySeq.get(seq);
+    if (!entry) break;
+    if (entry.undo?.spatial) {
+      if (entry.messageId < divergence) steps.push({ messageId: entry.messageId, spatial });
+      spatial = applySpatialUndoPatch(spatial, entry.undo.spatial);
+    }
+    seq = entry.prevSeq;
+  }
+  steps.reverse();
+  const base = spatial;
+  const heldBeforeFloor = floor >= 0 && spatialHasContent(base);
+  return {
+    base: clone(base),
+    // Below this boundary the Spatial history is unknown (nothing proves when those places appeared).
+    unprovableBelow: heldBeforeFloor ? floor : -1,
+    unverified: heldBeforeFloor && divergence <= floor,
+    at(messageId, last = false) {
+      let current = base;
+      for (const step of steps) if (last || step.messageId <= messageId) current = step.spatial;
+      return clone(current);
+    },
+  };
+}
+
 export async function runManualRebuild({
   ctx,
   state,
@@ -362,6 +419,19 @@ export async function runManualRebuild({
       failedBoundary: null,
     };
   }
+
+  const spatialTimeline = spatialEnabled ? null : disabledSpatialTimeline(original, chat);
+  const warnings = spatialTimeline?.unverified
+    ? [{
+      code: 'WORLD_STATE_REBUILD_SPATIAL_HISTORY_UNVERIFIED',
+      message: 'Places were kept as they were before the oldest saved change, but the chat changed before that point, so some places may belong to an abandoned branch. Review Places, or rebuild with Places extraction on.',
+    }]
+    : [];
+  const lastWindowMessageId = plan.windows.length ? plan.windows[plan.windows.length - 1].messageId : null;
+  // The candidate's Spatial after boundary `messageId` when extraction is off.
+  const withDisabledSpatial = (state, messageId) => (spatialTimeline
+    ? { ...state, spatial: spatialTimeline.at(messageId, messageId === lastWindowMessageId) }
+    : state);
 
   // An operator-initiated resume continues a failed rebuild from its failed
   // boundary with the candidate accepted up to there. It is only valid while
@@ -445,8 +515,8 @@ export async function runManualRebuild({
       root.spatial.profile = spatialProfile || original.spatial?.profile || null;
       root.spatial.baseMapRef = original.spatial?.baseMapRef || null;
     } else {
-      // Reality-only rebuild must never erase the disabled sibling subsystem.
-      root.spatial = clone(original.spatial);
+      // Reality-only rebuild keeps the disabled sibling subsystem: its state before the first replayed change.
+      root.spatial = spatialTimeline.base;
     }
     candidate = seedRootCheckpoint(root);
   }
@@ -516,7 +586,7 @@ export async function runManualRebuild({
     // reply, or only <writer_state>/tracker blocks) has nothing to capture. Live capture skips it with the
     // same captureDue rule, so the rebuild advances past it without a provider call instead of failing.
     if (!captureDue({ exchange: window.exchange, sourceMessageId: window.messageId })) {
-      candidate = commitMutationBoundary(candidate, candidate, chat.slice(0, window.messageId + 1), window.messageId, 'rebuild');
+      candidate = commitMutationBoundary(candidate, withDisabledSpatial(candidate, window.messageId), chat.slice(0, window.messageId + 1), window.messageId, 'rebuild');
       receipts.push({ messageId: window.messageId, outcome: 'empty-boundary', providerCalls: 0, applied: 0, rejected: 0, aliasRepairs: 0, completenessHints: 0, rejections: [] });
       processedBoundaries += 1;
       await reportProgress(window.messageId, { boundaryApplied: 0, boundaryRejected: 0, aliasRepairs: 0, completenessHints: 0 });
@@ -633,7 +703,7 @@ export async function runManualRebuild({
     {
       candidate = commitMutationBoundary(
         beforeStep,
-        result.state,
+        withDisabledSpatial(result.state, window.messageId),
         chat.slice(0, window.messageId + 1),
         window.messageId,
         'rebuild',
@@ -652,6 +722,23 @@ export async function runManualRebuild({
 
   candidate.lineage = plan.lineage;
   candidate.recoveryRequired = null;
+  if (spatialTimeline && spatialTimeline.unprovableBelow >= 0 && plan.metrics.startMessageId <= spatialTimeline.unprovableBelow) {
+    // Places existed before the oldest saved change, so a rollback below it cannot be proven: keep only
+    // journal entries and checkpoints from there on, exactly like a trimmed journal (it fails closed).
+    // The first kept entry's state before it is also the state at the floor (no boundary lies between).
+    const cutoff = spatialTimeline.unprovableBelow;
+    candidate.rollbackJournal = (candidate.rollbackJournal || []).filter(entry => entry.messageId > cutoff);
+    if (candidate.rollbackJournal[0]) {
+      candidate.rollbackJournal[0].prevSeq = 0;
+      candidate.rollbackJournal[0].beforeMessageId = Math.max(candidate.rollbackJournal[0].beforeMessageId, cutoff);
+    }
+    candidate.checkpoints = (candidate.checkpoints || []).filter(item => item.messageId >= cutoff);
+    if (candidate.rollbackHead && !candidate.rollbackJournal.some(entry => entry.seq === candidate.rollbackHead.seq)) candidate.rollbackHead = null;
+    candidate.rollbackJournalFloorMessageId = Math.max(
+      Number.isInteger(candidate.rollbackJournalFloorMessageId) ? candidate.rollbackJournalFloorMessageId : -1,
+      cutoff,
+    );
+  }
   candidate = normalizeState(candidate, { strictSchema: true, chatKey: owner });
 
   if (!current()) {
@@ -676,5 +763,6 @@ export async function runManualRebuild({
     snapshotToken,
     failedBoundary: null,
     receipts,
+    warnings,
   };
 }

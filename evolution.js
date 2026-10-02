@@ -846,6 +846,12 @@ export async function prepareWorldStateContinuity({
   isCurrent = undefined,
   diagnostics = undefined,
   dispatcher = dispatchWorldStateRequest,
+  // false: do not apply evolution's record changes to `index` and return no
+  // post-evolution injection, so a host publishes evolution.indexDelta with the
+  // state only once it is saved. Background selection still advances the
+  // index's catch-up cursor/boundary, so a host must rebuild the index from its
+  // cached state when the save does not happen.
+  publishIndex = true,
 } = {}) {
   const beforeInjection = buildWorldStateInjection(state, {
     index,
@@ -934,6 +940,9 @@ export async function prepareWorldStateContinuity({
   evolution.backgroundSelection = backgroundSelection.metrics;
 
   const nextState = evolution.state || state;
+  if (!publishIndex) {
+    return { state: nextState, injection: null, evolution, providerCalls: evolution.providerCalls || 0 };
+  }
   if (index && evolution.indexDelta) {
     updateRelevanceIndex(index, evolution.indexDelta);
   }

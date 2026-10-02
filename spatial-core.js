@@ -238,6 +238,7 @@ export function normalizeSpatialLocation(raw, { strict = false } = {}) {
     lastChangedMessage,
     evidenceIds,
     notes,
+    ...(raw.operatorOwned === true ? { operatorOwned: true } : {}),
   };
 }
 
@@ -266,6 +267,7 @@ export function normalizeSpatialRelation(raw, { strict = false } = {}) {
     distanceMode,
     notes,
     evidenceIds,
+    ...(raw.operatorOwned === true ? { operatorOwned: true } : {}),
   };
 }
 
@@ -289,6 +291,7 @@ export function normalizeSpatialRoute(raw) {
     waypoints,
     context,
     evidenceIds,
+    ...(raw.operatorOwned === true ? { operatorOwned: true } : {}),
   };
 }
 
@@ -383,6 +386,15 @@ export function normalizeSpatialState(raw, { strict = false } = {}) {
       } catch (error) {
         if (strict) throw error;
       }
+    }
+  }
+
+  // Operator authorship is kept on the entity itself, so trimming its bounded
+  // evidence or relabelling it on import never hands it back to the model. A
+  // state saved before the flag existed derives it from manual evidence.
+  for (const entity of [...spatial.locations, ...spatial.relations, ...spatial.routes]) {
+    if (entity.operatorOwned !== true && (entity.evidenceIds || []).some(id => spatial.evidence[id]?.sourceClass === 'manual')) {
+      entity.operatorOwned = true;
     }
   }
 
@@ -795,6 +807,8 @@ function addEntitySpatialEvidence(spatial, entity, locationIds, proposal, contex
     added.push(id);
   }
   entity.evidenceIds = boundedEvidenceRefs([...(entity.evidenceIds || []), ...added]);
+  // Manual evidence marks operator authorship on the entity, independent of evidence retention.
+  if (added.some(id => spatial.evidence[id]?.sourceClass === 'manual')) entity.operatorOwned = true;
 }
 
 function addSpatialEvidence(spatial, location, proposal, context, chatKey, counter) {
@@ -924,12 +938,15 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
                 rejected.push({ proposal, reason: 'cannot overwrite locked coordinate' });
                 continue;
               }
-              if (priorRank > proposedRank
-                && (priorCoord.x !== proposedCoord.x || priorCoord.y !== proposedCoord.y)) {
-                rejected.push({ proposal, reason: `cannot overwrite coordinate with lower authority (${proposedCoord.authority} < ${priorCoord.authority})` });
-                continue;
+              if (priorRank > proposedRank) {
+                if (priorCoord.x !== proposedCoord.x || priorCoord.y !== proposedCoord.y) {
+                  rejected.push({ proposal, reason: `cannot overwrite coordinate with lower authority (${proposedCoord.authority} < ${priorCoord.authority})` });
+                  continue;
+                }
+                // A confirmation of the same position only adds evidence: the stronger authority stays.
+              } else {
+                existingLoc.coordinate = proposedCoord;
               }
-              existingLoc.coordinate = proposedCoord;
             }
           } else {
             // Manual/operator edits may explicitly clear X/Y.
@@ -937,7 +954,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
           }
         }
 
-        const hasManualEvidence = (existingLoc.evidenceIds || [])
+        const hasManualEvidence = existingLoc.operatorOwned === true || (existingLoc.evidenceIds || [])
           .some(id => spatial.evidence?.[id]?.sourceClass === 'manual');
         const preserveManualMetadata = automaticNarrative && hasManualEvidence;
 
@@ -1069,6 +1086,8 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         targetLoc.evidenceIds = boundedEvidenceRefs([...targetLoc.evidenceIds, ...sourceLoc.evidenceIds]);
         if (!targetLoc.context && sourceLoc.context) targetLoc.context = sourceLoc.context;
         if (!targetLoc.notes && sourceLoc.notes) targetLoc.notes = sourceLoc.notes;
+        // Operator authority survives the merge even when the source's manual evidence is trimmed.
+        if (sourceLoc.operatorOwned === true) targetLoc.operatorOwned = true;
 
         const targetRank = authorityRank(targetLoc.coordinate?.authority, targetLoc.coordinate?.locked);
         const sourceRank = authorityRank(sourceLoc.coordinate?.authority, sourceLoc.coordinate?.locked);
@@ -1079,7 +1098,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         }
 
         const rewritten = [];
-        const relSeen = new Set();
+        const relSeen = new Map();
         for (const rel of spatial.relations) {
           const nextRel = {
             ...rel,
@@ -1088,8 +1107,13 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
           };
           if (nextRel.fromId === nextRel.toId) continue;
           const sig = [nextRel.fromId, nextRel.toId, nextRel.direction || '', nextRel.distanceKm ?? '', nextRel.distanceMode || ''].join('|');
-          if (relSeen.has(sig)) continue;
-          relSeen.add(sig);
+          const kept = relSeen.get(sig);
+          if (kept) {
+            // A dropped duplicate's operator authority moves to the relation that is kept.
+            if (nextRel.operatorOwned === true) kept.operatorOwned = true;
+            continue;
+          }
+          relSeen.set(sig, nextRel);
           rewritten.push(nextRel);
         }
         spatial.relations = rewritten;
@@ -1144,7 +1168,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       let existingRel = spatial.relations.find(r => r.id === id || (r.fromId === fromId && r.toId === toId));
 
       if (existingRel) {
-        const hasManualEvidence = (existingRel.evidenceIds || [])
+        const hasManualEvidence = existingRel.operatorOwned === true || (existingRel.evidenceIds || [])
           .some(evidenceId => spatial.evidence?.[evidenceId]?.sourceClass === 'manual');
         const preserveManualRelation = automaticNarrative && hasManualEvidence;
         if (!preserveManualRelation) {
@@ -1207,7 +1231,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       let existingRt = spatial.routes.find(r => r.id === id || r.name.toLowerCase() === name.toLowerCase());
 
       if (existingRt) {
-        const hasManualEvidence = (existingRt.evidenceIds || [])
+        const hasManualEvidence = existingRt.operatorOwned === true || (existingRt.evidenceIds || [])
           .some(evidenceId => spatial.evidence?.[evidenceId]?.sourceClass === 'manual');
         const preserveManualRoute = automaticNarrative && hasManualEvidence;
         if (!preserveManualRoute) {

@@ -634,7 +634,7 @@ test('host guards the latest captured boundary against passive post-processing r
   assert.match(source, /source\.on\(events\[name\], \(\) => handleBranchChange\(name\)\)/);
   assert.match(
     source,
-    /persisted\.stale[\s\S]*resetRelevanceIndex\(chatKey, before\)[\s\S]*return;[\s\S]*setCachedState\(chatKey, committed[\s\S]*passiveCaptureRebaseCandidates\.set\(chatKey, messageId\)/,
+    /if \(persisted\.stale\) return;[\s\S]*setCachedState\(chatKey, committed[\s\S]*passiveCaptureRebaseCandidates\.set\(chatKey, messageId\)/,
     'a capture invalidated during persistence must return before publishing or reinstalling passive rewrite eligibility',
   );
 });
