@@ -214,6 +214,26 @@ function hydrateOperationLog(chatKey) {
   return operationLogLoads.get(chatKey);
 }
 
+// Another device or tab may have recovered (or added) missed captures since this
+// session loaded the saved log; opening the panel merges it again (rate-limited).
+const OPERATION_LOG_REFRESH_MS = 3000;
+const operationLogRefreshedAt = new Map();
+
+async function refreshOperationLogFromServer(chatKey) {
+  if (!chatKey || chatKey === 'no-chat' || retiredOperationLogs.has(chatKey)) return;
+  const now = Date.now();
+  if (now - (operationLogRefreshedAt.get(chatKey) || 0) < OPERATION_LOG_REFRESH_MS) return;
+  operationLogRefreshedAt.set(chatKey, now);
+  try {
+    const rows = await readOperationLog(chatKey);
+    if (!rows.length || currentChatKey() !== chatKey) return;
+    diagnosticStore.merge(chatKey, rows);
+    if (panelChatKey === chatKey) refreshPanel();
+  } catch (error) {
+    console.warn('[World State Alpha] saved Operations log could not be refreshed; the panel shows this session\'s rows.', error);
+  }
+}
+
 // Same cross-tab (Web Locks) + in-process writer lock the sidecar uses.
 function queueOperationLogWrite(chatKey, task) {
   return withWorldStateFileLock(operationLogFile(chatKey), task);
@@ -3257,12 +3277,19 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const sourceMessageId = Math.max(0, chat.length - 1);
     const totalBoundaries = rebuildPlan.metrics.assistantBoundaries;
     const startEpoch = epoch(chatKey);
-    const startLineage = stableStringify(chatLineage(chat));
+    const startLineage = chatLineage(chat);
+    const startTailKey = startLineage.length ? startLineage[startLineage.length - 1].lineageKey : '';
     const operationId = 'rebuild:' + sourceMessageId + ':' + startEpoch + ':' + startMessageId
       + (savedResume ? ':resume-' + savedResume.resume.fromMessageId + '-' + Date.now().toString(36) : '');
-    const isCurrent = () => currentChatKey() === chatKey
-      && epoch(chatKey) === startEpoch
-      && stableStringify(chatLineage(getContext().chat || [])) === startLineage;
+    // Messages added after the rebuilt range (the operator keeps playing) leave it intact: lineage keys
+    // chain, so an unchanged key at the start's last message proves the whole range unchanged. Any swipe,
+    // edit or delete inside it still stops the rebuild. New replies are captured live once it is saved.
+    const isCurrent = () => {
+      if (currentChatKey() !== chatKey || epoch(chatKey) !== startEpoch) return false;
+      const live = chatLineage(getContext().chat || []);
+      return live.length >= startLineage.length
+        && (!startTailKey || live[startLineage.length - 1]?.lineageKey === startTailKey);
+    };
     const settings = getWorldStateSettings();
     const baseMap = await getChatBaseMap(chatKey, state);
     if (!isCurrent()) return;
@@ -4468,6 +4495,7 @@ export async function openWorldStatePanel() {
   try {
     await ensureChatStateLoaded(chatKey);
     await refreshChatStateFromServer(chatKey, { reason: 'panel-open' });
+    void refreshOperationLogFromServer(chatKey);
   } catch {
     if (currentChatKey() === chatKey) {
       notify('error', 'World State Alpha cannot open this chat until its durable state can be loaded safely.');
