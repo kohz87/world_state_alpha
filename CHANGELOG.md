@@ -17,6 +17,16 @@ Fixes for the eight high-priority findings of an external audit of alpha.44. Eac
 - **A07 - Confirming a place's position downgraded its authority.** A narrated confirmation of the same coordinates replaced a stronger authority, so a later narration could move a protected place. It now only adds evidence.
 - **A08 - Quoted time could count as elapsed time** (a regression from alpha.43). After rejecting one quoted phrase, the next one was checked without its opening quote, so `"Two weeks later or after three months, we return."` counted as three months passing. Every phrase is now judged in place, with its full quote and sentence; single-quoted dialogue counts too.
 - **A18 (fixed along with A08) - A short time skip hid a longer one.** "Two hours later … Five weeks later …" now counts the five weeks.
+- **Hardened after code review of this release.**
+  - Hiding an earlier message no longer counts as a branch change for a rebuild with Places off. Before, places created after the hidden message were dropped.
+  - When the story changed before the oldest saved change, the rebuild no longer refuses. It rebuilds Reality, keeps the places it had, and warns you to review them, so your main recovery path is never blocked.
+  - The reply right after the oldest saved change can still be swiped after such a rebuild.
+  - The Places-off rebuild now replays only place changes, so a chat without places does no extra work.
+  - A catch-up that couldn't be saved no longer marks its time skip as done, so it is retried.
+  - A speech longer than 600 characters no longer shifts which text counts as quoted.
+  - Single-quoted dialogue with a contraction ("we'll") is still dialogue, and "we'll" counts as a plan.
+  - The newest message's time phrase still decides, so an older skip never re-fires over it.
+  - Merging an operator-edited place keeps its protection.
 
 ### Architecture
 
@@ -24,7 +34,7 @@ Fixes for the eight high-priority findings of an external audit of alpha.44. Eac
 
 ### Validation
 
-- New `tests/audit-alpha45.test.js`; each case fails on the previous release.
+- New `tests/audit-alpha45.test.js`; each case fails on the previous release (the review cases fail on the first alpha.45 draft).
 - Live in SillyTavern with a stub model: the alpha.44 missed-capture scenarios, Recapture, swipes, renaming a chat away and back, and Places lock/duplicate all behave as before.
 - Not verified: a real model, two real devices, or a live save conflict.
 

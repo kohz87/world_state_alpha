@@ -446,6 +446,16 @@ function semanticRewritePlan(previousLineage, currentLineage, chat = []) {
   return { kind: 'semantic-rebase', changedMessageIds };
 }
 
+// The first message whose story really changed since `previousLineage` was
+// recorded (hide/unhide and narration-equivalent rewrites are not changes),
+// or `previousLineage.length` when none did.
+export function firstStoryChange(previousLineage, chat) {
+  const previous = Array.isArray(previousLineage) ? previousLineage : [];
+  const rows = Array.isArray(chat) ? chat : [];
+  const plan = semanticRewritePlan(previous, chatLineage(rows), rows);
+  return plan.kind === 'destructive' ? plan.firstSemantic : previous.length;
+}
+
 export function reconcileBranch(inputState, chat, options = {}) {
   const state = normalizeState(clone(inputState));
   const currentLineage = chatLineage(chat);

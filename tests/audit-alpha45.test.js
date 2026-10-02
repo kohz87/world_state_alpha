@@ -41,7 +41,11 @@ test('A01/A02: the past-chat rename writes the server state with its own revisio
   assert.doesNotMatch(source, /resetRelevanceIndex\(chatKey, before\)/);
   assert.match(source, /function resetIndexesFromCache\(chatKey\) \{\s*const current = stateCache\.get\(chatKey\) \|\| null;/);
   const capture = source.slice(source.indexOf('async function handleAssistantMessage('), source.indexOf('async function handleUserMessage('));
-  assert.match(capture, /if \(persisted\.stale\) \{\s*resetIndexesFromCache\(chatKey\);\s*return;/);
+  // Capture never touches the shared index before saving, and a conflict already re-hydrated it.
+  assert.match(capture, /if \(persisted\.stale\) return;/);
+  // Evolution's background cursor moved: any unsaved outcome rebuilds the index from the cached state.
+  const continuity = source.slice(source.indexOf('async function handleUserMessage('), source.indexOf('async function handleBranchChange('));
+  assert.equal((continuity.match(/resetIndexesFromCache\(chatKey\);/g) || []).length, 4);
 });
 
 test('A05: evolution leaves the shared index alone until the host has saved its state', async () => {
@@ -128,12 +132,23 @@ test('A03/A04: a Reality-only rebuild keeps places changed in its range and stil
   // The original state rolls back the same way.
   assert.deepEqual(reconcileBranch(original, swiped).state.spatial.locations, []);
 
-  // A chat that left the branch below the oldest saved change while places exist cannot be separated: refuse.
+  // Hiding an earlier message is not a branch change: the place is still replayed and owned by its reply.
+  const hidden = placeChat.map((message, index) => index === 0 ? { ...message, is_system: true } : message);
+  const afterHide = await runManualRebuild({ ctx: {}, state: original, chat: hidden, chatKey: 'a03', isCurrent: () => true, dispatcher });
+  assert.deepEqual(afterHide.state.spatial.locations.map(item => item.name), ['Old Watchtower']);
+  assert.deepEqual(afterHide.warnings, []);
+
+  // A chat that changed below the oldest saved change while places exist cannot be told apart: Reality is
+  // still rebuilt, the places held at the floor are kept, and the operator is told to review them.
   const trimmed = normalizeState({ ...original, rollbackJournal: [], rollbackHead: null, rollbackJournalFloorMessageId: 3 });
   const diverged = placeChat.map((message, index) => index === 1 ? { ...message, mes: 'The road ends at a river.' } : message);
-  const refused = await runManualRebuild({ ctx: {}, state: trimmed, chat: diverged, chatKey: 'a03', isCurrent: () => true, dispatcher });
-  assert.equal(refused.outcome, 'failure');
-  assert.equal(refused.errorCode, 'WORLD_STATE_REBUILD_SPATIAL_HISTORY_UNAVAILABLE');
+  const unverified = await runManualRebuild({ ctx: {}, state: trimmed, chat: diverged, chatKey: 'a03', isCurrent: () => true, dispatcher });
+  assert.equal(unverified.outcome, 'completed');
+  assert.deepEqual(unverified.warnings.map(item => item.code), ['WORLD_STATE_REBUILD_SPATIAL_HISTORY_UNVERIFIED']);
+  assert.deepEqual(unverified.state.spatial.locations.map(item => item.name), ['Old Watchtower']);
+  // Places held before the floor bound the rebuilt journal to it: a rollback below it fails closed.
+  assert.ok(unverified.state.rollbackJournalFloorMessageId >= 3);
+  assert.equal(reconcileBranch(unverified.state, diverged.slice(0, 2)).failClosed, true);
 });
 
 function manualPlace() {
@@ -190,4 +205,43 @@ test('A07: confirming the same coordinates never downgrades campaign authority',
   });
   assert.deepEqual([move.spatial.locations[0].coordinate.x, move.spatial.locations[0].coordinate.y], [10, 20]);
   assert.equal(move.rejected.length, 1);
+});
+
+test('review hardening: long or contracted dialogue, newest-message precedence, merged ownership, and the first entry after the floor', async () => {
+  // A speech longer than 600 characters never shifts quote pairing onto the narration after it.
+  assert.equal(elapsed('"' + 'x'.repeat(650) + '" Two weeks later, the camp emptied. "Fine," she said.')?.raw, 'Two weeks later');
+  // Single-quoted dialogue with a contraction is still dialogue, and "we'll" is a plan.
+  assert.equal(elapsed("'Two weeks later, we'll be gone,' she said."), null);
+  assert.equal(elapsed("Two weeks later, we'll be gone."), null);
+  // The newest message with a time phrase decides; an older meaningful skip never re-fires over it.
+  const exchange = [
+    { messageId: 10, role: 'assistant', lineageKey: 'a', content: 'Three weeks later the snow melted.' },
+    { messageId: 11, role: 'user', lineageKey: 'b', content: 'I wait.' },
+    { messageId: 12, role: 'assistant', lineageKey: 'c', content: 'An hour later the fire died.' },
+  ];
+  assert.equal(detectElapsedHintFromExchange(exchange)?.raw, 'An hour later');
+
+  // Merging an operator-owned place keeps that authority on the surviving place.
+  const owned = manualPlace();
+  const withDuplicate = reduceSpatialMutations(owned.spatial, {
+    chatKey: 'a06', messageId: 4, lineageKey: 'ln4', operation: 'capture',
+    mutations: [{ action: 'upsert_location', name: 'Watchtower Ruin', type: 'landmark', evidence: [{ sourceMessageId: 4, claim: 'A ruin.' }] }],
+  }).spatial;
+  const sourceId = withDuplicate.locations.find(item => item.name === 'Old Watchtower').id;
+  const targetId = withDuplicate.locations.find(item => item.name === 'Watchtower Ruin').id;
+  const merged = reduceSpatialMutations(withDuplicate, {
+    chatKey: 'a06', messageId: 5, lineageKey: 'ln5', operation: 'manual',
+    mutations: [{ action: 'merge_locations', sourceId, targetId }],
+  }).spatial;
+  assert.equal(merged.locations.find(item => item.id === targetId).operatorOwned, true);
+
+  // Bounding the rebuilt journal to the floor keeps the first entry after it, so that reply still rolls back.
+  const original = stateWithCapturedPlace();
+  const trimmed = normalizeState({ ...original, rollbackJournal: [], rollbackHead: null, rollbackJournalFloorMessageId: 1 });
+  const rebuilt = await runManualRebuild({ ctx: {}, state: trimmed, chat: placeChat, chatKey: 'a03', isCurrent: () => true, dispatcher });
+  assert.equal(rebuilt.outcome, 'completed');
+  assert.equal(rebuilt.state.rollbackJournalFloorMessageId, 1);
+  assert.ok(rebuilt.state.rollbackJournal.some(entry => entry.messageId === 3));
+  const swiped = placeChat.map((message, index) => index === 3 ? { ...message, mes: 'The hill is bare.' } : message);
+  assert.equal(reconcileBranch(rebuilt.state, swiped).failClosed, false);
 });

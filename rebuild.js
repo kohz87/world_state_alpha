@@ -1,9 +1,10 @@
-import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, reconcileBranch, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, firstStoryChange, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, normalizeCaptureExchange, roleOf, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
-import { applyUndoPatch, canonicalDomain, clone, createState, normalizeState } from './state-core.js';
+import { applySpatialUndoPatch } from './spatial-core.js';
+import { canonicalDomain, clone, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
   maxBoundaries: 1024,
@@ -318,39 +319,50 @@ function spatialHasContent(spatial) {
 // original journal says when each Spatial change happened, so the rebuild
 // replays it at the boundary where it happened (the first boundary at or after
 // the change) and rollback undoes places with the records of that reply.
-// Changes on a branch the chat has since left are not replayed. Returns null
-// when the history cannot be separated from the current chat (it diverged
-// below the journal floor while Places existed).
-function disabledSpatialTimeline(original, lineage) {
-  const previous = Array.isArray(original.lineage) ? original.lineage : [];
-  let divergence = 0;
-  while (divergence < previous.length && previous[divergence]?.lineageKey === lineage[divergence]?.lineageKey) divergence += 1;
+// Changes made after the chat's first real story change since the state was
+// saved are not replayed (hide/unhide is not a change). When the chat changed
+// at or below the journal floor while places existed, which places belong to
+// the current story cannot be told apart: the rebuild still runs (Reality must
+// stay recoverable) and keeps the places held at the floor, but says so.
+function disabledSpatialTimeline(original, chat) {
+  const journal = Array.isArray(original.rollbackJournal) ? original.rollbackJournal : [];
   const floor = Number.isInteger(original.rollbackJournalFloorMessageId) ? original.rollbackJournalFloorMessageId : -1;
-  const bySeq = new Map((original.rollbackJournal || []).map(entry => [entry.seq, entry]));
+  // Only Spatial patches are replayed; with none, Places stayed as they were since the floor.
+  if (!journal.some(entry => entry?.undo?.spatial)) {
+    const heldBeforeFloor = floor >= 0 && spatialHasContent(original.spatial);
+    return {
+      base: clone(original.spatial),
+      unprovableBelow: heldBeforeFloor ? floor : -1,
+      unverified: heldBeforeFloor && firstStoryChange(original.lineage, chat) <= floor,
+      at: () => clone(original.spatial),
+    };
+  }
+  const divergence = firstStoryChange(original.lineage, chat);
+  const bySeq = new Map(journal.map(entry => [entry.seq, entry]));
   const steps = [];
-  let working = original;
+  let spatial = clone(original.spatial);
   let seq = Math.max(0, Number(original.rollbackHead?.seq) || 0);
   while (seq > 0) {
     const entry = bySeq.get(seq);
-    if (!entry) return null;
-    if (entry.messageId < divergence && lineage[entry.messageId]?.lineageKey === entry.lineageKey) {
-      steps.push({ messageId: entry.messageId, spatial: clone(working.spatial) });
+    if (!entry) break;
+    if (entry.undo?.spatial) {
+      if (entry.messageId < divergence) steps.push({ messageId: entry.messageId, spatial });
+      spatial = applySpatialUndoPatch(spatial, entry.undo.spatial);
     }
-    working = applyUndoPatch(working, entry.undo);
     seq = entry.prevSeq;
   }
-  const base = clone(working.spatial);
-  // Nothing journaled below the floor: Places held there may include changes from a left branch.
-  if (divergence <= floor && spatialHasContent(base)) return null;
   steps.reverse();
+  const base = spatial;
+  const heldBeforeFloor = floor >= 0 && spatialHasContent(base);
   return {
-    base,
+    base: clone(base),
     // Below this boundary the Spatial history is unknown (nothing proves when those places appeared).
-    unprovableBelow: floor >= 0 && spatialHasContent(base) ? floor : -1,
+    unprovableBelow: heldBeforeFloor ? floor : -1,
+    unverified: heldBeforeFloor && divergence <= floor,
     at(messageId, last = false) {
-      let spatial = base;
-      for (const step of steps) if (last || step.messageId <= messageId) spatial = step.spatial;
-      return clone(spatial);
+      let current = base;
+      for (const step of steps) if (last || step.messageId <= messageId) current = step.spatial;
+      return clone(current);
     },
   };
 }
@@ -408,21 +420,13 @@ export async function runManualRebuild({
     };
   }
 
-  const spatialTimeline = spatialEnabled ? null : disabledSpatialTimeline(original, plan.lineage);
-  if (!spatialEnabled && !spatialTimeline) {
-    return {
-      outcome: 'failure',
-      state: clone(original),
-      providerCalls: 0,
-      processedBoundaries: 0,
-      plan: plan.metrics,
-      snapshotToken,
-      failedBoundary: null,
-      receipts: [],
-      errorCode: 'WORLD_STATE_REBUILD_SPATIAL_HISTORY_UNAVAILABLE',
-      errorMessage: 'Places cannot be kept by this rebuild: the chat changed before the oldest saved change, so it is unknown which places belong to the current story. Turn on Places extraction for this rebuild (a Full chat rebuild re-reads places), or reset Places.',
-    };
-  }
+  const spatialTimeline = spatialEnabled ? null : disabledSpatialTimeline(original, chat);
+  const warnings = spatialTimeline?.unverified
+    ? [{
+      code: 'WORLD_STATE_REBUILD_SPATIAL_HISTORY_UNVERIFIED',
+      message: 'Places were kept as they were before the oldest saved change, but the chat changed before that point, so some places may belong to an abandoned branch. Review Places, or rebuild with Places extraction on.',
+    }]
+    : [];
   const lastWindowMessageId = plan.windows.length ? plan.windows[plan.windows.length - 1].messageId : null;
   // The candidate's Spatial after boundary `messageId` when extraction is off.
   const withDisabledSpatial = (state, messageId) => (spatialTimeline
@@ -721,14 +725,18 @@ export async function runManualRebuild({
   if (spatialTimeline && spatialTimeline.unprovableBelow >= 0 && plan.metrics.startMessageId <= spatialTimeline.unprovableBelow) {
     // Places existed before the oldest saved change, so a rollback below it cannot be proven: keep only
     // journal entries and checkpoints from there on, exactly like a trimmed journal (it fails closed).
+    // The first kept entry's state before it is also the state at the floor (no boundary lies between).
     const cutoff = spatialTimeline.unprovableBelow;
-    candidate.rollbackJournal = (candidate.rollbackJournal || []).filter(entry => entry.beforeMessageId >= cutoff);
-    if (candidate.rollbackJournal[0]) candidate.rollbackJournal[0].prevSeq = 0;
+    candidate.rollbackJournal = (candidate.rollbackJournal || []).filter(entry => entry.messageId > cutoff);
+    if (candidate.rollbackJournal[0]) {
+      candidate.rollbackJournal[0].prevSeq = 0;
+      candidate.rollbackJournal[0].beforeMessageId = Math.max(candidate.rollbackJournal[0].beforeMessageId, cutoff);
+    }
     candidate.checkpoints = (candidate.checkpoints || []).filter(item => item.messageId >= cutoff);
     if (candidate.rollbackHead && !candidate.rollbackJournal.some(entry => entry.seq === candidate.rollbackHead.seq)) candidate.rollbackHead = null;
     candidate.rollbackJournalFloorMessageId = Math.max(
       Number.isInteger(candidate.rollbackJournalFloorMessageId) ? candidate.rollbackJournalFloorMessageId : -1,
-      candidate.rollbackJournal[0] ? candidate.rollbackJournal[0].beforeMessageId : cutoff,
+      cutoff,
     );
   }
   candidate = normalizeState(candidate, { strictSchema: true, chatKey: owner });
@@ -755,5 +763,6 @@ export async function runManualRebuild({
     snapshotToken,
     failedBoundary: null,
     receipts,
+    warnings,
   };
 }

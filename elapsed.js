@@ -226,23 +226,48 @@ function elapsedCandidates(source, defaults = {}) {
   return found.sort((a, b) => a.at - b.at).slice(0, ELAPSED_CANDIDATES_PER_MESSAGE);
 }
 
+// Single-quoted dialogue: an opening quote after a space or bracket, a closing
+// quote after punctuation; apostrophes between letters ("we'll") stay inside.
+const SINGLE_QUOTED = /(^|[\s(\[—–-])'(?:[^'\n]|(?<=\p{L})'(?=\p{L}))+?[.,!?;:…—–-]'(?=[\s)\],.;:!?—–-]|$)/gu;
+const CURLY_SINGLE_QUOTED = /‘[^’\n]*’/gu;
+
+// Quoted spans of a text, paired line by line with no length limit (a long
+// speech never shifts the pairing onto the narration after it). An opening
+// double quote left open runs to the end of its line.
 function quotedRanges(source) {
   const ranges = [];
-  for (const pattern of QUOTED_SPANS) {
-    for (const match of source.matchAll(new RegExp(pattern.source, pattern.flags))) {
-      const lead = typeof match[1] === 'string' ? match[1].length : 0;
-      ranges.push([match.index + lead, match.index + match[0].length]);
+  let lineStart = 0;
+  for (const line of source.split('\n')) {
+    let open = -1;
+    let curlyOpen = -1;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      if (char === '"') {
+        if (open < 0) open = index;
+        else {
+          ranges.push([lineStart + open, lineStart + index + 1]);
+          open = -1;
+        }
+      } else if (char === '“' && curlyOpen < 0) {
+        curlyOpen = index;
+      } else if (char === '”' && curlyOpen >= 0) {
+        ranges.push([lineStart + curlyOpen, lineStart + index + 1]);
+        curlyOpen = -1;
+      }
     }
+    if (open >= 0) ranges.push([lineStart + open, lineStart + line.length]);
+    if (curlyOpen >= 0) ranges.push([lineStart + curlyOpen, lineStart + line.length]);
+    lineStart += line.length + 1;
   }
+  for (const match of source.matchAll(SINGLE_QUOTED)) {
+    ranges.push([match.index + match[1].length, match.index + match[0].length]);
+  }
+  for (const match of source.matchAll(CURLY_SINGLE_QUOTED)) ranges.push([match.index, match.index + match[0].length]);
   return ranges;
 }
 
-// Inside a closed quotation, or after an opening quote that is never closed.
-function insideQuotationAt(source, at, ranges) {
-  if (ranges.some(([from, to]) => at >= from && at < to)) return true;
-  const prefix = source.slice(0, at);
-  return (prefix.match(/"/g) || []).length % 2 === 1
-    || (prefix.match(/“/g) || []).length > (prefix.match(/”/g) || []).length;
+function insideQuotationAt(at, ranges) {
+  return ranges.some(([from, to]) => at >= from && at < to);
 }
 
 function sentenceAt(source, at, end) {
@@ -259,13 +284,13 @@ function sentenceAt(source, at, end) {
   return source.slice(before < 0 ? 0 : before + 1, stop).trim().slice(0, 400);
 }
 
-const ELAPSED_PROSPECTIVE = /\b(?:will|would|could|might|should|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|appointment|proposal|hypothetical(?:ly)?)\b/u;
+const ELAPSED_PROSPECTIVE = /(?:\b(?:will|would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|appointment|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/u;
 const ELAPSED_CONDITIONAL = /\bif\b[^.!?\n]{0,160}\b(?:later|after|next|following|passed)\b/u;
 
 // The candidate's own sentence, or null when it is quoted, prospective,
 // conditional, or a bare "next week" without stronger chronology.
 function establishedCandidateContext(source, candidate, ranges) {
-  if (insideQuotationAt(source, candidate.at, ranges)) return null;
+  if (insideQuotationAt(candidate.at, ranges)) return null;
   const raw = String(candidate.hint.raw || '').toLocaleLowerCase().trim();
   if (/^next\s+(?:day|week|month|year|term|semester|season|cycle)\b/u.test(raw)) return null;
   const context = sentenceAt(source, candidate.at, candidate.end);
@@ -290,7 +315,6 @@ function establishedElapsedHints(source, defaults = {}) {
 
 export function detectElapsedHintFromExchange(exchange = []) {
   const rows = Array.isArray(exchange) ? exchange : [];
-  let fallback = null;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const rawMessage = rows[index];
     if (!Number.isInteger(rawMessage?.messageId) || rawMessage.messageId < 0) continue;
@@ -300,12 +324,11 @@ export function detectElapsedHintFromExchange(exchange = []) {
       sourceMessageId: rawMessage.messageId,
       lineageKey: typeof rawMessage.lineageKey === 'string' ? rawMessage.lineageKey : '',
     });
-    // A short span ("two hours later") never hides a meaningful one narrated in the same exchange.
-    const meaningful = hints.find(item => item.meaningful);
-    if (meaningful) return meaningful;
-    if (!fallback && hints.length) fallback = hints[0];
+    // The newest message with an established time phrase decides; inside it a short span
+    // ("two hours later") never hides a meaningful one narrated after it.
+    if (hints.length) return hints.find(item => item.meaningful) || hints[0];
   }
-  return fallback;
+  return null;
 }
 
 // Accumulated day steps. Day-by-day narration ("The next morning…", "The
@@ -340,17 +363,17 @@ const DAY_STEP_PROSPECTIVE = /(?:\b(?:will|would|could|might|should|shall|going\
 
 // Dialogue is removed before matching, so a spoken plan never counts and a
 // quoted first mention cannot hide real narration later in the same message.
-const QUOTED_SPANS = Object.freeze([
-  /"[^"\n]{0,600}"/gu,
-  /“[^”\n]{0,600}”/gu,
-  /‘[^’\n]{0,600}’/gu,
-  /(^|[\s(\[—–-])'[^'\n]{1,600}?[.,!?;:…—–-]'(?=[\s)\],.;:!?—–-]|$)/gu,
-]);
-
 function narrationOnly(source) {
-  let out = String(source || '');
-  for (const pattern of QUOTED_SPANS) out = out.replace(pattern, (match, lead) => (typeof lead === 'string' ? lead : '') + ' ');
-  return out;
+  const text = String(source || '');
+  const ranges = quotedRanges(text).sort((a, b) => a[0] - b[0]);
+  let out = '';
+  let at = 0;
+  for (const [from, to] of ranges) {
+    if (to <= at) continue;
+    out += text.slice(at, Math.max(at, from)) + ' ';
+    at = Math.max(at, to);
+  }
+  return out + text.slice(at);
 }
 
 function narratedDayStep(source) {

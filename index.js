@@ -2465,10 +2465,8 @@ async function handleAssistantMessage(messageId) {
       // Not written, or written and then compensated back to the prior state.
       recordAbandoned('Capture was discarded because the chat changed while it was being saved.');
     }
-    if (persisted.stale) {
-      resetIndexesFromCache(chatKey);
-      return;
-    }
+    // Capture never changes the shared index before this point, and a conflict already re-hydrated it.
+    if (persisted.stale) return;
     setCachedState(chatKey, committed, {
       indexMode: 'delta',
       indexDelta: result.indexDelta,
@@ -2553,42 +2551,59 @@ async function handleUserMessage(messageId) {
     });
     const isCurrent = operationGuard(chatKey, messageId);
 
-    const prepared = await prepareWorldStateContinuity({
-      ctx: getContext(),
-      state: before,
-      index,
-      recentText: recentText(exchange),
-      loreText: '',
-      currentMessageId: messageId,
-      exchange,
-      elapsedHint,
-      affectingEvidence: [],
-      budgetTokens: getWorldStateSettings().injectBudgetTokens,
-      depth: getWorldStateSettings().injectDepth,
-      chatKey,
-      sourceMessageId: messageId,
-      sourceLineageKey,
-      route: routeSettings(),
-      operationId: 'continuity:' + messageId + ':' + epoch(chatKey),
-      isCurrent,
-      diagnostics: diagnosticStore,
-      // The shared index feeds the next prompt outside this queue: publish evolution only once saved.
-      publishIndex: false,
-    });
+    let prepared;
+    try {
+      prepared = await prepareWorldStateContinuity({
+        ctx: getContext(),
+        state: before,
+        index,
+        recentText: recentText(exchange),
+        loreText: '',
+        currentMessageId: messageId,
+        exchange,
+        elapsedHint,
+        affectingEvidence: [],
+        budgetTokens: getWorldStateSettings().injectBudgetTokens,
+        depth: getWorldStateSettings().injectDepth,
+        chatKey,
+        sourceMessageId: messageId,
+        sourceLineageKey,
+        route: routeSettings(),
+        operationId: 'continuity:' + messageId + ':' + epoch(chatKey),
+        isCurrent,
+        diagnostics: diagnosticStore,
+        // The shared index feeds the next prompt outside this queue: publish evolution only once saved.
+        publishIndex: false,
+      });
+    } catch (error) {
+      resetIndexesFromCache(chatKey);
+      throw error;
+    }
 
-    if (!isCurrent()) return;
+    // Background selection advanced the index's catch-up cursor/boundary: whenever the result is not
+    // saved, rebuild the index from the state cached now so that catch-up is retried, never skipped.
+    if (!isCurrent()) {
+      resetIndexesFromCache(chatKey);
+      return;
+    }
     if (stateChanged(before, prepared.state)) {
       const committed = commitMutationBoundary(before, prepared.state, liveChat, messageId, 'evolution', { lineage: before.lineage });
-      const persisted = await persistGuardedMutation({
-        chatKey,
-        candidateState: committed,
-        recoveryState: before,
-        isCurrent,
-        label: 'evolution',
-        sourceMessageId: messageId,
-      });
+      let persisted;
+      try {
+        persisted = await persistGuardedMutation({
+          chatKey,
+          candidateState: committed,
+          recoveryState: before,
+          isCurrent,
+          label: 'evolution',
+          sourceMessageId: messageId,
+        });
+      } catch (error) {
+        resetIndexesFromCache(chatKey);
+        throw error;
+      }
       if (persisted.stale) {
-        if (persisted.conflict) resetIndexesFromCache(chatKey);
+        resetIndexesFromCache(chatKey);
         return;
       }
       const indexDelta = prepared.evolution?.indexDelta;
@@ -3702,6 +3717,17 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         + ' boundaries, ' + currentCount + ' current records, ' + placeCount + ' places.'
         + (aliasRepairs ? ' Repaired ' + aliasRepairs + ' provider field alias' + (aliasRepairs === 1 ? '.' : 'es.') : ''),
     );
+    for (const warning of Array.isArray(result.warnings) ? result.warnings : []) {
+      diagnosticStore.record(chatKey, {
+        operationId: operationId + ':warning',
+        label: 'rebuild',
+        sourceMessageId,
+        outcome: 'warning',
+        code: warning.code,
+        detail: String(warning.message || '').slice(0, 320),
+      });
+      notify('warning', 'World State Alpha: ' + warning.message);
+    }
   }
 }
 

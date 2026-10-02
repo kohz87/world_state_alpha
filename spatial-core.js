@@ -1086,6 +1086,8 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         targetLoc.evidenceIds = boundedEvidenceRefs([...targetLoc.evidenceIds, ...sourceLoc.evidenceIds]);
         if (!targetLoc.context && sourceLoc.context) targetLoc.context = sourceLoc.context;
         if (!targetLoc.notes && sourceLoc.notes) targetLoc.notes = sourceLoc.notes;
+        // Operator authority survives the merge even when the source's manual evidence is trimmed.
+        if (sourceLoc.operatorOwned === true) targetLoc.operatorOwned = true;
 
         const targetRank = authorityRank(targetLoc.coordinate?.authority, targetLoc.coordinate?.locked);
         const sourceRank = authorityRank(sourceLoc.coordinate?.authority, sourceLoc.coordinate?.locked);
@@ -1096,7 +1098,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         }
 
         const rewritten = [];
-        const relSeen = new Set();
+        const relSeen = new Map();
         for (const rel of spatial.relations) {
           const nextRel = {
             ...rel,
@@ -1105,8 +1107,13 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
           };
           if (nextRel.fromId === nextRel.toId) continue;
           const sig = [nextRel.fromId, nextRel.toId, nextRel.direction || '', nextRel.distanceKm ?? '', nextRel.distanceMode || ''].join('|');
-          if (relSeen.has(sig)) continue;
-          relSeen.add(sig);
+          const kept = relSeen.get(sig);
+          if (kept) {
+            // A dropped duplicate's operator authority moves to the relation that is kept.
+            if (nextRel.operatorOwned === true) kept.operatorOwned = true;
+            continue;
+          }
+          relSeen.set(sig, nextRel);
           rewritten.push(nextRel);
         }
         spatial.relations = rewritten;
