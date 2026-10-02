@@ -634,6 +634,15 @@ function epoch(chatKey) {
   return Number(stateEpochs.get(chatKey) || 0);
 }
 
+// After a rejected or abandoned write, every derived index must describe the
+// state that is cached now: the prior state after local compensation, or the
+// newer server state a revision conflict just hydrated, never the discarded base.
+function resetIndexesFromCache(chatKey) {
+  const current = stateCache.get(chatKey) || null;
+  resetRelevanceIndex(chatKey, current);
+  resetSpatialRelevanceIndex(chatKey, current?.spatial || null, getCachedBaseMap(current?.spatial?.baseMapRef));
+}
+
 // Hide-insensitive keys by current lineage key (a pure function of it), so a
 // re-rendered panel does not re-hash the chat. Bounded; cleared when full.
 const contentLineageKeyMemo = new Map();
@@ -1208,7 +1217,9 @@ async function handleCharacterRenamedInPastChat(messages, oldAvatar, newAvatar) 
     assertOwnershipEpoch(chatKey, ownerEpoch);
     if (recovered?.payload?.state) {
       actualPointer = recovered.pointer;
-      if (!currentState) currentState = recovered.payload.state;
+      // The server sidecar is authoritative and its revision is the one written against: never pair
+      // this session's possibly older cache with another device's newer revision token.
+      currentState = recovered.payload.state;
     }
     if (!currentState || !stateLineageMatchesPrefix(currentState, previousLineage)) return;
 
@@ -2455,8 +2466,7 @@ async function handleAssistantMessage(messageId) {
       recordAbandoned('Capture was discarded because the chat changed while it was being saved.');
     }
     if (persisted.stale) {
-      resetRelevanceIndex(chatKey, before);
-      resetSpatialRelevanceIndex(chatKey, before.spatial, baseMap);
+      resetIndexesFromCache(chatKey);
       return;
     }
     setCachedState(chatKey, committed, {
@@ -2562,32 +2572,29 @@ async function handleUserMessage(messageId) {
       operationId: 'continuity:' + messageId + ':' + epoch(chatKey),
       isCurrent,
       diagnostics: diagnosticStore,
+      // The shared index feeds the next prompt outside this queue: publish evolution only once saved.
+      publishIndex: false,
     });
 
-    if (!isCurrent()) {
-      resetRelevanceIndex(chatKey, before);
-      return;
-    }
+    if (!isCurrent()) return;
     if (stateChanged(before, prepared.state)) {
       const committed = commitMutationBoundary(before, prepared.state, liveChat, messageId, 'evolution', { lineage: before.lineage });
-      try {
-        const persisted = await persistGuardedMutation({
-          chatKey,
-          candidateState: committed,
-          recoveryState: before,
-          isCurrent,
-          label: 'evolution',
-          sourceMessageId: messageId,
-        });
-        if (persisted.stale) {
-          resetRelevanceIndex(chatKey, before);
-          return;
-        }
-      } catch (error) {
-        resetRelevanceIndex(chatKey, before);
-        throw error;
+      const persisted = await persistGuardedMutation({
+        chatKey,
+        candidateState: committed,
+        recoveryState: before,
+        isCurrent,
+        label: 'evolution',
+        sourceMessageId: messageId,
+      });
+      if (persisted.stale) {
+        if (persisted.conflict) resetIndexesFromCache(chatKey);
+        return;
       }
-      setCachedState(chatKey, committed, { indexMode: 'preserve' });
+      const indexDelta = prepared.evolution?.indexDelta;
+      setCachedState(chatKey, committed, indexDelta
+        ? { indexMode: 'delta', indexDelta, spatialIndexDelta: {} }
+        : { indexMode: 'rebuild' });
     }
     updatePrivateInjection();
     refreshPanel();

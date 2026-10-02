@@ -846,6 +846,9 @@ export async function prepareWorldStateContinuity({
   isCurrent = undefined,
   diagnostics = undefined,
   dispatcher = dispatchWorldStateRequest,
+  // false: never touch `index` and return no post-evolution injection, so a host
+  // publishes evolution.indexDelta together with the state only once it is saved.
+  publishIndex = true,
 } = {}) {
   const beforeInjection = buildWorldStateInjection(state, {
     index,
@@ -934,6 +937,9 @@ export async function prepareWorldStateContinuity({
   evolution.backgroundSelection = backgroundSelection.metrics;
 
   const nextState = evolution.state || state;
+  if (!publishIndex) {
+    return { state: nextState, injection: null, evolution, providerCalls: evolution.providerCalls || 0 };
+  }
   if (index && evolution.indexDelta) {
     updateRelevanceIndex(index, evolution.indexDelta);
   }
