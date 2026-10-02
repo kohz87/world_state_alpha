@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.0-alpha.45 - External audit: high-priority findings A01-A08
+
+Fixes for the eight high-priority findings of an external audit of alpha.44. Each was reproduced first and has a regression test that fails on 0.9.0-alpha.44.
+
+### Fixed
+
+- **A01 - Renaming a character could erase another device's newer save.** The past-chat rename kept this session's older copy but wrote it with the server's newer revision. It now rewrites the server's copy.
+- **A02 - After a save conflict, injection kept describing the discarded state.** The search index was rebuilt from the state the conflict had just discarded, so a record another device resolved kept being injected. Indexes are now rebuilt from the state that is actually loaded.
+- **A03 - A partial rebuild with Places turned off deleted places from its range.** A place saved after the rebuild's start message was lost.
+- **A04 - After a rebuild with Places turned off, swiping a reply kept its place.** The rebuild moved all places into its starting point without their history, so rollback could no longer remove them.
+  - Both are fixed the same way: with Places off, a rebuild now replays each saved place change at the reply where it happened. Rollback undoes places with their reply, and partial rebuilds keep them.
+  - If the chat changed before the oldest saved change while places exist, the rebuild stops and explains, instead of keeping places that may belong to the abandoned branch.
+- **A05 - A background catch-up could reach the next prompt before it was saved.** Evolution updated the shared index first. It now publishes only after the save succeeds.
+- **A06 - Your manual place edits lost their protection over time.** Protection came from a "manual" evidence entry, which is trimmed after enough later mentions and relabelled on import. Places, relations and routes now remember operator authorship on the entry itself. Older saves derive it from their manual evidence.
+- **A07 - Confirming a place's position downgraded its authority.** A narrated confirmation of the same coordinates replaced a stronger authority, so a later narration could move a protected place. It now only adds evidence.
+- **A08 - Quoted time could count as elapsed time** (a regression from alpha.43). After rejecting one quoted phrase, the next one was checked without its opening quote, so `"Two weeks later or after three months, we return."` counted as three months passing. Every phrase is now judged in place, with its full quote and sentence; single-quoted dialogue counts too.
+- **A18 (fixed along with A08) - A short time skip hid a longer one.** "Two hours later … Five weeks later …" now counts the five weeks.
+
+### Architecture
+
+- Core contract updated: Reality-only rebuild Spatial ownership, `operatorOwned` authority, same-position confirmations, derived-index publication after save and after conflicts, server-authoritative past-chat rename, offset-anchored elapsed detection. Canonical schema stays 2, with one optional field on Spatial entities; sidecar, bundle and journal envelopes stay 1.
+
+### Validation
+
+- New `tests/audit-alpha45.test.js`; each case fails on the previous release.
+- Live in SillyTavern with a stub model: the alpha.44 missed-capture scenarios, Recapture, swipes, renaming a chat away and back, and Places lock/duplicate all behave as before.
+- Not verified: a real model, two real devices, or a live save conflict.
+
 ## 0.9.0-alpha.44 - Audit batch 3: Missed captures gaps
 
 Fixes from the whole-codebase audit for the Missed captures feature (alpha.41). Each was reproduced first and has a regression test that fails on 0.9.0-alpha.43.
