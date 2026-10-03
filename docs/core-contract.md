@@ -316,6 +316,11 @@ Normal exchange target:
 - no per-record request fan-out
 - local relevance retrieval
 - compact injection
+- no copy of the append-only history on a capture: a state copy deep-copies the canonical domain but shares lineage, rollback-journal and checkpoint entries, which are frozen and never edited in place (a changed entry is replaced)
+- a boundary check of a chat with no sidecar pointer reads once (the short retry schedule stays for chats with a pointer, hydration, activation and conflict recovery); an identical sidecar text is verified once per session
+- the injection view of the recent exchange needs no lineage keys and fingerprints no message
+
+Rebuild steps reuse the plan's lineage instead of re-hashing the chat prefix; during the run the rebuild's range proof is reused until a host chat event or one second passes, and it is recomputed exactly before the result is saved or reported. The operator panel reads the chat key without copying state.
 
 Manual inspect/query/correction, rebuild, and Phase 6 UI projection add no automatic normal-turn request path. UI projection/search/rendering is local and must issue zero model/provider calls. Any additional automatic request path requires explicit contract justification and measurements.
 
@@ -613,7 +618,7 @@ Explicit rebuild reconstructs generated Spatial state from the same chronologica
 
 ### C24.7 Bounded retrieval and private injection
 
-Normal turns must not scan every campaign location, the complete base map, every route/polyline, or the full chat.
+Normal turns must not scan every campaign location, the complete base map, every route/polyline, or the full chat. A capture resolves only the places it changed (an empty batch reads no base entry), through a base-map id index built once per base map.
 
 Spatial relevance uses an ephemeral per-chat index and bounded candidates. Normal private injection is a compact continuity block containing only the relevant current place/coordinate/context, a few directly linked/relevant places, and useful route/connection information. It is private continuity, not automatic PC knowledge.
 
