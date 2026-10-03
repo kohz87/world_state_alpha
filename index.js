@@ -4868,9 +4868,7 @@ globalThis.WorldStateAlpha = Object.freeze({
       diagnostics: diagnosticStore.records(key).length,
     });
   },
-  getState: () => {
-    const value = getCachedState(currentChatKey());
-    return value ? clone(value) : null;
-  },
+  // A private deep copy (getCachedState already copies; copying it again doubled the cost).
+  getState: () => getCachedState(currentChatKey()),
   diagnostics: () => diagnosticStore.records(currentChatKey()),
 });

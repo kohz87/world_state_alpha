@@ -51,7 +51,30 @@ export function encodeSidecar({ chatKey, state, revision = 0, appVersion = '', u
   return JSON.stringify({ ...payload, checksum: hashText(stableStringify(payload)) });
 }
 
+// Sidecar texts already verified in this session. A capture's boundary refresh reads back the text it
+// uploaded last, and its write re-checks that same server text before replacing it: identical text decodes
+// to the identical result, so its checksum and schema are verified once, not three times per capture.
+const VERIFIED_SIDECARS = [];
+const VERIFIED_SIDECAR_LIMIT = 3;
+
+function decodedCopy(result) {
+  return { ...result, state: cloneState(result.state) };
+}
+
 export function decodeSidecar(text, { expectedChatKey = '' } = {}) {
+  const source = String(text || '');
+  const known = VERIFIED_SIDECARS.find(item => item.text === source);
+  if (known) {
+    if (expectedChatKey && known.result.chatKey !== expectedChatKey) throw new SidecarCorruptionError('sidecar belongs to a different chat');
+    return decodedCopy(known.result);
+  }
+  const result = verifySidecar(source, { expectedChatKey });
+  VERIFIED_SIDECARS.unshift({ text: source, result: decodedCopy(result) });
+  VERIFIED_SIDECARS.length = Math.min(VERIFIED_SIDECARS.length, VERIFIED_SIDECAR_LIMIT);
+  return result;
+}
+
+function verifySidecar(text, { expectedChatKey = '' } = {}) {
   let raw;
   try {
     raw = JSON.parse(String(text || ''));

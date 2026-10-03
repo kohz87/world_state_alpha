@@ -155,3 +155,18 @@ test('batch 5: scrolling the panel never copies the state', async () => {
   // The host hands the panel its cached state and chat key; the panel builds its model from a private copy.
   assert.match(source, /getChatKey: \(\) => chatKey,/);
 });
+
+test('batch 5: an identical sidecar text is verified once; every caller still gets its own copy and the owner check', async () => {
+  const { decodeSidecar, encodeSidecar } = await import('../storage.js');
+  const { state } = capturedState(3);
+  const body = encodeSidecar({ chatKey: 'a49', state, revision: 4 });
+  const first = decodeSidecar(body, { expectedChatKey: 'a49' });
+  const second = decodeSidecar(body, { expectedChatKey: 'a49' });
+  assert.deepEqual(second, first);
+  first.state.records[0].summary = 'changed by a caller';
+  assert.notEqual(decodeSidecar(body).state.records[0].summary, 'changed by a caller');
+  assert.throws(() => decodeSidecar(body, { expectedChatKey: 'other' }), /different chat/);
+  // A tampered text is a different text and is fully verified.
+  assert.throws(() => decodeSidecar(body.replace('"revision":4', '"revision":5')), /checksum/);
+  assert.match(fs.readFileSync('storage.js', 'utf8'), /const known = VERIFIED_SIDECARS\.find\(item => item\.text === source\);/);
+});
