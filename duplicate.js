@@ -24,8 +24,56 @@ function anchorSet(record) {
   return new Set((Array.isArray(record?.anchors) ? record.anchors : []).map(canonicalText).filter(Boolean));
 }
 
+// Words that tell two otherwise identical subjects apart when they modify the
+// same noun ("north gate" / "south gate", "first battalion" / "second"). State
+// words (high/low, old/new) describe a change of one subject, not two subjects.
+const DISTINGUISHING_WORDS = new Set([
+  'north', 'south', 'east', 'west', 'northern', 'southern', 'eastern', 'western',
+  'northeast', 'northwest', 'southeast', 'southwest', 'upper', 'lower', 'inner', 'outer',
+  'left', 'right', 'front', 'rear', 'first', 'second', 'third', 'fourth', 'fifth', 'last',
+  'main', 'side', 'central', 'middle',
+]);
+
+function subjectModifiers(summary, otherTokens) {
+  const modifiers = new Map();
+  // Per sentence, so a sentence's capitalized first word is never taken for a name.
+  for (const sentence of String(summary ?? '').normalize('NFKC').split(/[.!?;]+/u)) {
+    const words = sentence.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    for (let index = 0; index + 1 < words.length; index += 1) {
+      const word = words[index];
+      const lower = word.toLocaleLowerCase();
+      const noun = words[index + 1].toLocaleLowerCase();
+      if (STOP.has(noun) || !otherTokens.has(noun) || otherTokens.has(lower) || STOP.has(lower)) continue;
+      // A name (capitalized, not a sentence's first word), an ordinal number (1st, 2nd), or a direction/ordinal word.
+      const distinguishing = DISTINGUISHING_WORDS.has(lower) || /^\p{N}+(?:st|nd|rd|th)$/u.test(lower)
+        || (index > 0 && /^\p{Lu}/u.test(word));
+      if (!distinguishing) continue;
+      if (!modifiers.has(noun)) modifiers.set(noun, new Set());
+      modifiers.get(noun).add(lower);
+    }
+  }
+  return modifiers;
+}
+
+// Two summaries name different subjects when the same noun carries different
+// distinguishing modifiers in each; such conditions are never merged or
+// treated as one, however much else they share.
+export function distinctSubjects(left, right) {
+  const leftTokens = new Set(canonicalText(left).split(' ').filter(Boolean));
+  const rightTokens = new Set(canonicalText(right).split(' ').filter(Boolean));
+  const leftModifiers = subjectModifiers(left, rightTokens);
+  if (!leftModifiers.size) return false;
+  const rightModifiers = subjectModifiers(right, leftTokens);
+  for (const [noun, modifiers] of leftModifiers) {
+    const other = rightModifiers.get(noun);
+    if (other && [...modifiers].every(word => !other.has(word))) return true;
+  }
+  return false;
+}
+
 export function duplicateSimilarity(candidate, record) {
   if (!candidate || !record || candidate.kind !== record.kind) return 0;
+  if (distinctSubjects(candidate.summary, record.summary)) return 0;
   const leftSummary = canonicalText(candidate.summary);
   const rightSummary = canonicalText(record.summary);
   if (leftSummary && leftSummary === rightSummary) return 1;

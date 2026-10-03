@@ -1,4 +1,4 @@
-import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.js';
+import { captureExchangeIndex, evidenceClaimGrounded, evidenceClaimQuotedOnly } from './source-firewall.js';
 import {
   deriveCoordinate,
   directionFromDelta,
@@ -132,21 +132,72 @@ function extractExplicitCoordinatesFromText(text) {
   return coords;
 }
 
-function isCoordinateGroundedInNarration(coord, evidence, exchangeById, decimalStep = 0.1) {
+// Sentences (or lines) of a text, for binding a coordinate to the place it describes.
+function sentencesOf(text) {
+  return String(text || '').split(/(?<=[.!?])\s+|\r?\n+/u).filter(Boolean);
+}
+
+// The sentence names this place: its full name, or every distinctive word of it
+// (so "Falcon Fortress" never stands in for "Falcon Peak").
+function sentenceNamesPlace(sentence, name) {
+  const haystack = ` ${norm(sentence)} `;
+  const needle = norm(name);
+  if (!needle) return false;
+  if (haystack.includes(` ${needle} `)) return true;
+  const distinctive = needle.split(' ').filter(token => token.length >= 3 && !GENERIC_PLACE_WORDS.has(token));
+  return distinctive.length > 0 && distinctive.every(token => haystack.includes(` ${token} `));
+}
+
+// A coordinate is narrative-explicit only where the narration states it for this
+// place: in a cited sentence that both names the place and carries the pair.
+// A pair given for another place elsewhere in the message is never borrowed,
+// and a pair known only from quoted dialogue is hearsay, not narrative authority.
+function isCoordinateGroundedInNarration(coord, evidence, exchangeById, decimalStep = 0.1, name = '') {
   if (!coordKnown(coord)) return false;
   const tolerance = Math.max(0.1, decimalStep || 0.1);
+  const matches = text => extractExplicitCoordinatesFromText(text)
+    .some(exp => Math.abs(exp.x - coord.x) <= tolerance && Math.abs(exp.y - coord.y) <= tolerance);
 
   for (const item of evidence || []) {
     const source = exchangeById.get(item.sourceMessageId);
     if (!source) continue;
-    const explicitList = extractExplicitCoordinatesFromText(source.text);
-    for (const exp of explicitList) {
-      if (Math.abs(exp.x - coord.x) <= tolerance && Math.abs(exp.y - coord.y) <= tolerance) {
-        return true;
-      }
-    }
+    if (evidenceClaimQuotedOnly(item.claim, source.text)) continue;
+    // Narration only: a pair spoken in dialogue is hearsay wherever the cited claim sits.
+    const sentences = sentencesOf(withoutSpokenDialogue(source.text));
+    if (sentences.some((sentence, at) => matches(sentence) && (!name || sentenceNamesPlace(sentence, name)
+      // "The Old Mill stands by the river. It sits at [12, 4]."
+      || (at > 0 && REFERS_BACK.test(sentence) && sentenceNamesPlace(sentences[at - 1], name))))) return true;
   }
   return false;
+}
+
+// Quoted dialogue (a quoted span with more than one word); a quoted axis label such as "X": 12 is kept.
+function withoutSpokenDialogue(text) {
+  const spoken = span => (/\s/u.test(span.slice(1, -1).trim()) ? ' ' : span);
+  return String(text || '')
+    .replace(/"[^"\n]*"/gu, spoken)
+    .replace(/“[^”\n]*”/gu, spoken);
+}
+
+const REFERS_BACK = /^\s*it\s+(?:sits|stands|lies|rests|is located|is found|is set|is situated)\b/iu;
+
+// Hypothetical or proposed construction ("if we built Moonspire Tower ...",
+// "plans to raise a fort"): no current place is established. An ordinary
+// conditional about travel ("if you follow the road you will reach ...") is not.
+const CONSTRUCT = '(?:build|built|raise|raised|found|founded|erect|erected)';
+const HYPOTHETICAL_PLACE = new RegExp(`\\bif\\s+(?:we|they|you|he|she|someone|anyone|i)\\s+(?:were to\\s+|ever\\s+|could\\s+|would\\s+)?${CONSTRUCT}\\b|\\b(?:were to|would|could|might|plans? to|planned to|planning to|intends? to|intended to|hopes? to|wants? to)\\s+${CONSTRUCT}\\b|\\b(?:imagine|suppose|supposing)\\b`, 'iu');
+
+function placeEvidenceHypothetical(evidence, exchangeById) {
+  const items = Array.isArray(evidence) ? evidence : [];
+  if (!items.length) return false;
+  return items.every(item => {
+    if (HYPOTHETICAL_PLACE.test(String(item.claim || ''))) return true;
+    const source = exchangeById.get(item.sourceMessageId);
+    if (!source) return false;
+    // Hypothetical only when every sentence that carries the claim is.
+    const grounding = sentencesOf(source.text).filter(sentence => evidenceClaimGrounded(item.claim, sentence));
+    return grounding.length > 0 && grounding.every(sentence => HYPOTHETICAL_PLACE.test(sentence));
+  });
 }
 
 const DIRECTION_TEXT_FORMS = Object.freeze({
@@ -418,15 +469,12 @@ function supplementExplicitWorldStateHeaders(modelMutations, exchangeById) {
       continue;
     }
 
+    // Only what the header establishes: an existing place keeps its type, context and notes.
     mutations.push({
       action: 'upsert_location',
       name: header.name,
-      type: 'landmark',
-      context: header.context,
+      ...(header.context ? { context: header.context } : {}),
       coordinate: header.coordinate,
-      relative: null,
-      routeRefs: [],
-      notes: '',
       admissionReason: header.coordinate ? 'explicit_coordinate' : 'explicit_position',
       evidence: [{ sourceMessageId: header.sourceMessageId, claim: header.claim }],
     });
@@ -493,6 +541,10 @@ export function processSpatialCapture({
         rejected.push({ stage: 'spatial-admission', index, reason: 'generated location name is not grounded in accepted narration' });
         continue;
       }
+      if (!isUpdate && placeEvidenceHypothetical(proposal.evidence, exchangeById)) {
+        rejected.push({ stage: 'spatial-admission', index, reason: 'a hypothetical or proposed place is not current geography' });
+        continue;
+      }
       // An update may rename a place only to a name the narration actually uses; otherwise it keeps its name.
       if (isUpdate) {
         const known = visibleById.get(proposal.locationId);
@@ -519,7 +571,8 @@ export function processSpatialCapture({
         // Automatic coordinate firewall: narrative_explicit only if accepted source text explicitly contains matching x/y.
         // Grounding is checked first: an invented coordinate is simply dropped and never costs the place itself;
         // only a narrated coordinate outside the profile bounds rejects the proposal.
-        coordGrounded = isCoordinateGroundedInNarration(normCoord, proposal.evidence, exchangeById, activeProfile?.decimalStep);
+        coordGrounded = !placeEvidenceHypothetical(proposal.evidence, exchangeById)
+          && isCoordinateGroundedInNarration(normCoord, proposal.evidence, exchangeById, activeProfile?.decimalStep, proposal.name);
         if (coordGrounded && activeProfile?.bounds && !validateBounds(normCoord.x, normCoord.y, activeProfile.bounds)) {
           rejected.push({ stage: 'spatial-coordinate', index, reason: 'explicit coordinate is outside profile bounds' });
           continue;

@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.9.0-alpha.47 - Admission and Places grounding (audit A13-A17, A22-A26)
+
+Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.46.
+
+### Fixed
+
+- **A13 - A malformed anchor field erased a record's anchors.** Anchors sent as a string, null, a number or `[null]` were read as "clear". They are now ignored; only an explicit empty list clears.
+- **A14 - A malformed place-changes field let a rebuild "succeed" without places.** `spatialMutations` as an object, string or null was treated as "no changes". The reply now fails like any other malformed output, and live it shows up under Missed captures.
+- **A15 - Who said it was judged by the sentence, not the claim.**
+  - A quotation cited together with "A trader says," was promoted to fact. It now stays reported.
+  - A narrated event sharing a sentence with an unrelated "a trader said ..." clause was treated as hearsay. It is now a fact.
+- **A16 - A rumour could end a real condition.** "A traveler claims the strike ended" resolved the strike. A reported account now can't resolve or supersede an established condition without narrated confirmation.
+- **A17 - Different things with the same words were merged.** "The north gate is sealed" and "the south gate is sealed" became one record. Different directions, numbers or names on the same noun now keep them apart.
+- **A22 - A place could take another place's coordinates.** A coordinate now counts only in a sentence that names that place (or "It sits at ..." right after it), and never from dialogue.
+- **A23 - A hypothetical place became real.** "If we built Moonspire Tower at [40, 40], it would ..." created the tower. Hypothetical or proposed places are no longer created.
+- **A24 - A World_State location header wiped place details.** It reset the type to "landmark" and blanked context and notes. It now only confirms the place and its position.
+- **A25 - A moved place kept a direction that contradicted it.** After a coordinate correction under a locked True North, "Tower is north of Anchor" stayed beside coordinates that say east. The contradicted direction is now cleared; the distance stays.
+- **A26 - Merging an overridden map place left its relations behind.** Relations and routes now follow the merge.
+
+### Code review hardening
+
+- Duplicate gate: only ordinals count as distinguishing numbers, a capital at the start of a sentence is not a name, and common words such as "high", "old" or "new" no longer split records.
+- Attribution: "tell", "explain", "mention", "whisper", "inform" and "insist" are reporting verbs, and a claim inside "X said that ..." stays reported even when the claim itself is unquoted.
+- Place coordinates: a sentence binds a coordinate to a place only when it carries the full name or every distinctive name word ("the Peak" no longer binds to Falcon Peak), and dialogue is skipped without breaking a `"X": 12, "Y": 45` header.
+- Hypothetical places: only building or imagining a place counts ("if we reach Falcon Peak" no longer blocks a narrated peak), and a place is skipped only when every sentence grounding it is hypothetical.
+- Contradicted directions: only compass directions are checked, a base-map place moved through a new override is covered, and an automatic move that would contradict an operator-set direction is rejected rather than clearing it.
+
+### Architecture
+
+- Core contract updated for each rule above. No durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha47.test.js`; each case fails on the previous release.
+- Live in SillyTavern with a stub model that returns place proposals. On alpha.46:
+  - Falcon Peak took the fortress's coordinates;
+  - the hypothetical tower was created;
+  - a header reset the fortress's type and notes;
+  - a malformed reply passed.
+  
+  On alpha.47 none of these happen. The alpha.44-46 live scripts behave as before.
+- Not verified: a real model. The attribution and duplicate rules are wording heuristics; how often they help or misfire with a real model remains to be seen in play.
+
 ## 0.9.0-alpha.46 - Missed captures recovery path (audit A09-A12) and rebuilds that survive play
 
 Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.45.
