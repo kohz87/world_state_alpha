@@ -1096,7 +1096,7 @@ test('branch changes resume parked branches and capture a settled swipe or edite
   assert.match(reconcileBody, /const resumed = resumeParkedBranch\(result\.state, liveChat, parks\);/);
   // The park list changes only after a non-stale durable result.
   const staleAt = reconcileBody.indexOf("action: 'stale-persist'");
-  const consumeAt = reconcileBody.indexOf('if (resumedPark) parkedBranches.set(');
+  const consumeAt = reconcileBody.indexOf('parkedBranches.set(chatKey, parks.filter(park => park !== resumedPark));');
   const rememberAt = reconcileBody.indexOf('rememberParkedBranch(chatKey, abandonedBranch);');
   assert.ok(staleAt > 0 && consumeAt > staleAt && rememberAt > staleAt);
   assert.match(reconcileBody, /'parked-branch-resume', 'fail-closed'/);

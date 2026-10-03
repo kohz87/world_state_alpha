@@ -10,8 +10,15 @@ Each fix was reproduced first and has a regression test that fails on 0.9.0-alph
 - **Another device kept asking you to Recapture.** A recovery made on one device or tab now clears the notice on the others when you open the panel.
 - **A09 - Renaming a chat could lose a missed capture.** The old log was emptied before the new name's log was saved. It is now cleared only after the new log is saved.
 - **A10 - A failed log upload lost its rows.** An upload error was only logged. It is now retried, the retry is flushed when you leave the chat or hide the page, and rows that still can't be saved are kept and saved on the chat's next load.
-- **A11 - More than 40 missed captures could drop the oldest one,** so Recapture started too late. Every unrecovered failure is now kept; older ones just drop the stored model answer.
+- **A11 - More than 40 missed captures could drop the oldest one,** so Recapture started too late. Unrecovered failures are now kept (up to 400, earliest first); older ones drop the stored model answer.
 - **A12 - Hiding an earlier message lost a parked swipe.** After you swiped away from a captured reply and hid an earlier message, swiping back re-ran the capture instead of restoring that reply's state, including your manual corrections. It now restores it.
+- **Hardened after code review of this release.**
+  - Swiping, regenerating or deleting the newest reply during a rebuild no longer cancels it either.
+  - The rebuild reads a frozen copy of the chat, so a reply still streaming is never pulled into it, and Resume after you keep playing works.
+  - A hide reconciled together with a swipe back still restores the parked reply.
+  - Two renames in opposite directions can no longer lock up the Operations log, and quick chained renames (A to B to C) carry missed captures to the final name.
+  - An unexpected error while saving the log is retried instead of being lost.
+  - Pinned missed captures are bounded: in a flood of failures the earliest are kept, since Recapture starts there.
 
 ### Architecture
 

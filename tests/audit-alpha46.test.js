@@ -14,9 +14,11 @@ test('A09/A10: a rename clears the old log only after the new owner saved it; a 
   const retire = source.slice(source.indexOf('function retireOperationLog('), source.indexOf('function notify('));
   // Before: the successor save was only scheduled and the old log was emptied right away.
   assert.doesNotMatch(retire, /scheduleOperationLogSave\(successorKey\)/);
-  assert.match(retire, /if \(!await saveOperationLog\(successorKey\)\) \{\s*retry\(\);\s*return;\s*\}/);
-  assert.match(retire, /if \(successorKey\) retiredOperationLogs\.delete\(successorKey\);/);
-  const save = source.slice(source.indexOf('function saveOperationLog('), source.indexOf('function scheduleOperationLogSave('));
+  assert.match(retire, /const target = liveOperationLogKey\(successorKey\);[\s\S]*?if \(!await saveOperationLog\(target\)\) \{\s*retry\(\);\s*return;\s*\}/);
+  // The old log's lock is released before the new log is saved (opposite renames cannot deadlock).
+  assert.match(retire, /const server = await queueOperationLogWrite\(chatKey, \(\) => readOperationLogForMerge\(chatKey\)/);
+  assert.match(retire, /operationLogSuccessors\.set\(chatKey, successorKey\);[\s\S]{0,120}retiredOperationLogs\.delete\(successorKey\);/);
+  const save = source.slice(source.indexOf('async function saveOperationLogLocked('), source.indexOf('function scheduleOperationLogSave('));
   // Before: an upload error was only logged; the rows were not retried, flushed or parked.
   assert.match(save, /await hostStorage\.uploadJsonFile\(operationLogFile\(chatKey\), operationLogBody\(chatKey, rows\)\);\s*\} catch \(error\) \{[\s\S]*?postponeOperationLogSave\(chatKey, snapshot, attempt\);\s*return false;/);
   assert.match(save, /if \(!snapshot\) unsavedOperationRows\.delete\(chatKey\);\s*return true;/);
@@ -88,5 +90,20 @@ test('A12: hiding an earlier message keeps a parked swipe resumable', () => {
   assert.ok(resumed);
   assert.deepEqual(resumed.state.records.map(record => record.summary).sort(), ['The Armory is full', 'The Watchtower stands']);
   // The host relinks parks after any proven prefix rebase.
-  assert.match(source, /relinkParkedBranches\(parkedBranches\.get\(chatKey\), state\.lineage, result\.state\.lineage, provenPrefix\)/);
+  assert.match(source, /if \(provenPrefix > 0 && parks\.length\) parks = relinkParkedBranches\(parks, state\.lineage, result\.state\.lineage, provenPrefix\);[\s\S]{0,800}const resumed = resumeParkedBranch\(result\.state, liveChat, parks\);/);
+});
+
+test('review hardening: pinned failures are bounded to the earliest ones; a park still resumes when hide and swipe-back reconcile together', () => {
+  // A pathological flood keeps the earliest failed messages (Recapture starts there), bounded.
+  let at = 0;
+  const flood = [];
+  for (let id = 1; id <= 450; id += 1) flood.push({ label: 'capture', outcome: 'timeout', sourceMessageId: id, lineageKey: 'ln' + id, operationId: 'c' + id, at: ++at });
+  const kept = trimOperationRows(flood, 80);
+  assert.equal(kept.length, 400);
+  assert.equal(unrecoveredCaptureFailures(kept)[0].messageId, 1);
+
+  // The host relinks parks before trying to resume one, in the same reconcile.
+  assert.ok(source.indexOf('parks = relinkParkedBranches(parks') < source.indexOf('const resumed = resumeParkedBranch(result.state, liveChat, parks);'));
+  // An unexpected save error is retried, never an unhandled rejection.
+  assert.match(source, /return await saveOperationLogLocked\(chatKey, snapshot, attempt\);\s*\} catch \(error\) \{[\s\S]{0,160}postponeOperationLogSave\(chatKey, snapshot, attempt\);/);
 });

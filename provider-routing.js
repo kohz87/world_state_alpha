@@ -276,12 +276,13 @@ export async function dispatchWorldStateRequest(ctx, options = {}, scope = {}) {
   }
 }
 
-export function cancelWorldStateRequests({ chatKey, operationId, operationIdPrefix, timedOut = false } = {}) {
+export function cancelWorldStateRequests({ chatKey, operationId, operationIdPrefix, exceptOperationIdPrefix, timedOut = false } = {}) {
   let count = 0;
   for (const entry of inflight.values()) {
     if (chatKey !== undefined && entry.record.chatKey !== chatKey) continue;
     if (operationId !== undefined && entry.record.operationId !== operationId) continue;
     if (operationIdPrefix !== undefined && !String(entry.record.operationId || '').startsWith(String(operationIdPrefix))) continue;
+    if (exceptOperationIdPrefix !== undefined && String(entry.record.operationId || '').startsWith(String(exceptOperationIdPrefix))) continue;
     if (entry.controller.signal.aborted) continue;
     entry.cancel(timedOut);
     count += 1;

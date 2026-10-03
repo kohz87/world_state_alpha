@@ -624,19 +624,10 @@ function relinkLineage(previous, prefix) {
 // A parked branch's base is compared by content, ignoring lineage keys: a
 // later hide/unhide or narration-equivalent rewrite in the shared prefix
 // rewrites those keys in evidence without changing what the state says.
-function stripLineageKeys(value) {
-  if (Array.isArray(value)) return value.map(stripLineageKeys);
-  if (!value || typeof value !== 'object') return value;
-  const out = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (key === 'lineageKey' || key === 'parentLineageKey') continue;
-    out[key] = stripLineageKeys(item);
-  }
-  return out;
-}
+const LINEAGE_KEY_FIELDS = /"(?:parentLineageKey|lineageKey)":"[^"]*",?/g;
 
 function parkContentHash(state) {
-  return hashText(stableStringify(stripLineageKeys(canonicalDomain(state))));
+  return hashText(stableStringify(canonicalDomain(state)).replace(LINEAGE_KEY_FIELDS, ''));
 }
 
 // After a proven prefix rebase (rows before `provenLength` changed only by

@@ -128,7 +128,7 @@ test('an unreadable Operations log is never treated as empty; only a missing or 
   assert.doesNotMatch(retire, /\.catch\(\(\) => \[\]\)/);
   // An unread rename is retried and never cleared.
   assert.match(retire, /void retireOperationLog\(chatKey, successorKey, attempt \+ 1\)/);
-  assert.match(retire, /if \(server === null\) \{\s*retry\(\);\s*return;\s*\}\s*\}\s*await hostStorage\.uploadJsonFile\(operationLogFile\(chatKey\), operationLogBody\(chatKey, \[\]\)\);/);
+  assert.match(retire, /if \(server === null\) \{\s*retry\(\);\s*return;\s*\}\s*\}\s*await queueOperationLogWrite\(chatKey, \(\) => hostStorage\.uploadJsonFile\(operationLogFile\(chatKey\), operationLogBody\(chatKey, \[\]\)\)\);/);
   // A postponed save is a pending timer the flush on leave/hide sees; a snapshot that never saves is parked.
   assert.match(save, /operationLogTimers\.set\(chatKey, setTimeout\(\(\) => \{\s*operationLogTimers\.delete\(chatKey\);\s*void saveOperationLog\(chatKey, null, attempt \+ 1\);/);
   assert.match(save, /unsavedOperationRows\.set\(chatKey, mergeOperationRows\(/);
