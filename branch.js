@@ -621,14 +621,46 @@ function relinkLineage(previous, prefix) {
   return out;
 }
 
+// A parked branch's base is compared by content, ignoring lineage keys: a
+// later hide/unhide or narration-equivalent rewrite in the shared prefix
+// rewrites those keys in evidence without changing what the state says.
+const LINEAGE_KEY_FIELDS = /"(?:parentLineageKey|lineageKey)":"[^"]*",?/g;
+
+function parkContentHash(state) {
+  return hashText(stableStringify(canonicalDomain(state)).replace(LINEAGE_KEY_FIELDS, ''));
+}
+
+// After a proven prefix rebase (rows before `provenLength` changed only by
+// hide/unhide or narration-equivalent rewrites), parked branches whose base
+// lies in that prefix are relinked onto the new lineage keys, so swiping back
+// to an identical parked reply still resumes it.
+export function relinkParkedBranches(parks = [], previousLineage = [], currentLineage = [], provenLength = 0) {
+  const previous = Array.isArray(previousLineage) ? previousLineage : [];
+  const current = Array.isArray(currentLineage) ? currentLineage : [];
+  const proven = Math.min(Number(provenLength) || 0, previous.length, current.length);
+  return (Array.isArray(parks) ? parks : []).map(park => {
+    const base = Number(park?.baseMessageId);
+    if (!Number.isInteger(base) || base < 0 || base >= proven) return park;
+    if (previous[base]?.lineageKey !== park.baseLineageKey || current[base]?.lineageKey === park.baseLineageKey) return park;
+    try {
+      const lineage = park.state.lineage || [];
+      const relinked = relinkLineage(lineage, current.slice(0, base + 1));
+      const state = rebaseLineageMetadata(park.state, lineage, relinked);
+      return { ...park, baseLineageKey: current[base].lineageKey, firstLineageKey: state.lineage[base + 1]?.lineageKey || park.firstLineageKey, state };
+    } catch {
+      return park;
+    }
+  });
+}
+
 export function parkAbandonedBranch(beforeState, result) {
   if (!result || result.failClosed || !['rollback-journal', 'exact-checkpoint'].includes(result.action)) return null;
   const before = normalizeState(beforeState);
   const baseMessageId = Number(result.divergence) - 1;
   const abandoned = before.lineage?.[baseMessageId + 1];
   if (!Number.isInteger(baseMessageId) || baseMessageId < -1 || !abandoned?.lineageKey) return null;
-  const baseDomainHash = domainHash(result.state);
-  if (domainHash(before) === baseDomainHash) return null;
+  const baseDomainHash = parkContentHash(result.state);
+  if (parkContentHash(before) === baseDomainHash) return null;
 
   let source = before;
   const livePrefix = (result.state.lineage || []).slice(0, baseMessageId + 1);
@@ -662,7 +694,7 @@ export function resumeParkedBranch(inputState, chat, parks = [], options = {}) {
     if (base >= 0 && lineage[base]?.lineageKey !== park.baseLineageKey) continue;
     if (lineage[base + 1]?.lineageKey !== park.firstLineageKey) continue;
     if (journalTop > base) continue;
-    currentHash ??= domainHash(state);
+    currentHash ??= parkContentHash(state);
     if (park.baseDomainHash !== currentHash) continue;
 
     const resumed = reconcileBranch(park.state, chat, options);

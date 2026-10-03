@@ -119,15 +119,16 @@ test('an unreadable Operations log is never treated as empty; only a missing or 
   await assert.rejects(read(async () => { throw new TypeError('Failed to fetch'); }), error => error.code !== 'WORLD_STATE_JSON_INVALID');
 
   const source = fs.readFileSync('index.js', 'utf8');
-  const save = source.slice(source.indexOf('function saveOperationLog('), source.indexOf('function scheduleOperationLogSave('));
+  const save = source.slice(source.indexOf('function postponeOperationLogSave('), source.indexOf('function scheduleOperationLogSave('));
   // Before: `readOperationLog(chatKey).catch(() => [])` then upload of this session's rows alone.
   assert.doesNotMatch(save, /\.catch\(\(\) => \[\]\)/);
-  assert.match(save, /server = await readOperationLogForMerge\(chatKey\);\s*\} catch \(error\) \{[\s\S]*?return;\s*\}/);
+  assert.match(save, /server = await readOperationLogForMerge\(chatKey\);\s*\} catch \(error\) \{[\s\S]*?postponeOperationLogSave\(chatKey, snapshot, attempt\);\s*return false;\s*\}/);
   assert.match(source, /async function readOperationLogForMerge\(chatKey\) \{[\s\S]*?if \(error\?\.code === 'WORLD_STATE_JSON_INVALID'\) return \[\];\s*throw error;/);
   const retire = source.slice(source.indexOf('function retireOperationLog('), source.indexOf('function notify('));
   assert.doesNotMatch(retire, /\.catch\(\(\) => \[\]\)/);
   // An unread rename is retried and never cleared.
-  assert.match(retire, /if \(server === null\) \{[\s\S]*?retireOperationLog\(chatKey, successorKey, attempt \+ 1\)[\s\S]*?return;\s*\}\s*\}\s*await hostStorage\.uploadJsonFile\(operationLogFile\(chatKey\), operationLogBody\(chatKey, \[\]\)\);/);
+  assert.match(retire, /void retireOperationLog\(chatKey, successorKey, attempt \+ 1\)/);
+  assert.match(retire, /if \(server === null\) \{\s*retry\(\);\s*return;\s*\}\s*\}\s*await queueOperationLogWrite\(chatKey, \(\) => hostStorage\.uploadJsonFile\(operationLogFile\(chatKey\), operationLogBody\(chatKey, \[\]\)\)\);/);
   // A postponed save is a pending timer the flush on leave/hide sees; a snapshot that never saves is parked.
   assert.match(save, /operationLogTimers\.set\(chatKey, setTimeout\(\(\) => \{\s*operationLogTimers\.delete\(chatKey\);\s*void saveOperationLog\(chatKey, null, attempt \+ 1\);/);
   assert.match(save, /unsavedOperationRows\.set\(chatKey, mergeOperationRows\(/);
