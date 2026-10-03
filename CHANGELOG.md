@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.9.0-alpha.46 - Missed captures recovery path (audit A09-A12) and rebuilds that survive play
+
+Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.45.
+
+### Fixed
+
+- **Chatting during a rebuild cancelled it** (reported in play). Any new message stopped a running rebuild or Recapture, so a missed capture stayed listed even though later replies were captured. A rebuild now stops only if a message inside its own range is swiped, edited, deleted or hidden. Messages you send meanwhile are captured right after it finishes.
+- **Another device kept asking you to Recapture.** A recovery made on one device or tab now clears the notice on the others when you open the panel.
+- **A09 - Renaming a chat could lose a missed capture.** The old log was emptied before the new name's log was saved. It is now cleared only after the new log is saved.
+- **A10 - A failed log upload lost its rows.** An upload error was only logged. It is now retried, the retry is flushed when you leave the chat or hide the page, and rows that still can't be saved are kept and saved on the chat's next load.
+- **A11 - More than 40 missed captures could drop the oldest one,** so Recapture started too late. Every unrecovered failure is now kept; older ones just drop the stored model answer.
+- **A12 - Hiding an earlier message lost a parked swipe.** After you swiped away from a captured reply and hid an earlier message, swiping back re-ran the capture instead of restoring that reply's state, including your manual corrections. It now restores it.
+
+### Architecture
+
+- Core contract updated: range-scoped rebuild staleness, panel-open log refresh, retried uploads, successor-first log rename, unbounded failure pinning, parked-branch relink and content-based park comparison. No durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha46.test.js` and `tests/rebuild-continue.test.js`; each case fails on the previous release.
+- Live in SillyTavern with a stub model:
+  - chatting during a Full rebuild;
+  - a second browser context;
+  - park, hide and swipe back;
+  - two failed log uploads;
+  - a rename with a missed capture, then reload.
+  
+  Each behaves as described, and alpha.45 showed each bug. The alpha.44/45 live scripts behave as before.
+- Not verified: a real model, or two real devices.
+
 ## 0.9.0-alpha.45 - External audit: high-priority findings A01-A08
 
 Fixes for the eight high-priority findings of an external audit of alpha.44. Each was reproduced first and has a regression test that fails on 0.9.0-alpha.44.
