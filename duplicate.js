@@ -25,28 +25,32 @@ function anchorSet(record) {
 }
 
 // Words that tell two otherwise identical subjects apart when they modify the
-// same noun ("north gate" / "south gate", "first battalion" / "second").
+// same noun ("north gate" / "south gate", "first battalion" / "second"). State
+// words (high/low, old/new) describe a change of one subject, not two subjects.
 const DISTINGUISHING_WORDS = new Set([
   'north', 'south', 'east', 'west', 'northern', 'southern', 'eastern', 'western',
   'northeast', 'northwest', 'southeast', 'southwest', 'upper', 'lower', 'inner', 'outer',
-  'left', 'right', 'front', 'rear', 'back', 'high', 'low', 'old', 'new', 'first', 'second',
-  'third', 'fourth', 'fifth', 'last', 'main', 'side', 'central', 'middle',
+  'left', 'right', 'front', 'rear', 'first', 'second', 'third', 'fourth', 'fifth', 'last',
+  'main', 'side', 'central', 'middle',
 ]);
 
 function subjectModifiers(summary, otherTokens) {
-  const words = String(summary ?? '').normalize('NFKC').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const modifiers = new Map();
-  for (let index = 0; index + 1 < words.length; index += 1) {
-    const word = words[index];
-    const lower = word.toLocaleLowerCase();
-    const noun = words[index + 1].toLocaleLowerCase();
-    if (!otherTokens.has(noun) || otherTokens.has(lower) || STOP.has(lower)) continue;
-    // A name (capitalized, not the summary's first word), a number, or a direction/ordinal word.
-    const distinguishing = DISTINGUISHING_WORDS.has(lower) || /\p{N}/u.test(word)
-      || (index > 0 && /^\p{Lu}/u.test(word));
-    if (!distinguishing) continue;
-    if (!modifiers.has(noun)) modifiers.set(noun, new Set());
-    modifiers.get(noun).add(lower);
+  // Per sentence, so a sentence's capitalized first word is never taken for a name.
+  for (const sentence of String(summary ?? '').normalize('NFKC').split(/[.!?;]+/u)) {
+    const words = sentence.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    for (let index = 0; index + 1 < words.length; index += 1) {
+      const word = words[index];
+      const lower = word.toLocaleLowerCase();
+      const noun = words[index + 1].toLocaleLowerCase();
+      if (STOP.has(noun) || !otherTokens.has(noun) || otherTokens.has(lower) || STOP.has(lower)) continue;
+      // A name (capitalized, not a sentence's first word), an ordinal number (1st, 2nd), or a direction/ordinal word.
+      const distinguishing = DISTINGUISHING_WORDS.has(lower) || /^\p{N}+(?:st|nd|rd|th)$/u.test(lower)
+        || (index > 0 && /^\p{Lu}/u.test(word));
+      if (!distinguishing) continue;
+      if (!modifiers.has(noun)) modifiers.set(noun, new Set());
+      modifiers.get(noun).add(lower);
+    }
   }
   return modifiers;
 }

@@ -1267,35 +1267,54 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     rejected.push({ proposal, reason: `unsupported spatial action: ${action}` });
   }
 
-  // A place that moved under a locked True North must not keep a stored direction that its new
-  // coordinates contradict: the direction is cleared (its distance stays), never published as fact.
+  // A place that moved under a locked True North must not keep a stored compass direction its new
+  // coordinates contradict. An automatic move that contradicts an operator-authored relation is undone
+  // (the operator's direction stands); any other contradicted direction is cleared, its distance kept.
   const lockedProfile = resolveSpatialProfile(spatial, baseMap);
   if (lockedProfile?.trueNorthLocked === true && spatial.relations.length) {
+    const COMPASS = new Set(['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest']);
     const beforeById = new Map((before.locations || []).map(loc => [loc.id, loc]));
-    const moved = new Set();
+    // A new override of a base place moves it from the base coordinate.
+    const priorCoordinateOf = loc => beforeById.get(loc.id)?.coordinate
+      || (loc.baseRefId ? effectiveById.get(loc.baseRefId)?.coordinate : null);
+    const movedLocations = new Map();
     for (const loc of spatial.locations) {
-      const prior = beforeById.get(loc.id);
-      if (prior && (prior.coordinate?.x !== loc.coordinate?.x || prior.coordinate?.y !== loc.coordinate?.y)) {
-        moved.add(loc.baseRefId || loc.id);
-      }
+      const prior = priorCoordinateOf(loc);
+      if (!prior) continue;
+      if (prior.x !== loc.coordinate?.x || prior.y !== loc.coordinate?.y) movedLocations.set(loc.baseRefId || loc.id, loc);
     }
-    if (moved.size) {
-      const coordinateOf = id => {
-        const campaign = spatial.locations.find(loc => (loc.baseRefId || loc.id) === id && loc.status !== 'archived');
-        return campaign?.coordinate || effectiveCoordinateFor(id, effectiveById, spatial);
-      };
+    const coordinateOf = id => {
+      const campaign = spatial.locations.find(loc => (loc.baseRefId || loc.id) === id && loc.status !== 'archived');
+      return campaign?.coordinate || effectiveCoordinateFor(id, effectiveById, spatial);
+    };
+    const contradicted = rel => {
+      const direction = canonicalSpatialDirection(rel.direction);
+      if (!COMPASS.has(direction) || (!movedLocations.has(rel.fromId) && !movedLocations.has(rel.toId))) return false;
+      const fromCoord = coordinateOf(rel.fromId);
+      const toCoord = coordinateOf(rel.toId);
+      if (!Number.isFinite(fromCoord?.x) || !Number.isFinite(fromCoord?.y)
+        || !Number.isFinite(toCoord?.x) || !Number.isFinite(toCoord?.y)) return false;
+      const actual = directionFromDelta(toCoord.x - fromCoord.x, toCoord.y - fromCoord.y, lockedProfile);
+      return Boolean(actual) && canonicalSpatialDirection(actual) !== direction;
+    };
+    const operatorRelation = rel => rel.operatorOwned === true
+      || (rel.evidenceIds || []).some(id => spatial.evidence?.[id]?.sourceClass === 'manual');
+    if (automaticNarrative) {
       for (const rel of spatial.relations) {
-        if (!rel.direction || (!moved.has(rel.fromId) && !moved.has(rel.toId))) continue;
-        const fromCoord = coordinateOf(rel.fromId);
-        const toCoord = coordinateOf(rel.toId);
-        if (!Number.isFinite(fromCoord?.x) || !Number.isFinite(fromCoord?.y)
-          || !Number.isFinite(toCoord?.x) || !Number.isFinite(toCoord?.y)) continue;
-        const actual = directionFromDelta(toCoord.x - fromCoord.x, toCoord.y - fromCoord.y, lockedProfile);
-        if (actual && canonicalSpatialDirection(actual) !== canonicalSpatialDirection(rel.direction)) {
-          rel.direction = null;
-          applied.push({ action: 'clear_relation_direction', relationId: rel.id });
+        if (!operatorRelation(rel) || !contradicted(rel)) continue;
+        for (const endpoint of [rel.fromId, rel.toId]) {
+          const loc = movedLocations.get(endpoint);
+          if (!loc) continue;
+          loc.coordinate = clone(priorCoordinateOf(loc));
+          movedLocations.delete(endpoint);
+          rejected.push({ proposal: { action: 'upsert_location', locationId: loc.id }, reason: 'coordinate move contradicts an operator-authored relation direction' });
         }
       }
+    }
+    for (const rel of spatial.relations) {
+      if (!rel.direction || !contradicted(rel)) continue;
+      rel.direction = null;
+      applied.push({ action: 'clear_relation_direction', relationId: rel.id });
     }
   }
 

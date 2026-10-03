@@ -137,12 +137,15 @@ function sentencesOf(text) {
   return String(text || '').split(/(?<=[.!?])\s+|\r?\n+/u).filter(Boolean);
 }
 
-// The sentence names this place: its full name, or a distinctive word of it.
+// The sentence names this place: its full name, or every distinctive word of it
+// (so "Falcon Fortress" never stands in for "Falcon Peak").
 function sentenceNamesPlace(sentence, name) {
   const haystack = ` ${norm(sentence)} `;
   const needle = norm(name);
-  if (needle && haystack.includes(` ${needle} `)) return true;
-  return needle.split(' ').some(token => token.length >= 4 && !GENERIC_PLACE_WORDS.has(token) && haystack.includes(` ${token} `));
+  if (!needle) return false;
+  if (haystack.includes(` ${needle} `)) return true;
+  const distinctive = needle.split(' ').filter(token => token.length >= 3 && !GENERIC_PLACE_WORDS.has(token));
+  return distinctive.length > 0 && distinctive.every(token => haystack.includes(` ${token} `));
 }
 
 // A coordinate is narrative-explicit only where the narration states it for this
@@ -159,7 +162,8 @@ function isCoordinateGroundedInNarration(coord, evidence, exchangeById, decimalS
     const source = exchangeById.get(item.sourceMessageId);
     if (!source) continue;
     if (evidenceClaimQuotedOnly(item.claim, source.text)) continue;
-    const sentences = sentencesOf(source.text);
+    // Narration only: a pair spoken in dialogue is hearsay wherever the cited claim sits.
+    const sentences = sentencesOf(withoutSpokenDialogue(source.text));
     if (sentences.some((sentence, at) => matches(sentence) && (!name || sentenceNamesPlace(sentence, name)
       // "The Old Mill stands by the river. It sits at [12, 4]."
       || (at > 0 && REFERS_BACK.test(sentence) && sentenceNamesPlace(sentences[at - 1], name))))) return true;
@@ -167,20 +171,32 @@ function isCoordinateGroundedInNarration(coord, evidence, exchangeById, decimalS
   return false;
 }
 
-const REFERS_BACK = /^\s*(?:it|its|it's|there|this place|the place)\b/iu;
+// Quoted dialogue (a quoted span with more than one word); a quoted axis label such as "X": 12 is kept.
+function withoutSpokenDialogue(text) {
+  const spoken = span => (/\s/u.test(span.slice(1, -1).trim()) ? ' ' : span);
+  return String(text || '')
+    .replace(/"[^"\n]*"/gu, spoken)
+    .replace(/“[^”\n]*”/gu, spoken);
+}
 
-// Hypothetical or proposed construction ("if we built ... it would", "imagine a
-// tower at ...", "plans to build"): no current place is established.
-const HYPOTHETICAL_PLACE = /\bif\b[^.!?\n]{0,160}\b(?:would|could|might|will)\b|\b(?:imagine|suppose|supposing|were to|wish(?:es|ed)? (?:there|we|they)|plans? to build|planned to build|planning to build|would build|could build|might build|intends? to build)\b/iu;
+const REFERS_BACK = /^\s*it\s+(?:sits|stands|lies|rests|is located|is found|is set|is situated)\b/iu;
+
+// Hypothetical or proposed construction ("if we built Moonspire Tower ...",
+// "plans to raise a fort"): no current place is established. An ordinary
+// conditional about travel ("if you follow the road you will reach ...") is not.
+const CONSTRUCT = '(?:build|built|raise|raised|found|founded|erect|erected)';
+const HYPOTHETICAL_PLACE = new RegExp(`\\bif\\s+(?:we|they|you|he|she|someone|anyone|i)\\s+(?:were to\\s+|ever\\s+|could\\s+|would\\s+)?${CONSTRUCT}\\b|\\b(?:were to|would|could|might|plans? to|planned to|planning to|intends? to|intended to|hopes? to|wants? to)\\s+${CONSTRUCT}\\b|\\b(?:imagine|suppose|supposing)\\b`, 'iu');
 
 function placeEvidenceHypothetical(evidence, exchangeById) {
   const items = Array.isArray(evidence) ? evidence : [];
   if (!items.length) return false;
   return items.every(item => {
-    const source = exchangeById.get(item.sourceMessageId);
     if (HYPOTHETICAL_PLACE.test(String(item.claim || ''))) return true;
+    const source = exchangeById.get(item.sourceMessageId);
     if (!source) return false;
-    return sentencesOf(source.text).some(sentence => evidenceClaimGrounded(item.claim, sentence) && HYPOTHETICAL_PLACE.test(sentence));
+    // Hypothetical only when every sentence that carries the claim is.
+    const grounding = sentencesOf(source.text).filter(sentence => evidenceClaimGrounded(item.claim, sentence));
+    return grounding.length > 0 && grounding.every(sentence => HYPOTHETICAL_PLACE.test(sentence));
   });
 }
 

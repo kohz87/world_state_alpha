@@ -19,6 +19,14 @@ Each fix was reproduced first and has a regression test that fails on 0.9.0-alph
 - **A25 - A moved place kept a direction that contradicted it.** After a coordinate correction under a locked True North, "Tower is north of Anchor" stayed beside coordinates that say east. The contradicted direction is now cleared; the distance stays.
 - **A26 - Merging an overridden map place left its relations behind.** Relations and routes now follow the merge.
 
+### Code review hardening
+
+- Duplicate gate: only ordinals count as distinguishing numbers, a capital at the start of a sentence is not a name, and common words such as "high", "old" or "new" no longer split records.
+- Attribution: "tell", "explain", "mention", "whisper", "inform" and "insist" are reporting verbs, and a claim inside "X said that ..." stays reported even when the claim itself is unquoted.
+- Place coordinates: a sentence binds a coordinate to a place only when it carries the full name or every distinctive name word ("the Peak" no longer binds to Falcon Peak), and dialogue is skipped without breaking a `"X": 12, "Y": 45` header.
+- Hypothetical places: only building or imagining a place counts ("if we reach Falcon Peak" no longer blocks a narrated peak), and a place is skipped only when every sentence grounding it is hypothetical.
+- Contradicted directions: only compass directions are checked, a base-map place moved through a new override is covered, and an automatic move that would contradict an operator-set direction is rejected rather than clearing it.
+
 ### Architecture
 
 - Core contract updated for each rule above. No durable format change (schema 2; envelopes 1).

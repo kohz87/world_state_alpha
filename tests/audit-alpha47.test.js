@@ -145,3 +145,58 @@ test('A25/A26: a moved place drops a contradicted direction; a merged override m
   // Before: the relation stayed on the base id and the target gained nothing.
   assert.equal(merged.spatial.relations.find(item => item.id === 'rel2').fromId, 'gen_keep');
 });
+
+test('review hardening: dialogue coordinates, travel conditionals, shared name words, existential "There", reported complements, state changes, directions', () => {
+  const place = (text, name, coordinate, claim, reason = 'persistent_feature') => spatialCapture(text, [{ action: 'upsert_location', name, type: 'landmark', admissionReason: reason, coordinate, evidence: [{ sourceMessageId: 2, claim }] }]).spatial.locations.find(item => item.name === name);
+  // A coordinate spoken in dialogue is hearsay even beside a narrated claim.
+  assert.equal(place('Falcon Peak rises beyond the ridge. "Falcon Peak sits at [30, 12]," the scout says.', 'Falcon Peak', { x: 30, y: 12 }, 'Falcon Peak rises beyond the ridge').coordinate.x, null);
+  // An ordinary conditional about travel is not hypothetical geography.
+  assert.ok(place('If you follow the road east, you will reach Moonspire Tower by nightfall.', 'Moonspire Tower', null, 'you will reach Moonspire Tower by nightfall'));
+  // A shared name word never lends another place's coordinate.
+  assert.equal(place('Falcon Fortress stands at [15, 30]. Falcon Peak rises in the distance.', 'Falcon Peak', { x: 15, y: 30 }, 'Falcon Peak rises in the distance').coordinate.x, null);
+  // "There is a watchtower at ..." is not a back-reference to the place before it.
+  assert.equal(place('The Old Mill stands by the river. There is a watchtower at [40, 40].', 'Old Mill', { x: 40, y: 40 }, 'The Old Mill stands by the river').coordinate.x, null);
+
+  // Reported speech stays reported across a turn inside the report.
+  const text = 'A messenger reports that the levy was lifted but the bridge has collapsed into the river.';
+  const out = capture(createState('a47'), text, [{ action: 'create', kind: 'fact', summary: 'The bridge has collapsed into the river', anchors: ['bridge'], evidence: [{ sourceMessageId: 2, claim: 'the bridge has collapsed into the river' }] }]);
+  assert.equal(out.state.records.length, 0);
+
+  // State and quantity changes of one subject, and a later sentence's first word, are not different subjects.
+  assert.equal(distinctSubjects('Grain prices are high in Millbrook', 'Grain prices are low in Millbrook'), false);
+  assert.equal(distinctSubjects('The siege of Karth has lasted 3 days', 'The siege of Karth has lasted 4 days'), false);
+  assert.equal(distinctSubjects('The harbor is sealed. Guards patrol the docks', 'The harbor is sealed. Soldiers patrol the docks'), false);
+
+  const located = (relations, extra = []) => normalizeSpatialState({
+    profile: { system: 'cartesian2d', northAxis: '+y', eastAxis: '+x', unitKm: 1, trueNorthLocked: true },
+    locations: [
+      { id: 'tower', name: 'Tower', status: 'active', coordinate: { x: 0, y: 10, authority: 'derived', locked: false } },
+      { id: 'anchor', name: 'Anchor', status: 'active', coordinate: { x: 0, y: 0, authority: 'manual', locked: true } },
+      ...extra,
+    ],
+    relations,
+  });
+  const narratedMove = spatial => reduceSpatialMutations(spatial, {
+    chatKey: 'a47', messageId: 5, lineageKey: 'ln5', operation: 'capture',
+    mutations: [{ action: 'upsert_location', locationId: 'tower', name: 'Tower', coordinate: { x: 10, y: 0, authority: 'narrative_explicit' }, evidence: [{ sourceMessageId: 5, claim: 'The tower stands east' }] }],
+  }, null, { visibleLocations: spatial.locations });
+  // An operator-authored direction is never cleared by an automatic move: the move is undone.
+  const owned = narratedMove(located([{ id: 'rel1', fromId: 'tower', toId: 'anchor', direction: 'south', distanceKm: 10, operatorOwned: true }]));
+  assert.equal(owned.spatial.relations[0].direction, 'south');
+  assert.deepEqual([owned.spatial.locations[0].coordinate.x, owned.spatial.locations[0].coordinate.y], [0, 10]);
+  // A free-text direction is left alone.
+  assert.equal(narratedMove(located([{ id: 'rel1', fromId: 'tower', toId: 'anchor', direction: 'upriver', distanceKm: 10 }])).spatial.relations[0].direction, 'upriver');
+});
+
+test('review hardening: moving a base-map place through a new override clears its contradicted direction', () => {
+  const baseMap = { profile: { system: 'cartesian2d', northAxis: '+y', eastAxis: '+x', unitKm: 1, trueNorthLocked: true }, locations: [{ id: 'b_tower', name: 'Base Tower', coordinate: { x: 0, y: 10 } }, { id: 'b_anchor', name: 'Base Anchor', coordinate: { x: 0, y: 0 } }] };
+  const spatial = normalizeSpatialState({
+    relations: [{ id: 'relb', fromId: 'b_tower', toId: 'b_anchor', direction: 'south', distanceKm: 10 }],
+  });
+  const moved = reduceSpatialMutations(spatial, {
+    chatKey: 'a47', messageId: 6, lineageKey: 'ln6', operation: 'manual',
+    mutations: [{ action: 'upsert_location', locationId: 'b_tower', name: 'Base Tower', createOverride: true, coordinate: { x: 10, y: 0, authority: 'manual', locked: true }, evidence: [{ sourceMessageId: 6, claim: 'Resurveyed', sourceClass: 'manual' }] }],
+  }, baseMap, { allowBaseScan: true });
+  assert.ok(moved.spatial.locations.some(item => item.baseRefId === 'b_tower'));
+  assert.equal(moved.spatial.relations[0].direction, null);
+});

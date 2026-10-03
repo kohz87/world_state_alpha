@@ -99,7 +99,7 @@ export function evidenceClaimGrounded(claim, sourceText) {
 }
 
 const REPORTED_INFORMATION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|orders?|ordered|demands?|demanded|threatens?|threatened|promises?|promised|offers?|offered|refuses?|refused|asks?|asked|requests?|requested|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay)\b/iu;
-const ATTRIBUTION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay)\b/iu;
+const ATTRIBUTION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay|insists?|insisted|tells?|told|explains?|explained|mentions?|mentioned|whispers?|whispered|informs?|informed)\b/iu;
 
 function quotedDialogueSegments(sourceText) {
   const source = String(sourceText ?? '');
@@ -112,7 +112,7 @@ function quotedDialogueSegments(sourceText) {
   return segments;
 }
 
-function sourceWithoutQuotedDialogue(sourceText) {
+export function sourceWithoutQuotedDialogue(sourceText) {
   return String(sourceText ?? '')
     .replace(/"[^"]+"/gu, ' ')
     .replace(/“[^”]+”/gu, ' ')
@@ -188,6 +188,17 @@ function clauseAttributes(sentence, claimTokens) {
   });
 }
 
+// "X reports that ..." / "X insisted ... that ...": everything after the
+// complementizer is the reported content, whatever turns it takes.
+function claimInsideReportedComplement(claim, sentence) {
+  const text = canonicalText(sentence);
+  const needle = canonicalText(claim);
+  const match = new RegExp(ATTRIBUTION_RE.source + '[^.!?]*?\\bthat\\b', 'iu').exec(text);
+  if (!match || !needle) return false;
+  const at = text.indexOf(needle);
+  return at >= match.index + match[0].length - 4;
+}
+
 function evidenceClaimAttributed(claim, sourceText) {
   if (evidenceClaimQuotedOnly(claim, sourceText)) return true;
   if (claimSubstanceQuoted(claim, sourceText)) return true;
@@ -195,7 +206,7 @@ function evidenceClaimAttributed(claim, sourceText) {
   const claimTokens = new Set(significantTokens(claim));
   const segments = source.split(/(?<=[.!?])\s+|\r?\n+/u).filter(Boolean);
   return segments.some(segment => evidenceClaimGrounded(claim, segment) && ATTRIBUTION_RE.test(segment)
-    && clauseAttributes(segment, claimTokens));
+    && (claimInsideReportedComplement(claim, segment) || clauseAttributes(segment, claimTokens)));
 }
 
 function anchorSupported(anchor, evidence, existingRecord = null, assertionText = '') {
