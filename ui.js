@@ -282,7 +282,7 @@ function projectSpatialLocation(loc, key) {
   };
 }
 
-function projectSpatialDetail(spatialState, loc, key, { resolvedLocations, listedLocations }) {
+function projectSpatialDetail(spatialState, loc, key, { resolvedLocations, listedLocations, editRelationId = null }) {
   const base = projectSpatialLocation(loc, key);
   const evidence = (loc.evidenceIds || [])
     .map(evId => spatialState?.evidence?.[evId])
@@ -320,7 +320,8 @@ function projectSpatialDetail(spatialState, loc, key, { resolvedLocations, liste
       };
     });
 
-  const primaryRelation = relations[0] || {
+  const shown = editRelationId === null ? relations[0] : relations.find(item => item.id === editRelationId);
+  const primaryRelation = shown || {
     id: '',
     anchorId: '',
     anchorName: '',
@@ -490,6 +491,9 @@ export function buildWorldStateUiModel(state, {
   spatialSearch = '',
   spatialDuplicatesOnly = false,
   runtimeInfo = {},
+  // While a place is being edited: the id of the relation its form opened with ('' for none), so a
+  // re-render never swaps another relation under typed relation fields. null shows the first relation.
+  editRelationId = null,
 } = {}) {
   const normalized = normalizeState(clone(state));
   const reasons = latestReasonByMessage(normalized);
@@ -581,7 +585,7 @@ export function buildWorldStateUiModel(state, {
 
   const selectedLoc = activeSpatialKey ? locBySpatialKey.get(activeSpatialKey) : null;
   const spatialDetail = selectedLoc
-    ? projectSpatialDetail(normalized.spatial, selectedLoc, activeSpatialKey, { resolvedLocations, listedLocations: effectiveLocations })
+    ? projectSpatialDetail(normalized.spatial, selectedLoc, activeSpatialKey, { resolvedLocations, listedLocations: effectiveLocations, editRelationId })
     : null;
   if (spatialDetail) {
     const projectedByKey = new Map(allSpatialProjected.map(loc => [loc.key, loc]));
@@ -1802,6 +1806,7 @@ export function createWorldStateUiController({
     // Unsaved edits per open form (chat + place, or chat + Coordinate Profile): a re-render from canonical
     // state puts back every field the operator changed. A form's draft ends when that form closes.
     drafts: new Map(),
+    editRelationId: null,
     // While an input method composes text (Japanese, Chinese, Android keyboards), the panel is not
     // re-rendered: replacing the focused input would abort the composition.
     composingTarget: null,
@@ -1827,6 +1832,7 @@ export function createWorldStateUiController({
       spatialSearch: ui.spatialSearch,
       spatialDuplicatesOnly: ui.spatialDuplicatesOnly,
       runtimeInfo: typeof getRuntimeInfo === 'function' ? getRuntimeInfo() : {},
+      editRelationId: ui.spatialEditing && ui.editRelationId !== null ? ui.editRelationId : null,
     });
   }
 
@@ -1874,8 +1880,8 @@ export function createWorldStateUiController({
 
   function draftScope(kind) {
     const chatKey = getState()?.chatKey || '';
-    if (kind === 'place') return ui.activeTab === 'spatial' && ui.spatialEditing && ui.selectedSpatialKey ? 'place|' + chatKey + '|' + ui.selectedSpatialKey : '';
-    return ui.activeTab === 'spatial' && ui.mapSettingsOpen ? 'profile|' + chatKey : '';
+    if (kind === 'place') return ui.spatialEditing && ui.selectedSpatialKey ? 'place|' + chatKey + '|' + ui.selectedSpatialKey : '';
+    return ui.mapSettingsOpen ? 'profile|' + chatKey : '';
   }
 
   function rememberDraft(element) {
@@ -1889,6 +1895,7 @@ export function createWorldStateUiController({
   }
 
   function restoreDrafts() {
+    if (!ui.spatialEditing) ui.editRelationId = null;
     const live = new Set(DRAFT_FIELDS.map(([kind]) => draftScope(kind)).filter(Boolean));
     for (const scope of [...ui.drafts.keys()]) if (!live.has(scope)) ui.drafts.delete(scope);
     for (const [kind, attr] of DRAFT_FIELDS) {
@@ -1896,6 +1903,11 @@ export function createWorldStateUiController({
       for (const [name, draft] of fields || []) {
         const element = root.querySelector?.('[' + attr + '="' + name + '"]');
         if (!element) continue;
+        // A field the host now controls (a base-map profile) shows the host's value, never a draft.
+        if (element.disabled) {
+          fields.delete(name);
+          continue;
+        }
         if ('checked' in draft) element.checked = draft.checked;
         else element.value = draft.value;
       }
@@ -2037,6 +2049,8 @@ export function createWorldStateUiController({
   }
 
   async function click(event) {
+    // A click on another control ends the typing the composition guard protected.
+    if (ui.composingTarget && event.target !== ui.composingTarget) ui.composingTarget = null;
     if (closest(event.target, '[data-wsa-menu-toggle]')) {
       ui.menuOpen = !ui.menuOpen;
       ui.mobileMoreOpen = false;
@@ -2106,6 +2120,7 @@ export function createWorldStateUiController({
     }
 
     if (closest(event.target, '[data-wsa-spatial-edit]')) {
+      if (!ui.spatialEditing) ui.editRelationId = model().spatial.detail?.primaryRelation?.id || '';
       ui.spatialEditing = true;
       ui.spatialDetailOpen = true;
       refresh();
@@ -2375,10 +2390,12 @@ export function createWorldStateUiController({
           trueNorthLocked: Boolean(trueNorthInput?.checked),
         } : null;
 
-        await onSpatialAction(action, {
+        const result = await onSpatialAction(action, {
           profileData,
           spatialModel: currentModel.spatial,
         });
+        // A saved or reset profile is the new canonical value; a rejected save keeps what was typed.
+        if (action === 'reset_profile' || result === true) ui.drafts.delete(draftScope('profile'));
         refresh();
         return;
       }

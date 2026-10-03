@@ -4,6 +4,7 @@ export const WORLD_STATE_OUTPUT_TOKENS_MAX = 12000;
 
 const inflight = new Map();
 let sequence = 0;
+let fingerprintSequence = 0;
 
 export function normalizeWorldStateMaxOutputTokens(value) {
   const number = Number(value);
@@ -99,15 +100,23 @@ export function worldStateRouteFingerprint(ctx, route = {}) {
     }
     return { profileId, signature: profile ? profileSignature(profile) : null, maxOutputTokens };
   }
+  const chatCompletion = ctx?.mainApi === 'openai';
   let model = null;
   try {
-    model = ctx?.mainApi === 'openai' && typeof ctx?.getChatCompletionModel === 'function'
-      ? ctx.getChatCompletionModel()
+    model = chatCompletion
+      ? (typeof ctx?.getChatCompletionModel === 'function' ? ctx.getChatCompletionModel() : null)
       : ctx?.onlineStatus;
   } catch {
     model = null;
   }
-  return { profileId: '', mainApi: ctx?.mainApi ?? null, model: typeof model === 'string' ? model : null, maxOutputTokens };
+  return {
+    profileId: '',
+    mainApi: ctx?.mainApi ?? null,
+    source: chatCompletion ? ctx?.chatCompletionSettings?.chat_completion_source ?? null : ctx?.textCompletionSettings?.type ?? null,
+    // A model that cannot be read never matches, so Resume fails closed instead of guessing.
+    model: typeof model === 'string' && model ? model : 'unknown:' + (++fingerprintSequence),
+    maxOutputTokens,
+  };
 }
 
 function profileSignature(profile) {

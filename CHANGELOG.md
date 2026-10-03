@@ -15,7 +15,17 @@ Each fix was reproduced first and has a regression test that fails on 0.9.0-alph
 - **Typing Japanese, Chinese or with Android GBoard in the search box broke the text.** The panel re-rendered mid-composition, giving results like "ととり砦". It now waits for the committed text.
 - **A place related to an archived place couldn't be saved.** Saving failed with "Relative anchor not found". An unchanged relation is now left as it is, and a changed one keeps its other place.
 - **Failed import, reset and Places actions said nothing.** A bad import file only logged "Uncaught (in promise)". These now show an error.
-- **Two overlapping chat-load events could clear continuity for a turn.** Both wrote the same restore and the second hit its own conflict. Chat loading now takes its turn on the chat's queue.
+- **Two overlapping chat-load events could clear continuity for a turn.** Both wrote the same restore and the second hit its own conflict. Chat loads for the same chat now run one at a time.
+
+### Code review hardening
+
+- Phrases are also looked up rarest first, so a common two-word anchor cannot use up the budget before a rare name; for Places a word counts its description matches too.
+- The relevance view reuses capture's bounding, including its guard for a nearly spent budget.
+- A saved or reset Coordinate Profile drops its draft, and a field set by a base map always shows the map's value.
+- The place editor keeps the relation it opened with, so a relation changed by a capture meanwhile is never deleted by the save.
+- A tap on another control while a keyboard is composing re-renders the panel at once.
+- Resume with the host connection also compares the chat-completion source or text-completion type; a model it cannot read never matches.
+- Chat loads wait only for each other, not for a running rebuild.
 
 ### Architecture
 

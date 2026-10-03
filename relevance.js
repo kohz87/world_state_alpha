@@ -226,7 +226,7 @@ function deletePosting(map, key, recordId) {
 }
 
 // newestFirst walks from the end, so a bounded query covers the newest mention first.
-function nonAsciiBigrams(value, max = 64, { newestFirst = false } = {}) {
+export function nonAsciiBigrams(value, max = 64, { newestFirst = false } = {}) {
   const compact = normalizeText(value).replace(/\s+/g, '');
   if (!/[^\x00-\x7F]/u.test(compact)) return [];
   const chars = [...compact];
@@ -555,9 +555,9 @@ export function selectBackgroundDevelopments(index, {
 }
 
 // newestFirst walks start positions from the end, so the phrase budget covers the newest text first. The
-// chosen phrases are then looked up longest first: a specific multi-word anchor reaches the bounded candidate
-// pool before a common one-word anchor can fill it.
-function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384, { newestFirst = false } = {}) {
+// chosen phrases come out longest first (newest first among equals); callers then order them rarest first.
+// Shared with Places relevance.
+export function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384, { newestFirst = false } = {}) {
   const out = [];
   const seen = new Set();
   const starts = tokenList.map((_, index) => index);
@@ -578,13 +578,14 @@ function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384, { newestFir
     .map(item => item.phrase);
 }
 
-// Rare words first (newest first among equals): a word shared by hundreds of records cannot use up the visit
-// budget before the word that singles out the record the scene is about.
-function rarestFirst(list, postings) {
+// Rarest first (by the postings a key will visit; input order among equals): a word or phrase shared by
+// hundreds of records cannot use up the visit budget before the one that singles out the record the scene
+// is about. Shared with Places relevance.
+export function rarestFirst(list, ...postings) {
   return list
-    .map((token, order) => ({ token, order, size: postings.get(token)?.size || 0 }))
+    .map((key, order) => ({ key, order, size: postings.reduce((sum, map) => sum + (map.get(key)?.size || 0), 0) }))
     .sort((left, right) => left.size - right.size || left.order - right.order)
-    .map(item => item.token);
+    .map(item => item.key);
 }
 
 function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
@@ -610,11 +611,11 @@ function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
     }
   };
 
-  for (const phrase of phraseCandidates(context.recentTokenList, 6, 384, { newestFirst: true })) {
+  for (const phrase of rarestFirst(phraseCandidates(context.recentTokenList, 6, 384, { newestFirst: true }), index.anchorPhrases)) {
     phraseLookups += 1;
     visitPosting(index.anchorPhrases.get(phrase), 1000 + Math.min(100, phrase.length));
   }
-  for (const phrase of phraseCandidates(context.loreTokenList, 6, 256)) {
+  for (const phrase of rarestFirst(phraseCandidates(context.loreTokenList, 6, 256), index.anchorPhrases)) {
     phraseLookups += 1;
     visitPosting(index.anchorPhrases.get(phrase), 400 + Math.min(100, phrase.length));
   }

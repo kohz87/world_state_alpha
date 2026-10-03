@@ -52,18 +52,17 @@ test('A29: the newest Chinese name is found after a long run of earlier Chinese 
   assert.equal(selectRelevantRecords(state, { ...query, index: buildRelevanceIndex(state) }).selected[0]?.record.id, 'pass');
 });
 
-test('A21: the host relevance view keeps the end of a long reply', () => {
-  const start = source.indexOf('function recentText(');
-  const helper = source.slice(start, source.indexOf('\n}\n', start) + 3);
-  // eslint-disable-next-line no-new-func
-  const recentText = new Function('CAPTURE_LIMITS', `${helper}; return recentText;`)({ exchangeChars: 12000, perMessageChars: 7000 });
+test('A21: the host relevance view keeps the end of a long reply', async () => {
+  const { boundedExchangeText } = await import('../capture.js');
   const reply = 'The road winds on. '.repeat(260) + 'At last the Old Observatory reopens its doors.';
   assert.ok(reply.length > 4900);
   // Before: each message was cut to its first 3500 characters, dropping the late mention.
-  assert.match(recentText([{ content: 'We walk.' }, { content: reply }]), /Old Observatory reopens/);
+  assert.match(source, /function recentText\(exchange\) \{\s*return boundedExchangeText\(/);
+  assert.doesNotMatch(source, /slice\(0, 3500\)/);
+  assert.match(boundedExchangeText(['We walk.', reply]), /Old Observatory reopens/);
   // Still bounded, newest first: an overlong reply keeps its start and end within the exchange budget.
   const huge = 'Start. ' + 'x'.repeat(20000) + ' The Old Observatory reopens.';
-  const view = recentText([{ content: 'Older message.' }, { content: huge }]);
+  const view = boundedExchangeText(['Older message.', huge]);
   assert.ok(view.length <= 12000);
   assert.match(view, /^Older message\.\nStart\./);
   assert.match(view, /Old Observatory reopens\.$/);
@@ -117,6 +116,7 @@ function fakePanelRoot() {
       type: /type="checkbox"/.test(attrs) ? 'checkbox' : 'text',
       value,
       checked,
+      disabled: /\sdisabled/.test(attrs),
       getAttribute: name => (attrs.match(new RegExp(name + '="([^"]*)"')) || [])[1] ?? null,
       closest: selector => {
         const [, name, wanted] = selector.match(/^\[([\w-]+)(?:="([^"]*)")?\]$/) || [];
@@ -153,7 +153,7 @@ function fakePanelRoot() {
   return { root, listeners, field: (attr, name) => root.querySelector('[' + attr + '="' + name + '"]') };
 }
 
-async function placesPanel({ onSpatialAction = async () => true } = {}) {
+async function placesPanel({ onSpatialAction = async () => true, relations = [] } = {}) {
   const { createWorldStateUiController } = await import('../ui.js');
   const { createState } = await import('../state-core.js');
   const state = createState('chat:a27');
@@ -161,10 +161,15 @@ async function placesPanel({ onSpatialAction = async () => true } = {}) {
     id: 'wsloc_tower', name: 'Old Tower', type: 'tower', status: 'active', baseRefId: null,
     coordinate: { x: 10, y: 5, authority: 'manual', locked: false }, context: 'Old context', routeRefs: [], notes: '',
     createdAtMessage: 1, lastChangedMessage: 1, evidenceIds: [],
+  }, {
+    id: 'wsloc_mill', name: 'Old Mill', type: 'mill', status: 'active', baseRefId: null,
+    coordinate: { x: 0, y: 0, authority: 'manual', locked: false }, context: '', routeRefs: [], notes: '',
+    createdAtMessage: 1, lastChangedMessage: 1, evidenceIds: [],
   }];
+  state.spatial.relations = relations;
   const dom = fakePanelRoot();
   const ctl = createWorldStateUiController({ root: dom.root, getState: () => state, initialTab: 'spatial', onSpatialAction });
-  const key = ctl.refresh().spatial.selectedKey || '';
+  const key = ctl.refresh().spatial.locations.find(item => item.name === 'Old Tower')?.key || '';
   const click = (selector, dataset = {}) => dom.listeners.click({ target: { closest: wanted => (wanted === selector ? { dataset } : null) }, preventDefault() {} });
   if (key) await click('[data-wsa-spatial-key]', { wsaSpatialKey: key });
   await click('[data-wsa-spatial-edit]');
@@ -234,7 +239,7 @@ test('batch 4: typing through an input method does not re-render the search box 
   ctl.destroy();
 });
 
-test('batch 4: failed panel actions report an error; overlapping chat loads share the writer queue', () => {
+test('batch 4: failed panel actions report an error; overlapping chat loads are serialized', () => {
   // Before: a thrown import/reset/Places action gave only "Uncaught (in promise)" in the console.
   assert.match(source, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, payload, chatKey\)\)\s*\.catch\(error => actionFailed\(/);
   assert.match(source, /return queueChatWork\(chatKey, \(\) => applySpatialActionNow\(actionId, payload, chatKey\)\)\s*\.catch\(error => actionFailed\('Places edit', error, chatKey\)\);/);
@@ -245,7 +250,7 @@ test('batch 4: failed panel actions report an error; overlapping chat loads shar
   assert.match(queue, /next\.then\(cleanup, cleanup\);/);
   // Before: activation reconciled (and wrote a restore) outside the queue, racing a second activation.
   const activate = source.slice(source.indexOf('async function activateCurrentChat('), source.indexOf('function connectionProfileUiContext('));
-  assert.match(activate, /await queueChatWork\(chatKey, async \(\) => \{\s*if \(currentChatKey\(\) !== chatKey\) return;\s*await reconcileCurrentBranch\(chatKey, \{ persistRestore: true \}\);/);
+  assert.match(activate, /await serializeActivation\(chatKey, async \(\) => \{\s*if \(currentChatKey\(\) !== chatKey\) return;\s*await reconcileCurrentBranch\(chatKey, \{ persistRestore: true \}\);/);
 });
 
 test('batch 4: a place related to an archived place can still be saved', () => {
@@ -269,4 +274,77 @@ test('A20/A29 for Places: a specific name and the newest Chinese name reach the 
   const older = '天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳云腾致雨露结为霜金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重芥姜海咸河淡鳞潜羽翔龙师火帝鸟官人皇始制文字乃服衣裳推位让国';
   const chinese = { locations: [place('pass', '雁门关')], relations: [], routes: [], overrides: [], evidence: {} };
   assert.deepEqual(ids(selectRelevantLocations(chinese, { recentText: older + '我们终于抵达雁门关。' })), ['pass']);
+});
+
+test('review hardening: a profile draft ends on save or reset', async () => {
+  const profileResult = false;
+  const { ctl, dom, click } = await placesPanel({ onSpatialAction: async () => profileResult });
+  await click('[data-wsa-map-settings]');
+  const unit = () => dom.field('data-wsa-profile-field', 'unitKm');
+  unit().value = '5';
+  dom.listeners.input({ target: unit() });
+  await click('[data-wsa-spatial-action]', { wsaSpatialAction: 'save_profile' });
+  assert.equal(unit().value, '5');
+  // Before: Reset put the typed value straight back over the reset profile.
+  await click('[data-wsa-spatial-action]', { wsaSpatialAction: 'reset_profile' });
+  assert.notEqual(unit().value, '5');
+  ctl.destroy();
+});
+
+test('review hardening: the editor keeps the relation it opened with; a click ends a composition hold', async () => {
+  const sent = [];
+  const { ctl, dom, state, click, type } = await placesPanel({
+    relations: [{ id: 'rel_r1', fromId: 'wsloc_mill', toId: 'wsloc_tower', direction: 'north', distanceKm: 3, distanceMode: 'straight_line', notes: '', evidenceIds: [] }],
+    onSpatialAction: async (action, payload) => { sent.push(payload.formData); return true; },
+  });
+  type('relativeAnchor', 'Kestrel');
+  // A capture replaces the relation the form was showing with another one.
+  state.spatial.relations = [{ id: 'rel_r2', fromId: 'wsloc_tower', toId: 'wsloc_mill', direction: 'south', distanceKm: 9, distanceMode: 'route', notes: '', evidenceIds: [] }];
+  ctl.refresh();
+  assert.equal(dom.field('data-wsa-field', 'relativeAnchor').value, 'Kestrel');
+  await click('[data-wsa-spatial-action]', { wsaSpatialAction: 'save_location' });
+  // Before: the save named rel_r2, so the host deleted a relation the operator never touched.
+  assert.equal(sent[0].relationId, '');
+
+  await click('[data-wsa-spatial-edit]');
+  const field = dom.field('data-wsa-field', 'name');
+  dom.listeners.compositionstart({ target: field });
+  const before = dom.root.innerHTML;
+  await click('[data-wsa-spatial-cancel-edit]');
+  // Before: the click's re-render stayed deferred until the keyboard committed.
+  assert.notEqual(dom.root.innerHTML, before);
+  assert.equal(ctl.getUiState().spatialEditing, false);
+  ctl.destroy();
+});
+
+test('review hardening: rare phrases and context-only words cannot crowd out a specific match', async () => {
+  const { phraseCandidates, rarestFirst } = await import('../relevance.js');
+  const postings = new Map([['city guard', new Set(Array.from({ length: 600 }, (_, i) => 'g' + i))], ['mira', new Set(['mira'])]]);
+  const order = rarestFirst(phraseCandidates(['the', 'city', 'guard', 'waves', 'mira', 'arrives'], 6, 384, { newestFirst: true }), postings);
+  // Before: the two-word phrase shared by 600 records was looked up (and could use up the budget) first.
+  assert.ok(order.indexOf('mira') < order.indexOf('city guard'));
+  const { selectRelevantLocations } = await import('../spatial-relevance.js');
+  const place = (id, name, context = '') => ({ id, name, type: 'landmark', status: 'active', baseRefId: null, coordinate: { x: null, y: null, authority: 'unknown', locked: false }, context, routeRefs: [], notes: '', createdAtMessage: 1, lastChangedMessage: 1, evidenceIds: [] });
+  const spatial = { locations: [], relations: [], routes: [], overrides: [], evidence: {} };
+  for (let i = 0; i < 500; i += 1) spatial.locations.push(place('p' + i, 'Hamlet ' + i, 'beside the old road'));
+  spatial.locations.push(place('kessel', 'Kesselpass'));
+  const ids = selectRelevantLocations(spatial, { recentText: 'We take the road to Kesselpass.' }).selected.map(item => item.location.id);
+  assert.ok(ids.includes('kessel'));
+});
+
+test('review hardening: a tiny remaining budget stays bounded; an unreadable host model never matches', async () => {
+  const { boundedExchangeText } = await import('../capture.js');
+  assert.ok(boundedExchangeText(['x'.repeat(50000), 'y'.repeat(4998), 'z'.repeat(7000)]).length <= 12000);
+  const { worldStateRouteFingerprint } = await import('../provider-routing.js');
+  const host = { mainApi: 'openai', chatCompletionSettings: { chat_completion_source: 'openai' }, onlineStatus: 'Valid', extensionSettings: {} };
+  // Before: chat completion without a readable model fell back to the status text, which never changes.
+  assert.notEqual(JSON.stringify(worldStateRouteFingerprint(host, {})), JSON.stringify(worldStateRouteFingerprint(host, {})));
+  host.getChatCompletionModel = () => 'gpt-a';
+  const before = JSON.stringify(worldStateRouteFingerprint(host, {}));
+  assert.equal(JSON.stringify(worldStateRouteFingerprint(host, {})), before);
+  host.chatCompletionSettings.chat_completion_source = 'claude';
+  assert.notEqual(JSON.stringify(worldStateRouteFingerprint(host, {})), before);
+  // Activation waits only for other activations of the chat, never the writer queue.
+  const activate = source.slice(source.indexOf('async function activateCurrentChat('), source.indexOf('function connectionProfileUiContext('));
+  assert.doesNotMatch(activate, /queueChatWork/);
 });

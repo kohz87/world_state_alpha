@@ -219,6 +219,20 @@ function clip(value, max) {
   return `${text.slice(0, head)}\n...[bounded]...\n${text.slice(-tail)}`;
 }
 
+// The relevance view of an exchange, bounded exactly like the capture exchange: newest message first within
+// the exchange budget, each message clipped to keep its start and its end (the newest text).
+export function boundedExchangeText(contents = []) {
+  const rows = (Array.isArray(contents) ? contents : []).map(value => String(value ?? '').trim()).filter(Boolean);
+  let remaining = CAPTURE_LIMITS.exchangeChars;
+  const out = [];
+  for (let index = rows.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const text = clip(rows[index], Math.min(CAPTURE_LIMITS.perMessageChars, remaining));
+    remaining -= text.length + 1;
+    out.unshift(text);
+  }
+  return out.join('\n');
+}
+
 export function normalizeCaptureExchange(exchange = []) {
   const candidates = (Array.isArray(exchange) ? exchange : [])
     .filter(message => Number.isInteger(message?.messageId) && roleOf(message) !== 'system')

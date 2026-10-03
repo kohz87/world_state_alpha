@@ -8,7 +8,7 @@ import {
 } from '../../../../script.js';
 
 import { chatLineage, commitMutationBoundary, contentLineageKey, contentLineageKeys, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, relinkParkedBranches, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
-import { assistantBoundaryExchange, CAPTURE_LIMITS, hiddenConversationRole, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
+import { assistantBoundaryExchange, boundedExchangeText, CAPTURE_LIMITS, hiddenConversationRole, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { affectsCaptureRecovery, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
@@ -81,6 +81,7 @@ const bootstrapWarnings = new Set();
 const stateEpochs = new Map();
 const ownershipEpochs = new Map();
 const chatQueues = new Map();
+const activationQueues = new Map();
 const branchDirtyChats = new Set();
 const passiveCaptureRebaseCandidates = new Map();
 // In-memory only: abandoned branches (swipes, deletes, regenerations) that can
@@ -1980,22 +1981,9 @@ function boundedExchange(chat, endMessageId, limit = CAPTURE_LIMITS.exchangeMess
   return out.reverse();
 }
 
-// The relevance view of an exchange, bounded like capture's exchange: newest message first within the
-// exchange budget, and a long message keeps its start and its end (the newest text), never only its prefix.
+// The relevance view of an exchange: bounded like capture's exchange, never a per-message prefix.
 function recentText(exchange) {
-  const rows = (Array.isArray(exchange) ? exchange : [])
-    .map(row => String(row?.content || '').trim())
-    .filter(Boolean);
-  let remaining = CAPTURE_LIMITS.exchangeChars;
-  const out = [];
-  for (let index = rows.length - 1; index >= 0 && remaining > 0; index -= 1) {
-    const max = Math.min(CAPTURE_LIMITS.perMessageChars, remaining);
-    const head = Math.floor(max * 0.3);
-    const text = rows[index].length <= max ? rows[index] : `${rows[index].slice(0, head)}\n${rows[index].slice(-(max - head - 1))}`;
-    remaining -= text.length;
-    out.unshift(text);
-  }
-  return out.join('\n');
+  return boundedExchangeText((Array.isArray(exchange) ? exchange : []).map(row => row?.content));
 }
 
 function routeSettings() {
@@ -2023,6 +2011,17 @@ function queueChatWork(chatKey, task) {
   // Cleanup must not re-raise: the caller handles the task's own failure.
   const cleanup = () => {
     if (chatQueues.get(chatKey) === next) chatQueues.delete(chatKey);
+  };
+  next.then(cleanup, cleanup);
+  return next;
+}
+
+function serializeActivation(chatKey, task) {
+  const previous = activationQueues.get(chatKey) || Promise.resolve();
+  const next = previous.catch(() => {}).then(task);
+  activationQueues.set(chatKey, next);
+  const cleanup = () => {
+    if (activationQueues.get(chatKey) === next) activationQueues.delete(chatKey);
   };
   next.then(cleanup, cleanup);
   return next;
@@ -2816,9 +2815,10 @@ async function activateCurrentChat() {
       evictDormantChatStates(chatKey);
       return;
     }
-    // On the chat's writer queue: overlapping load events (CHAT_CHANGED with CHAT_LOADED, or the start-up
-    // paths) and queued captures never race one restore write against another from the same cache.
-    await queueChatWork(chatKey, async () => {
+    // One activation reconcile at a time per chat: overlapping load events (CHAT_CHANGED with CHAT_LOADED,
+    // or the start-up paths) never race one restore write against another from the same cache. It does not
+    // wait on the writer queue, so a long rebuild never holds back the reloaded chat's prompt and panel.
+    await serializeActivation(chatKey, async () => {
       if (currentChatKey() !== chatKey) return;
       await reconcileCurrentBranch(chatKey, { persistRestore: true });
     });
@@ -4195,7 +4195,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       baseMap: null,
     });
     if (res.outcome === 'applied') {
-      await persistSpatialState(
+      return await persistSpatialState(
         res.state,
         clearDerivedCoordinates
           ? label + ' and cleared ' + derived.length + ' stale derived coordinate' + (derived.length === 1 ? '' : 's')
@@ -4214,8 +4214,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       notify('error', 'Invalid Coordinate Profile: ' + String(error?.message || error));
       return;
     }
-    await applyManualProfile(profile, 'Saved manual Coordinate Profile');
-    return;
+    return await applyManualProfile(profile, 'Saved manual Coordinate Profile');
   }
 
   if (actionId === 'reset_profile') {
