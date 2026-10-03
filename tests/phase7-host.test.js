@@ -1191,7 +1191,7 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   assert.match(source, /raw\.format !== OPERATION_LOG_FORMAT[\s\S]{0,120}raw\.chatKey !== chatKey/);
   assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.records\(chatKey\), OPERATION_LOG_LIMIT\);/);
   assert.match(source, /return withWorldStateFileLock\(operationLogFile\(chatKey\), task\);/);
-  assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return;/);
+  assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return false;/);
   assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);
   assert.match(source, /void hydrateOperationLog\(chatKey\);\s*await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation' \}\);/);
   assert.match(source, /await retireOperationLog\(oldKey, newKey\);\s*clearChatRuntimeState\(oldKey\);/);

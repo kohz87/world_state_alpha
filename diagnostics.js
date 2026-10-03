@@ -248,16 +248,18 @@ export function unrecoveredCaptureFailures(rows = []) {
     .sort((a, b) => (a.messageId - b.messageId) || (a.lineageKey < b.lineageKey ? -1 : a.lineageKey > b.lineageKey ? 1 : 0));
 }
 
-// Bounds the log to `max` rows, oldest first out, but never drops the row that
-// records a still-unrecovered capture failure (up to PINNED_FAILURES of them),
-// so a long rebuild or a busy session cannot silently erase a missed capture.
+// Bounds the log to `max` rows, oldest first out, but never drops a row that
+// records a still-unrecovered capture failure, however many there are (a long
+// rebuild or a busy session cannot silently erase a missed capture). Ordinary
+// rows give way first; when unrecovered rows alone exceed the bound, all of
+// them stay, and all but the newest PINNED_FAILURES drop their stored model
+// answer so the log stays small.
 export function trimOperationRows(rows = [], max = DEFAULT_LIMIT) {
   const list = Array.isArray(rows) ? rows : [];
   if (list.length <= max) return list.slice();
-  // Every row of a still-unrecovered version, so settling one attempt never exposes a trimmed earlier one.
-  const pinned = new Set(unrecoveredFailureLists(list).flat()
-    .sort((a, b) => int(b.at) - int(a.at))
-    .slice(0, Math.min(PINNED_FAILURES, Math.max(0, max - 1))));
+  const unrecovered = unrecoveredFailureLists(list).flat().sort((a, b) => int(b.at) - int(a.at));
+  const pinned = new Set(unrecovered);
+  const keepAnswers = new Set(unrecovered.slice(0, PINNED_FAILURES));
   let drop = list.length - max;
   return list.filter(row => {
     if (drop > 0 && !pinned.has(row)) {
@@ -265,5 +267,7 @@ export function trimOperationRows(rows = [], max = DEFAULT_LIMIT) {
       return false;
     }
     return true;
-  });
+  }).map(row => (pinned.has(row) && !keepAnswers.has(row) && (row.responseJson || row.rejectionsJson)
+    ? { ...row, responseJson: '', rejectionsJson: '' }
+    : row));
 }

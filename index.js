@@ -7,7 +7,7 @@ import {
   saveSettings,
 } from '../../../../script.js';
 
-import { chatLineage, commitMutationBoundary, contentLineageKey, contentLineageKeys, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
+import { chatLineage, commitMutationBoundary, contentLineageKey, contentLineageKeys, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, relinkParkedBranches, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, CAPTURE_LIMITS, hiddenConversationRole, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { affectsCaptureRecovery, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
@@ -253,45 +253,59 @@ function operationLogBody(chatKey, operations) {
   };
 }
 
+// A save that could not complete (the saved log was unreadable, or the upload
+// failed) is retried, never written over other sessions' rows. A cached chat's
+// retry is an ordinary pending timer, so leaving the chat or hiding the page
+// flushes it; rows that still cannot be saved are parked until that chat's log
+// next loads or saves.
+function postponeOperationLogSave(chatKey, snapshot, attempt) {
+  const delay = OPERATION_LOG_SAVE_DELAY_MS * (attempt + 2);
+  if (attempt >= OPERATION_LOG_SAVE_RETRIES) {
+    const rows = snapshot || diagnosticStore.records(chatKey);
+    unsavedOperationRows.set(chatKey, mergeOperationRows(unsavedOperationRows.get(chatKey) || [], rows, OPERATION_LOG_LIMIT));
+    return;
+  }
+  if (snapshot) {
+    setTimeout(() => void saveOperationLog(chatKey, snapshot, attempt + 1), delay);
+    return;
+  }
+  if (operationLogTimers.has(chatKey)) return;
+  operationLogTimers.set(chatKey, setTimeout(() => {
+    operationLogTimers.delete(chatKey);
+    void saveOperationLog(chatKey, null, attempt + 1);
+  }, delay));
+}
+
 // `snapshot` saves rows of a chat leaving the cache without re-hydrating it.
-// When the saved log cannot be read the save is postponed (a few retries), never
-// written over it. A postponed save of a cached chat is an ordinary pending
-// timer, so leaving the chat or hiding the page flushes it; a snapshot that
-// still cannot be saved is parked until that chat's log next loads.
+// Resolves true once the rows are on the server.
 function saveOperationLog(chatKey, snapshot = null, attempt = 0) {
   return queueOperationLogWrite(chatKey, async () => {
+    if (retiredOperationLogs.has(chatKey)) return false;
+    let server;
     try {
-      if (retiredOperationLogs.has(chatKey)) return;
-      let server;
-      try {
-        server = await readOperationLogForMerge(chatKey);
-      } catch (error) {
-        console.warn('[World State Alpha] saved Operations log could not be read; saving it later so rows from other sessions are kept.', error);
-        const delay = OPERATION_LOG_SAVE_DELAY_MS * (attempt + 2);
-        if (!snapshot) {
-          if (attempt < OPERATION_LOG_SAVE_RETRIES && !operationLogTimers.has(chatKey)) {
-            operationLogTimers.set(chatKey, setTimeout(() => {
-              operationLogTimers.delete(chatKey);
-              void saveOperationLog(chatKey, null, attempt + 1);
-            }, delay));
-          }
-        } else if (attempt < OPERATION_LOG_SAVE_RETRIES) {
-          setTimeout(() => void saveOperationLog(chatKey, snapshot, attempt + 1), delay);
-        } else {
-          unsavedOperationRows.set(chatKey, mergeOperationRows(unsavedOperationRows.get(chatKey) || [], snapshot, OPERATION_LOG_LIMIT));
-        }
-        return;
-      }
-      if (!snapshot && !operationLogLoads.has(chatKey)) {
-        diagnosticStore.merge(chatKey, server);
-        operationLogLoads.set(chatKey, Promise.resolve());
-        operationLogsHydrated.add(chatKey);
-      }
-      const rows = mergeOperationRows(server, snapshot || diagnosticStore.records(chatKey), OPERATION_LOG_LIMIT);
+      server = await readOperationLogForMerge(chatKey);
+    } catch (error) {
+      console.warn('[World State Alpha] saved Operations log could not be read; saving it later so rows from other sessions are kept.', error);
+      postponeOperationLogSave(chatKey, snapshot, attempt);
+      return false;
+    }
+    if (!snapshot && !operationLogLoads.has(chatKey)) {
+      diagnosticStore.merge(chatKey, server);
+      operationLogLoads.set(chatKey, Promise.resolve());
+      operationLogsHydrated.add(chatKey);
+    }
+    const parked = unsavedOperationRows.get(chatKey);
+    if (!snapshot && parked) diagnosticStore.merge(chatKey, parked);
+    const rows = mergeOperationRows(server, snapshot || diagnosticStore.records(chatKey), OPERATION_LOG_LIMIT);
+    try {
       await hostStorage.uploadJsonFile(operationLogFile(chatKey), operationLogBody(chatKey, rows));
     } catch (error) {
-      console.warn('[World State Alpha] Operations log could not be saved; it remains available in this session.', error);
+      console.warn('[World State Alpha] Operations log could not be saved; retrying, and the rows stay in this session meanwhile.', error);
+      postponeOperationLogSave(chatKey, snapshot, attempt);
+      return false;
     }
+    if (!snapshot) unsavedOperationRows.delete(chatKey);
+    return true;
   });
 }
 
@@ -328,9 +342,17 @@ function retireOperationLog(chatKey, successorKey = '', attempt = 0) {
   clearTimeout(operationLogTimers.get(chatKey));
   operationLogTimers.delete(chatKey);
   retiredOperationLogs.add(chatKey);
+  // A rename target is live again (renaming back reuses a retired identity).
+  if (successorKey) retiredOperationLogs.delete(successorKey);
   // Rows parked after a failed save follow a rename and are dropped with a deleted chat.
   const parked = unsavedOperationRows.get(chatKey) || [];
   unsavedOperationRows.delete(chatKey);
+  const retry = () => {
+    if (attempt >= OPERATION_LOG_SAVE_RETRIES) return;
+    setTimeout(() => {
+      if (retiredOperationLogs.has(chatKey)) void retireOperationLog(chatKey, successorKey, attempt + 1);
+    }, OPERATION_LOG_SAVE_DELAY_MS * (attempt + 2));
+  };
   return queueOperationLogWrite(chatKey, async () => {
     try {
       if (successorKey && parked.length) diagnosticStore.merge(successorKey, parked);
@@ -342,17 +364,17 @@ function retireOperationLog(chatKey, successorKey = '', attempt = 0) {
           console.warn('[World State Alpha] renamed chat\'s Operations log could not be read; retrying before it is cleared.', error);
         }
         const rows = mergeOperationRows(server || [], diagnosticStore.records(chatKey), OPERATION_LOG_LIMIT);
+        // The old log is cleared only once the new owner's log durably holds its rows; otherwise both
+        // are kept (a failed save retries on its own) and the retirement is retried.
         if (rows.length) {
           diagnosticStore.merge(successorKey, rows);
-          scheduleOperationLogSave(successorKey);
-        }
-        // Unread rows are never cleared: the migration is retried, and left in the old file if it never reads.
-        if (server === null) {
-          if (attempt < OPERATION_LOG_SAVE_RETRIES) {
-            setTimeout(() => {
-              if (retiredOperationLogs.has(chatKey)) void retireOperationLog(chatKey, successorKey, attempt + 1);
-            }, OPERATION_LOG_SAVE_DELAY_MS * (attempt + 2));
+          if (!await saveOperationLog(successorKey)) {
+            retry();
+            return;
           }
+        }
+        if (server === null) {
+          retry();
           return;
         }
       }
@@ -2215,6 +2237,14 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
     setCachedState(chatKey, result.state, { indexMode: 'preserve' });
   }
   if (resumedPark) parkedBranches.set(chatKey, (parkedBranches.get(chatKey) || []).filter(park => park !== resumedPark));
+  // Rows before the first real change were only rebased (hide/unhide, narration-equivalent rewrites):
+  // parked branches based in that prefix move onto the new lineage keys.
+  const provenPrefix = lineageRebase
+    ? Math.min(state.lineage?.length || 0, result.state.lineage?.length || 0)
+    : ['rollback-journal', 'exact-checkpoint', 'parked-branch-resume'].includes(result.action) ? Number(result.divergence) || 0 : 0;
+  if (provenPrefix > 0 && parkedBranches.get(chatKey)?.length) {
+    parkedBranches.set(chatKey, relinkParkedBranches(parkedBranches.get(chatKey), state.lineage, result.state.lineage, provenPrefix));
+  }
   rememberParkedBranch(chatKey, abandonedBranch);
 
   if (lineageRebase) {
