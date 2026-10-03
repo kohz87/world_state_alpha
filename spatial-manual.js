@@ -1,6 +1,6 @@
 import { chatLineage, commitMutationBoundary, firstLineageDivergence } from './branch.js';
 import { SPATIAL_AUTHORITIES, SPATIAL_LIMITS } from './constants.js';
-import { clone, normalizeState } from './state-core.js';
+import { clone, cloneState, normalizeState } from './state-core.js';
 import {
   normalizeCoordinate,
   reduceSpatialMutations,
@@ -88,7 +88,7 @@ export function applySpatialManualMutation({
   note = '',
   baseMap = null,
 } = {}) {
-  const before = normalizeState(clone(state), { chatKey });
+  const before = normalizeState(cloneState(state), { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
 
@@ -142,13 +142,13 @@ export function applySpatialManualMutation({
   if (reduced.rejected.length > 0 && reduced.applied.length === 0) {
     return {
       outcome: 'rejected',
-      state: clone(before),
+      state: cloneState(before),
       applied: [],
       rejected: reduced.rejected.map(item => ({ stage: 'spatial-reducer', reason: item.reason })),
     };
   }
 
-  const nextState = clone(before);
+  const nextState = cloneState(before);
   nextState.spatial = reduced.spatial;
 
   if (boundary) {
@@ -170,9 +170,11 @@ export function applySpatialManualMutation({
 
   // Root / no-message update (e.g. attaching base map profile at setup)
   if (nextState.checkpoints.length) {
-    const rootCp = nextState.checkpoints.find(c => c.messageId === -1);
-    if (rootCp) {
-      rootCp.snapshot.spatial = clone(nextState.spatial);
+    // Checkpoint entries are shared between state copies: replace the root entry, never edit it.
+    const rootIndex = nextState.checkpoints.findIndex(c => c.messageId === -1);
+    if (rootIndex >= 0) {
+      const rootCp = nextState.checkpoints[rootIndex];
+      nextState.checkpoints[rootIndex] = { ...rootCp, snapshot: { ...rootCp.snapshot, spatial: clone(nextState.spatial) } };
     }
   }
 

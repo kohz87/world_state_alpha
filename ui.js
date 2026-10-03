@@ -1,7 +1,7 @@
 import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { hashText } from './hash.js';
-import { clone, normalizeState } from './state-core.js';
+import { clone, cloneState, normalizeState } from './state-core.js';
 import { resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 
 export const WORLD_STATE_UI_NAMESPACE = 'world_state_alpha_ui';
@@ -495,7 +495,7 @@ export function buildWorldStateUiModel(state, {
   // re-render never swaps another relation under typed relation fields. null shows the first relation.
   editRelationId = null,
 } = {}) {
-  const normalized = normalizeState(clone(state));
+  const normalized = normalizeState(cloneState(state));
   const reasons = latestReasonByMessage(normalized);
   const uiKeyByRecordId = new Map(normalized.records.map((record, index) => [record.id, 'row-' + index]));
   const recordIdByUiKey = new Map([...uiKeyByRecordId.entries()].map(([recordId, uiKey]) => [uiKey, recordId]));
@@ -1771,6 +1771,8 @@ export function createScrollMemory({ limit = 40 } = {}) {
 export function createWorldStateUiController({
   root,
   getState,
+  // Scroll and draft bookkeeping need only the chat key; reading it must not copy the state.
+  getChatKey = () => getState()?.chatKey || '',
   getBaseMap = () => null,
   getDiagnostics = () => [],
   getRuntimeInfo = () => ({}),
@@ -1838,7 +1840,7 @@ export function createWorldStateUiController({
 
   function scrollScope(kind) {
     const list = [
-      getState()?.chatKey || '',
+      getChatKey(),
       ui.activeTab,
       ui.query,
       ui.spatialSearch,
@@ -1879,7 +1881,7 @@ export function createWorldStateUiController({
   const DRAFT_FIELDS = [['place', 'data-wsa-field'], ['profile', 'data-wsa-profile-field']];
 
   function draftScope(kind) {
-    const chatKey = getState()?.chatKey || '';
+    const chatKey = getChatKey();
     if (kind === 'place') return ui.spatialEditing && ui.selectedSpatialKey ? 'place|' + chatKey + '|' + ui.selectedSpatialKey : '';
     return ui.mapSettingsOpen ? 'profile|' + chatKey : '';
   }

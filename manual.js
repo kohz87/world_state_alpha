@@ -1,6 +1,6 @@
 import { chatLineage, commitMutationBoundary, firstLineageDivergence } from './branch.js';
 import { consolidateCreateCandidate } from './duplicate.js';
-import { clone, normalizeState, reduceMutations } from './state-core.js';
+import { clone, cloneState, normalizeState, reduceMutations } from './state-core.js';
 import { exportBundle, importBundle, resetState } from './transfer.js';
 
 export const MANUAL_LIMITS = Object.freeze({
@@ -172,7 +172,7 @@ export function applyManualMutation({
   mutation,
   note,
 } = {}) {
-  const before = normalizeState(clone(state), { chatKey });
+  const before = normalizeState(cloneState(state), { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
   if (before.chatKey && before.chatKey !== owner) throw new Error('manual mutation chatKey does not match state owner');
@@ -185,7 +185,7 @@ export function applyManualMutation({
     if (!consolidated.ok) {
       return {
         outcome: 'rejected',
-        state: clone(before),
+        state: cloneState(before),
         applied: [],
         rejected: [{
           stage: 'duplicate-gate',
@@ -208,7 +208,7 @@ export function applyManualMutation({
   if (reduced.rejected.length || !reduced.applied.some(item => item.action !== 'noop')) {
     return {
       outcome: 'rejected',
-      state: clone(before),
+      state: cloneState(before),
       applied: reduced.applied,
       rejected: reduced.rejected.map(item => ({ stage: 'reducer', reason: item.reason })),
     };
@@ -248,7 +248,7 @@ export function applyManualLifecycleBatch({
     throw new Error('bulk lifecycle action is limited to ' + MANUAL_LIMITS.bulkRecords + ' records');
   }
 
-  const before = normalizeState(clone(state), { chatKey });
+  const before = normalizeState(cloneState(state), { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
   if (before.chatKey && before.chatKey !== owner) throw new Error('manual mutation chatKey does not match state owner');
@@ -260,7 +260,7 @@ export function applyManualLifecycleBatch({
   if (inactive.length) {
     return {
       outcome: 'rejected',
-      state: clone(before),
+      state: cloneState(before),
       applied: [],
       rejected: inactive.map(recordId => ({
         stage: 'reducer',
@@ -282,7 +282,7 @@ export function applyManualLifecycleBatch({
   if (reduced.rejected.length || changed !== ids.length) {
     return {
       outcome: 'rejected',
-      state: clone(before),
+      state: cloneState(before),
       applied: reduced.applied,
       rejected: reduced.rejected.length
         ? reduced.rejected.map(item => ({ stage: 'reducer', reason: item.reason }))
@@ -353,7 +353,7 @@ export function applyWorldStateImport(preview, { confirmed = false } = {}) {
     error.code = 'WORLD_STATE_IMPORT_CONFIRMATION_REQUIRED';
     throw error;
   }
-  return normalizeState(clone(preview.candidate), { strictSchema: true });
+  return normalizeState(cloneState(preview.candidate), { strictSchema: true });
 }
 
 export function previewWorldStateReset(state, { chatKey = '' } = {}) {
@@ -377,5 +377,5 @@ export function applyWorldStateReset(preview, { confirmed = false } = {}) {
     error.code = 'WORLD_STATE_RESET_CONFIRMATION_REQUIRED';
     throw error;
   }
-  return normalizeState(clone(preview.candidate), { strictSchema: true });
+  return normalizeState(cloneState(preview.candidate), { strictSchema: true });
 }

@@ -576,50 +576,81 @@ export function deriveCoordinate(anchorCoord, {
   };
 }
 
-export function resolveEffectiveLocations(spatialState, baseMap = null) {
+// id -> base entry, built once per (read-only) base map so a lookup never walks the whole map.
+const baseLocationIndexes = new WeakMap();
+function baseLocationIndex(baseMap) {
+  const locations = baseMap && Array.isArray(baseMap.locations) ? baseMap.locations : null;
+  if (!locations) return new Map();
+  let index = baseLocationIndexes.get(locations);
+  if (!index) {
+    index = new Map();
+    for (const item of locations) if (item && item.id) index.set(item.id, item);
+    baseLocationIndexes.set(locations, index);
+  }
+  return index;
+}
+
+function effectiveBaseLocation(item) {
+  return {
+    ...clone(item),
+    baseRefId: null,
+    isBase: true,
+    coordinate: {
+      x: Number.isFinite(item.coordinate?.x) ? item.coordinate.x : (Array.isArray(item.coord) ? item.coord[0] : null),
+      y: Number.isFinite(item.coordinate?.y) ? item.coordinate.y : (Array.isArray(item.coord) ? item.coord[1] : null),
+      authority: 'base_canonical',
+      locked: true,
+    },
+  };
+}
+
+// `onlyIds` resolves just those effective ids (same result for each as a full resolve) without touching the
+// rest of the base map: a capture that changed two places must not clone a thousand-place map.
+export function resolveEffectiveLocations(spatialState, baseMap = null, { onlyIds = null } = {}) {
   const effective = new Map();
+  let baseIndex = null;
+  const baseHas = id => {
+    if (!baseMap || !Array.isArray(baseMap.locations)) return false;
+    baseIndex = baseIndex || baseLocationIndex(baseMap);
+    return baseIndex.has(id);
+  };
 
   // 1. Load base locations as read-only base_canonical
-  if (baseMap && Array.isArray(baseMap.locations)) {
+  if (onlyIds) {
+    for (const id of onlyIds) {
+      if (!baseHas(id)) continue;
+      effective.set(id, effectiveBaseLocation(baseIndex.get(id)));
+    }
+  } else if (baseMap && Array.isArray(baseMap.locations)) {
     for (const item of baseMap.locations) {
       if (!item || !item.id) continue;
-      const baseLoc = {
-        ...clone(item),
-        baseRefId: null,
-        isBase: true,
-        coordinate: {
-          x: Number.isFinite(item.coordinate?.x) ? item.coordinate.x : (Array.isArray(item.coord) ? item.coord[0] : null),
-          y: Number.isFinite(item.coordinate?.y) ? item.coordinate.y : (Array.isArray(item.coord) ? item.coord[1] : null),
-          authority: 'base_canonical',
-          locked: true,
-        },
-      };
-      effective.set(baseLoc.id, baseLoc);
+      effective.set(item.id, effectiveBaseLocation(item));
     }
   }
 
   // 2. Apply campaign overrides and campaign-created locations
+  const campaignKeys = new Set();
   for (const loc of spatialState?.locations || []) {
-    if (loc.baseRefId) {
+    const overrides = Boolean(loc.baseRefId) && (campaignKeys.has(loc.baseRefId) || baseHas(loc.baseRefId));
+    const key = overrides ? loc.baseRefId : loc.id;
+    campaignKeys.add(key);
+    if (onlyIds && !onlyIds.has(key)) continue;
+    if (overrides) {
       // Campaign override shadows base location
-      if (effective.has(loc.baseRefId)) {
-        const base = effective.get(loc.baseRefId);
-        effective.set(loc.baseRefId, {
-          ...base,
-          ...clone(loc),
-          id: base.id, // effective id remains the base id for continuity
-          overrideId: loc.id,
-          baseRefId: loc.baseRefId,
-          isBase: true,
-          isOverridden: true,
-          status: loc.status || 'active',
-          coordinate: normalizeCoordinate(loc.coordinate),
-        });
-      } else {
-        effective.set(loc.id, { ...clone(loc), isBase: false });
-      }
+      const base = effective.get(loc.baseRefId);
+      effective.set(loc.baseRefId, {
+        ...base,
+        ...clone(loc),
+        id: base.id, // effective id remains the base id for continuity
+        overrideId: loc.id,
+        baseRefId: loc.baseRefId,
+        isBase: true,
+        isOverridden: true,
+        status: loc.status || 'active',
+        coordinate: normalizeCoordinate(loc.coordinate),
+      });
     } else {
-      // Campaign-created location
+      // Campaign-created location (or an override whose base is absent)
       effective.set(loc.id, { ...clone(loc), isBase: false });
     }
   }
@@ -1343,7 +1374,6 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
 
   const beforeCampaignById = new Map((before.locations || []).map(loc => [loc.id, loc]));
   const afterCampaignById = new Map((spatial.locations || []).map(loc => [loc.id, loc]));
-  const finalEffectiveById = new Map(resolveEffectiveLocations(spatial, baseMap).map(loc => [loc.id, loc]));
   const changedEffectiveIds = new Set();
 
   for (const storedId of changedStoredLocationIds) {
@@ -1352,6 +1382,8 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     const effectiveId = afterLoc?.baseRefId || beforeLoc?.baseRefId || storedId;
     if (effectiveId) changedEffectiveIds.add(effectiveId);
   }
+  // Only the changed places are resolved; an empty batch touches no base entry.
+  const finalEffectiveById = new Map(resolveEffectiveLocations(spatial, baseMap, { onlyIds: changedEffectiveIds }).map(loc => [loc.id, loc]));
 
   const upsertedLocations = [];
   const removedLocationIds = [];

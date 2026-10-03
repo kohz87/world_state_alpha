@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.9.0-alpha.49 - Performance (audit A30, batch 5)
+
+Each fix was reproduced first, with an operation count or an identity check, and has a regression test that fails on 0.9.0-alpha.48.
+
+### Fixed
+
+- **A30 - An empty Places capture walked the whole base map twice.** With a 1,000-place map, every capture cloned 2,000 base places even when nothing changed. A capture now resolves only the places it changed, through an id index built once per base map; an empty capture reads no base entry.
+- **Each capture copied the whole state, history included, several times.** The rollback journal (up to 256 undo patches) and checkpoints (up to 48 full snapshots) were deep-copied on every reduce and commit. Copies now share these entries, which are frozen and replaced rather than edited. At 300 records the reduce and commit step went from about 740 ms to about 20 ms. Capture, evolution and Places-edit copies now skip the history too.
+- **Each capture verified the same sidecar text three times.** The boundary refresh reads back the last upload, and the write re-checks that same server text before replacing it. A text is now verified once; callers still get their own copy.
+- **Chats without a sidecar waited for retries on every send.** Each boundary check ran the startup retry schedule (three reads, about 0.4 s of waiting). A chat with no sidecar pointer now reads once; chats with a pointer keep the short retries.
+- **Every send re-read the whole chat.** The injection view computed lineage keys for the new message by fingerprinting every message, then discarded them. It now computes none.
+- **Rebuild re-hashed the chat at every step.** Each boundary re-hashed the chat prefix, and each currentness check hashed the chat again. Steps now reuse the plan's lineage. The range check is reused until a chat event or a second passes, and is exact before saving or reporting.
+- **Scrolling the panel copied the state on every scroll event.** It reads only the chat key now. The public `getState` also copies once instead of twice.
+
+### Code review hardening
+
+- Chats that have a sidecar keep the short read retries, so one transient miss can't mark the sidecar missing.
+- The send fix computes no lineage keys at all, rather than extending a lineage whose earlier messages might have changed.
+- Any edit, swipe, delete or send invalidates the rebuild's reused range check at once.
+- Capture, evolution and Places edits no longer copy the history either.
+- The root checkpoint is replaced rather than edited.
+- Shared history entries are frozen, so a future in-place edit fails loudly instead of corrupting other copies.
+
+### Architecture
+
+- Core contract updated in the performance and Spatial retrieval sections. No durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha49.test.js`; each case fails on the previous release.
+- Live in SillyTavern with a stub model, alpha.48 vs alpha.49 under the same harness:
+  - Full rebuild of 200 replies: 52.3 s vs 5.8 s.
+  - A live capture with 201 records: 2,620 ms vs 926 ms.
+  - A send on a 3,000-message chat: 63-121 ms vs 20-44 ms.
+
+  The alpha.44-48 live scripts behave as before.
+- Not verified:
+  - the retry change, live: the harness could not reproduce a chat with no sidecar, so it is covered by a source check;
+  - a real 1,000-place base map in SillyTavern (covered by the counting test);
+  - timings on a phone.
+
 ## 0.9.0-alpha.48 - Relevance, Resume and panel robustness (audit A19-A21, A27-A29, batch 4)
 
 Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.47. A18 was already fixed in alpha.45, and the batch 4 "stale records after a save conflict" item was fixed by A02.

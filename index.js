@@ -38,12 +38,12 @@ import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelev
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
 import { normalizeSpatialProfile, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
-import { clone, createState, normalizeState } from './state-core.js';
+import { clone, cloneState, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.48';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.49';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -82,6 +82,8 @@ const stateEpochs = new Map();
 const ownershipEpochs = new Map();
 const chatQueues = new Map();
 const activationQueues = new Map();
+// Host chat events per chat (edits, swipes, deletes, sends), so a cached proof knows the chat may have changed.
+const chatEventCounts = new Map();
 const branchDirtyChats = new Set();
 const passiveCaptureRebaseCandidates = new Map();
 // In-memory only: abandoned branches (swipes, deletes, regenerations) that can
@@ -777,7 +779,7 @@ function setCachedState(chatKey, state, {
 } = {}) {
   // Any new canonical state makes a failed rebuild's resume point stale.
   rebuildResumes.delete(chatKey);
-  const normalized = normalizeState(clone(state), { strictSchema: true, chatKey });
+  const normalized = normalizeState(cloneState(state), { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
   const hydratedPointer = sourcePointer === undefined ? pointerFor(chatKey) : sourcePointer;
   if (hydratedPointer?.path) hydratedPointers.set(chatKey, structuredClone(hydratedPointer));
@@ -1107,7 +1109,7 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
     return true;
   }
 
-  const migrated = normalizeState(clone(sourceState), { strictSchema: true, chatKey: oldKey });
+  const migrated = normalizeState(cloneState(sourceState), { strictSchema: true, chatKey: oldKey });
   migrated.chatKey = newKey;
   const committed = await writeSidecar({
     adapter: hostStorage,
@@ -1725,9 +1727,12 @@ function localChatIsBehindState(state, chat = getContext().chat || []) {
   return storedLineage.length > localLineage.length && lineageIsPrefix(localLineage, storedLineage);
 }
 
+// A chat with a sidecar pointer keeps the short retry schedule (a just-written sidecar may not be visible
+// yet, and one miss would mark it missing). A chat with no pointer reads once on ordinary boundaries: the
+// retries only delayed every send of a chat that has no sidecar. Activation and conflict recovery retry.
 async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   reason = 'boundary',
-  retryDeterministicMiss = true,
+  retryDeterministicMiss = null,
 } = {}) {
   if (!chatKey || chatKey === 'no-chat' || !hostHydrationReady) {
     return { outcome: 'skipped', changed: false };
@@ -1746,7 +1751,7 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   const startSettingsToken = sidecarPointerToken(startSettingsPointer);
 
   const recovered = await recoverExistingSidecarPointer(chatKey, preferredPointer, {
-    retryDeterministicMiss,
+    retryDeterministicMiss: retryDeterministicMiss ?? Boolean(preferredPointer?.path),
   });
   assertOwnershipEpoch(chatKey, ownerEpoch);
 
@@ -1959,12 +1964,16 @@ function messageRole(message) {
   return 'assistant';
 }
 
+// `knownLineage === false` builds the rows without lineage keys (the injection view, which discards them):
+// computing them for the user's new message re-hashed the whole chat on every send.
 function boundedExchange(chat, endMessageId, limit = CAPTURE_LIMITS.exchangeMessages, knownLineage = null) {
   const rows = Array.isArray(chat) ? chat : [];
   if (!Number.isInteger(endMessageId) || endMessageId < 0 || endMessageId >= rows.length) return [];
-  const lineage = Array.isArray(knownLineage) && knownLineage.length > endMessageId
-    ? knownLineage
-    : chatLineage(rows);
+  const lineage = knownLineage === false
+    ? []
+    : Array.isArray(knownLineage) && knownLineage.length > endMessageId
+      ? knownLineage
+      : chatLineage(rows);
   const out = [];
   for (let index = endMessageId; index >= 0 && out.length < limit; index -= 1) {
     const message = rows[index];
@@ -2014,6 +2023,11 @@ function queueChatWork(chatKey, task) {
   };
   next.then(cleanup, cleanup);
   return next;
+}
+
+function noteChatEvent() {
+  const chatKey = currentChatKey();
+  chatEventCounts.set(chatKey, (chatEventCounts.get(chatKey) || 0) + 1);
 }
 
 function serializeActivation(chatKey, task) {
@@ -2114,7 +2128,7 @@ function updatePrivateInjection() {
   }
   const chat = getContext().chat || [];
   const end = chat.length - 1;
-  const exchange = end >= 0 ? boundedExchange(chat, end, 4, state.lineage) : [];
+  const exchange = end >= 0 ? boundedExchange(chat, end, 4, false) : [];
   const sceneText = recentText(exchange);
 
   let realityText = '';
@@ -2806,7 +2820,7 @@ async function activateCurrentChat() {
     if (currentChatKey() !== chatKey) return;
     retiredOperationLogs.delete(chatKey);
     void hydrateOperationLog(chatKey);
-    await refreshChatStateFromServer(chatKey, { reason: 'chat-activation' });
+    await refreshChatStateFromServer(chatKey, { reason: 'chat-activation', retryDeterministicMiss: true });
     if (currentChatKey() !== chatKey) return;
     if (bootstrapRequiredChats.has(chatKey)) {
       notifyBootstrapRequiredOnce(chatKey);
@@ -3390,16 +3404,28 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     // device's save), or any change inside its range; branch events after the range do not stop it.
     const startInvalidations = operationInvalidations.get(chatKey) || 0;
     const startState = stateCache.get(chatKey);
-    const isCurrent = () => {
+    // The range proof hashes the chat up to the rebuilt range. The run checks currentness several times per
+    // boundary, so the proof is reused until a host chat event (edit, swipe, delete, send) or a second passes
+    // (a hide has no event) and a chat shorter than the range is caught at once; the host's own checks before
+    // saving and reporting are always exact.
+    let rangeProof = { at: -Infinity, events: -1, current: true };
+    const rangeCurrent = exact => {
       if (currentChatKey() !== chatKey || (operationInvalidations.get(chatKey) || 0) !== startInvalidations) return false;
       if (stateCache.get(chatKey) !== startState) return false;
-      const live = chatLineage(getContext().chat || []);
-      return live.length >= startLineage.length
-        && (!startTailKey || live[startLineage.length - 1]?.lineageKey === startTailKey);
+      const liveChat = getContext().chat || [];
+      if (liveChat.length < startLineage.length) return false;
+      const now = Date.now();
+      const events = chatEventCounts.get(chatKey) || 0;
+      if (!exact && events === rangeProof.events && now - rangeProof.at < 1000) return rangeProof.current;
+      const live = chatLineage(liveChat.slice(0, startLineage.length));
+      rangeProof = { at: now, events, current: !startTailKey || live[startLineage.length - 1]?.lineageKey === startTailKey };
+      return rangeProof.current;
     };
+    const isCurrent = () => rangeCurrent(false);
+    const isCurrentExact = () => rangeCurrent(true);
     const settings = getWorldStateSettings();
     const baseMap = await getChatBaseMap(chatKey, state);
-    if (!isCurrent()) return;
+    if (!isCurrentExact()) return;
     if (settings.spatialEnabled && state.spatial?.baseMapRef?.id && !baseMap) {
       notify('error', 'Rebuild paused because the attached Spatial base map is unavailable. Reattach or restore the base map first.');
       return;
@@ -3534,7 +3560,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const cancelledOutcome = result.outcome === 'stale'
       || result.outcome === 'cancelled'
       || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED';
-    const resumable = result.outcome === 'failure' && !cancelledOutcome && result.resume && isCurrent();
+    const resumable = result.outcome === 'failure' && !cancelledOutcome && result.resume && isCurrentExact();
     if (resumable) {
       rebuildResumes.set(chatKey, {
         resume: result.resume,
@@ -3552,7 +3578,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         },
       });
     }
-    if (result.outcome !== 'completed' || !isCurrent()) {
+    if (result.outcome !== 'completed' || !isCurrentExact()) {
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
         phase: cancelledOutcome ? 'cancelled' : 'failed',
@@ -3569,7 +3595,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         label: 'rebuild',
         sourceMessageId: Number.isInteger(result.failedBoundary) ? result.failedBoundary : sourceMessageId,
         outcome: cancelledOutcome ? 'rebuild-cancelled' : 'rebuild-failed',
-        code: result.errorCode || (isCurrent() ? 'WORLD_STATE_REBUILD_INCOMPLETE' : 'WORLD_STATE_REBUILD_STALE'),
+        code: result.errorCode || (isCurrentExact() ? 'WORLD_STATE_REBUILD_INCOMPLETE' : 'WORLD_STATE_REBUILD_STALE'),
         detail: failureDetail,
         providerCalls: result.providerCalls || 0,
         applied,
@@ -3597,7 +3623,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     });
     refreshPanel();
 
-    if (!isCurrent()) {
+    if (!isCurrentExact()) {
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
         phase: 'cancelled',
@@ -3694,7 +3720,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       return;
     }
 
-    if (!isCurrent()) {
+    if (!isCurrentExact()) {
       if (bootstrapRecoveryAtStart) {
         setCachedState(chatKey, result.state);
         passiveCaptureRebaseCandidates.delete(chatKey);
@@ -4638,7 +4664,13 @@ export async function openWorldStatePanel() {
   document.body.appendChild(panelRoot);
   panelController = createWorldStateUiController({
     root: panelRoot,
-    getState: () => getCachedState(chatKey) || createState(chatKey),
+    // The panel only reads it (its model is built from a private copy), so the cached state is passed as is.
+    getState: () => {
+      const state = stateCache.get(chatKey);
+      if (state) touchChatCache(chatKey);
+      return state || createState(chatKey);
+    },
+    getChatKey: () => chatKey,
     getBaseMap: () => getCachedBaseMap(stateCache.get(chatKey)?.spatial?.baseMapRef),
     getDiagnostics: () => diagnosticStore.records(chatKey),
     getRuntimeInfo: () => {
@@ -4704,6 +4736,10 @@ function registerEvents() {
 
   for (const name of ['MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
     if (events[name]) source.on(events[name], () => handleBranchChange(name));
+  }
+  // Counted first (registered last, but every handler above reads the count only later, asynchronously).
+  for (const name of ['MESSAGE_SENT', 'MESSAGE_RECEIVED', 'MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
+    if (events[name]) source.on(events[name], () => noteChatEvent());
   }
   return true;
 }
@@ -4845,9 +4881,7 @@ globalThis.WorldStateAlpha = Object.freeze({
       diagnostics: diagnosticStore.records(key).length,
     });
   },
-  getState: () => {
-    const value = getCachedState(currentChatKey());
-    return value ? clone(value) : null;
-  },
+  // A private deep copy (getCachedState already copies; copying it again doubled the cost).
+  getState: () => getCachedState(currentChatKey()),
   diagnostics: () => diagnosticStore.records(currentChatKey()),
 });

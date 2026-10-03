@@ -5,6 +5,7 @@ import {
   buildUndoPatch,
   canonicalDomain,
   clone,
+  cloneState,
   normalizeState,
 } from './state-core.js';
 import { createSpatialState } from './spatial-core.js';
@@ -128,7 +129,7 @@ export function rebaseLineageMetadata(state, previousLineage, nextLineage) {
   const next = Array.isArray(nextLineage) ? nextLineage : [];
   if (previous.length !== next.length) throw new Error('lineage rebase requires equal message counts');
 
-  const normalized = normalizeState(clone(state));
+  const normalized = normalizeState(cloneState(state));
   const stored = Array.isArray(normalized.lineage) ? normalized.lineage : [];
   if (stored.length !== previous.length
     || stored.some((entry, index) => entry?.lineageKey !== previous[index]?.lineageKey)) {
@@ -191,7 +192,7 @@ function checkpointSnapshot(state) {
 }
 
 function restoreCheckpoint(state, snapshot) {
-  const restored = normalizeState(clone(state));
+  const restored = normalizeState(cloneState(state));
   restored.records = clone(snapshot.records || []);
   restored.evidence = clone(snapshot.evidence || {});
   restored.links = clone(snapshot.links || []);
@@ -230,8 +231,9 @@ function trimJournal(state, maxEntries) {
     return;
   }
   state.rollbackJournal = state.rollbackJournal.slice(-cap);
+  // Journal entries are shared between state copies: replace, never edit in place.
+  if (state.rollbackJournal[0]) state.rollbackJournal[0] = { ...state.rollbackJournal[0], prevSeq: 0 };
   const first = state.rollbackJournal[0];
-  if (first) first.prevSeq = 0;
   state.rollbackJournalFloorMessageId = first ? Math.max(-1, first.beforeMessageId) : -1;
 }
 
@@ -257,8 +259,8 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
   if (!Number.isInteger(messageId) || messageId < 0 || messageId >= lineage.length) {
     throw new Error('commit boundary must reference an existing raw message');
   }
-  const before = normalizeState(clone(beforeState));
-  const next = normalizeState(clone(afterState));
+  const before = normalizeState(cloneState(beforeState));
+  const next = normalizeState(cloneState(afterState));
   const boundary = lineage[messageId];
   const undo = buildUndoPatch(before, next);
 
@@ -268,7 +270,7 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
 
   if (undo) {
     const head = next.rollbackHead || before.rollbackHead;
-    const currentJournal = clone(before.rollbackJournal || []);
+    const currentJournal = [...(before.rollbackJournal || [])];
     const currentSequence = Math.max(
       Number(before.rollbackJournalSequence) || 0,
       ...currentJournal.map(entry => Number(entry.seq) || 0),
@@ -341,7 +343,7 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
     next.rollbackJournalSequence = Math.max(currentSequence, seq || 0);
     next.rollbackHead = nextHead;
   } else {
-    next.rollbackJournal = clone(before.rollbackJournal || []);
+    next.rollbackJournal = [...(before.rollbackJournal || [])];
     next.rollbackJournalSequence = Number(before.rollbackJournalSequence) || 0;
     next.rollbackHead = before.rollbackHead ? clone(before.rollbackHead) : null;
   }
@@ -376,13 +378,13 @@ function restoreByJournal(state, previousLineage, divergence) {
   if (targetMessageId < floor) return null;
 
   const bySeq = new Map(state.rollbackJournal.map(entry => [entry.seq, entry]));
-  let working = normalizeState(clone(state));
+  let working = normalizeState(cloneState(state));
   let seq = Math.max(0, Number(state.rollbackHead?.seq) || 0);
   // No head and no entries: the current state is exact at the target only if
   // a checkpoint at or before it on this branch holds the very same state.
   if (!state.rollbackHead && !state.rollbackJournal.length) {
     const provenBase = unjournaledStateSince(state, previousLineage, targetMessageId);
-    return provenBase === null ? null : { state: normalizeState(clone(state)), headSeq: 0, targetMessageId };
+    return provenBase === null ? null : { state: normalizeState(cloneState(state)), headSeq: 0, targetMessageId };
   }
   let headMessageId = Number.isInteger(state.rollbackHead?.messageId)
     ? state.rollbackHead.messageId
@@ -457,7 +459,7 @@ export function firstStoryChange(previousLineage, chat) {
 }
 
 export function reconcileBranch(inputState, chat, options = {}) {
-  const state = normalizeState(clone(inputState));
+  const state = normalizeState(cloneState(inputState));
   const currentLineage = chatLineage(chat);
   const previousLineage = Array.isArray(state.lineage) ? state.lineage : [];
   const divergence = firstLineageDivergence(previousLineage, currentLineage);
@@ -570,7 +572,7 @@ export function earliestPartialRebuildStart(inputState) {
 }
 
 export function seedRootCheckpoint(inputState) {
-  const state = normalizeState(clone(inputState));
+  const state = normalizeState(cloneState(inputState));
   const existing = state.checkpoints.findIndex(item => item.messageId === -1);
   const checkpoint = {
     messageId: -1,
@@ -594,7 +596,7 @@ export function seedRootCheckpoint(inputState) {
 // current branch keeps, so a parked branch holds only its own; resume merges
 // the live ones back.
 function compactParkedState(state, baseMessageId) {
-  const parked = normalizeState(clone(state));
+  const parked = normalizeState(cloneState(state));
   parked.checkpoints = parked.checkpoints.filter(item => item.messageId > baseMessageId);
   parked.rollbackJournal = parked.rollbackJournal.filter(entry => entry.messageId > baseMessageId);
   parked.recoveryRequired = null;
