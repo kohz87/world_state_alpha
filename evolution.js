@@ -7,7 +7,7 @@ import { buildWorldStateInjection } from './injection.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
 import { selectBackgroundDevelopments, updateRelevanceIndex } from './relevance.js';
 import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.js';
-import { clone, reduceMutations } from './state-core.js';
+import { cloneState, reduceMutations } from './state-core.js';
 
 export const EVOLUTION_RESPONSE_TOKENS = 2600;
 export const EVOLUTION_LIMITS = Object.freeze({
@@ -639,7 +639,7 @@ export async function runLazyEvolution({
   if (!plan.targets.length) {
     return {
       outcome: 'skipped',
-      state: clone(state),
+      state: cloneState(state),
       providerCalls: 0,
       plan,
       applied: [],
@@ -665,7 +665,7 @@ export async function runLazyEvolution({
   if (!current()) {
     return {
       outcome: 'stale',
-      state: clone(state),
+      state: cloneState(state),
       providerCalls: 0,
       plan,
       applied: [],
@@ -709,7 +709,7 @@ export async function runLazyEvolution({
     });
     return {
       outcome: stale ? 'stale' : 'failure',
-      state: clone(state),
+      state: cloneState(state),
       providerCalls: receipt.dispatched ? 1 : 0,
       plan,
       applied: [],
@@ -739,7 +739,7 @@ export async function runLazyEvolution({
     });
     return {
       outcome: 'stale',
-      state: clone(state),
+      state: cloneState(state),
       providerCalls: 1,
       plan,
       applied: [],
@@ -807,7 +807,7 @@ export async function runLazyEvolution({
     });
     return {
       outcome: 'invalid-response',
-      state: clone(state),
+      state: cloneState(state),
       providerCalls: 1,
       plan,
       applied: [],
@@ -902,7 +902,7 @@ export async function prepareWorldStateContinuity({
 
   if (!evolutionEntries.length) {
     return {
-      state: clone(state),
+      state: cloneState(state),
       injection: beforeInjection,
       evolution: {
         outcome: 'skipped',

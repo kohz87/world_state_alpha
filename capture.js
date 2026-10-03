@@ -7,7 +7,7 @@ import { dispatchWorldStateRequest } from './provider-routing.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 import { processSpatialCapture } from './spatial-capture.js';
 import { applyCaptureSourceFirewall } from './source-firewall.js';
-import { clone, reduceMutations } from './state-core.js';
+import { clone, cloneState, reduceMutations } from './state-core.js';
 
 export const CAPTURE_DEFAULT_INTERVAL = 1;
 export const CAPTURE_RESPONSE_TOKENS = 2200;
@@ -414,7 +414,7 @@ function rejectedEntry(stage, reason, extra = {}) {
 }
 
 function markCaptureAttempt(inputState, sourceMessageId) {
-  const next = clone(inputState);
+  const next = cloneState(inputState);
   next.lastCaptureMessage = sourceMessageId;
   return next;
 }
@@ -522,7 +522,7 @@ export function processCaptureResponse({
     rejected.push(rejectedEntry('reducer', item.reason));
   }
 
-  const nextState = clone(reduced.state);
+  const nextState = cloneState(reduced.state);
   nextState.lastCaptureMessage = sourceMessageId;
 
   let spatialResult = {
@@ -626,7 +626,7 @@ export async function runCaptureOperation({
   };
 
   if (!captureDue({ exchange, lastCaptureMessage: state?.lastCaptureMessage, sourceMessageId })) {
-    return { outcome: 'skipped', state: clone(state), providerCalls: 0, rejected: [], applied: [] };
+    return { outcome: 'skipped', state: cloneState(state), providerCalls: 0, rejected: [], applied: [] };
   }
 
   const snapshotToken = captureSnapshotToken({
@@ -659,7 +659,7 @@ export async function runCaptureOperation({
       detail: 'Operation became stale before the provider request was sent.',
       durationMs: Date.now() - startedAt,
     });
-    return { outcome: 'stale', state: clone(state), providerCalls: 0, rejected: [], applied: [], snapshotToken };
+    return { outcome: 'stale', state: cloneState(state), providerCalls: 0, rejected: [], applied: [], snapshotToken };
   }
 
   const options = buildCapturePrompt({
@@ -708,7 +708,7 @@ export async function runCaptureOperation({
     });
     return {
       outcome,
-      state: stale || providerCalls === 0 ? clone(state) : markCaptureAttempt(state, sourceMessageId),
+      state: stale || providerCalls === 0 ? cloneState(state) : markCaptureAttempt(state, sourceMessageId),
       providerCalls,
       rejected: [rejectedEntry('provider', error?.message || error, { code: error?.code || 'PROVIDER_ERROR' })],
       applied: [],
@@ -737,7 +737,7 @@ export async function runCaptureOperation({
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
     });
-    return { outcome: 'stale', state: clone(state), providerCalls: 1, rejected: [], applied: [], snapshotToken };
+    return { outcome: 'stale', state: cloneState(state), providerCalls: 1, rejected: [], applied: [], snapshotToken };
   }
 
   try {

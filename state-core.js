@@ -23,6 +23,15 @@ export function clone(value) {
 
 const HISTORY_FIELDS = ['lineage', 'rollbackJournal', 'checkpoints'];
 
+// Shared history entries are frozen (with their snapshot/undo), so an in-place edit fails loudly instead of
+// silently changing every state copy that holds the entry.
+function frozenEntry(entry) {
+  if (!entry || typeof entry !== 'object' || Object.isFrozen(entry)) return entry;
+  if (entry.snapshot && typeof entry.snapshot === 'object') Object.freeze(entry.snapshot);
+  if (entry.undo && typeof entry.undo === 'object') Object.freeze(entry.undo);
+  return Object.freeze(entry);
+}
+
 // A private copy of a state for mutation. The canonical domain and small fields are deep-copied; the
 // append-only history (lineage, rollback journal, checkpoints) gets its own arrays but shares their entries,
 // which are never edited in place (a changed entry is replaced). Copying 48 checkpoint snapshots and 256
@@ -210,15 +219,15 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
     }
   }
   // History entries are shared, never edited in place (see cloneState).
-  state.lineage = Array.isArray(raw.lineage) ? [...raw.lineage] : [];
+  state.lineage = Array.isArray(raw.lineage) ? raw.lineage.map(frozenEntry) : [];
   state.rollbackJournalVersion = ROLLBACK_JOURNAL_VERSION;
   state.rollbackJournalSequence = Math.max(0, Number(raw.rollbackJournalSequence) || 0);
   state.rollbackJournalFloorMessageId = Number.isInteger(raw.rollbackJournalFloorMessageId)
     ? raw.rollbackJournalFloorMessageId
     : -1;
-  state.rollbackJournal = Array.isArray(raw.rollbackJournal) ? [...raw.rollbackJournal] : [];
+  state.rollbackJournal = Array.isArray(raw.rollbackJournal) ? raw.rollbackJournal.map(frozenEntry) : [];
   state.rollbackHead = raw.rollbackHead && typeof raw.rollbackHead === 'object' ? clone(raw.rollbackHead) : null;
-  state.checkpoints = Array.isArray(raw.checkpoints) ? [...raw.checkpoints] : [];
+  state.checkpoints = Array.isArray(raw.checkpoints) ? raw.checkpoints.map(frozenEntry) : [];
   state.lastCaptureMessage = messageId(raw.lastCaptureMessage);
   state.recoveryRequired = raw.recoveryRequired && typeof raw.recoveryRequired === 'object'
     ? clone(raw.recoveryRequired)

@@ -185,7 +185,7 @@ export function applyManualMutation({
     if (!consolidated.ok) {
       return {
         outcome: 'rejected',
-        state: clone(before),
+        state: cloneState(before),
         applied: [],
         rejected: [{
           stage: 'duplicate-gate',
@@ -208,7 +208,7 @@ export function applyManualMutation({
   if (reduced.rejected.length || !reduced.applied.some(item => item.action !== 'noop')) {
     return {
       outcome: 'rejected',
-      state: clone(before),
+      state: cloneState(before),
       applied: reduced.applied,
       rejected: reduced.rejected.map(item => ({ stage: 'reducer', reason: item.reason })),
     };
@@ -260,7 +260,7 @@ export function applyManualLifecycleBatch({
   if (inactive.length) {
     return {
       outcome: 'rejected',
-      state: clone(before),
+      state: cloneState(before),
       applied: [],
       rejected: inactive.map(recordId => ({
         stage: 'reducer',
@@ -282,7 +282,7 @@ export function applyManualLifecycleBatch({
   if (reduced.rejected.length || changed !== ids.length) {
     return {
       outcome: 'rejected',
-      state: clone(before),
+      state: cloneState(before),
       applied: reduced.applied,
       rejected: reduced.rejected.length
         ? reduced.rejected.map(item => ({ stage: 'reducer', reason: item.reason }))

@@ -82,6 +82,8 @@ const stateEpochs = new Map();
 const ownershipEpochs = new Map();
 const chatQueues = new Map();
 const activationQueues = new Map();
+// Host chat events per chat (edits, swipes, deletes, sends), so a cached proof knows the chat may have changed.
+const chatEventCounts = new Map();
 const branchDirtyChats = new Set();
 const passiveCaptureRebaseCandidates = new Map();
 // In-memory only: abandoned branches (swipes, deletes, regenerations) that can
@@ -1725,12 +1727,12 @@ function localChatIsBehindState(state, chat = getContext().chat || []) {
   return storedLineage.length > localLineage.length && lineageIsPrefix(localLineage, storedLineage);
 }
 
-// Ordinary boundary checks read the sidecar once. The startup retry schedule (a just-written sidecar may not
-// be visible yet) belongs to hydration, activation and conflict recovery; on every send of a chat that has
-// no sidecar it only delayed generation.
+// A chat with a sidecar pointer keeps the short retry schedule (a just-written sidecar may not be visible
+// yet, and one miss would mark it missing). A chat with no pointer reads once on ordinary boundaries: the
+// retries only delayed every send of a chat that has no sidecar. Activation and conflict recovery retry.
 async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   reason = 'boundary',
-  retryDeterministicMiss = false,
+  retryDeterministicMiss = null,
 } = {}) {
   if (!chatKey || chatKey === 'no-chat' || !hostHydrationReady) {
     return { outcome: 'skipped', changed: false };
@@ -1749,7 +1751,7 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   const startSettingsToken = sidecarPointerToken(startSettingsPointer);
 
   const recovered = await recoverExistingSidecarPointer(chatKey, preferredPointer, {
-    retryDeterministicMiss,
+    retryDeterministicMiss: retryDeterministicMiss ?? Boolean(preferredPointer?.path),
   });
   assertOwnershipEpoch(chatKey, ownerEpoch);
 
@@ -1962,17 +1964,16 @@ function messageRole(message) {
   return 'assistant';
 }
 
+// `knownLineage === false` builds the rows without lineage keys (the injection view, which discards them):
+// computing them for the user's new message re-hashed the whole chat on every send.
 function boundedExchange(chat, endMessageId, limit = CAPTURE_LIMITS.exchangeMessages, knownLineage = null) {
   const rows = Array.isArray(chat) ? chat : [];
   if (!Number.isInteger(endMessageId) || endMessageId < 0 || endMessageId >= rows.length) return [];
-  // A stored lineage one message short (the user's new message) is extended, not recomputed: re-hashing the
-  // whole chat on every send broke the normal-turn bound.
-  let lineage = Array.isArray(knownLineage) && knownLineage.length > endMessageId ? knownLineage : null;
-  if (!lineage && Array.isArray(knownLineage) && knownLineage.length) {
-    const appended = extendChatLineage(knownLineage, rows.slice(0, endMessageId + 1));
-    if (appended) lineage = [...knownLineage, ...appended];
-  }
-  if (!lineage) lineage = chatLineage(rows);
+  const lineage = knownLineage === false
+    ? []
+    : Array.isArray(knownLineage) && knownLineage.length > endMessageId
+      ? knownLineage
+      : chatLineage(rows);
   const out = [];
   for (let index = endMessageId; index >= 0 && out.length < limit; index -= 1) {
     const message = rows[index];
@@ -2022,6 +2023,11 @@ function queueChatWork(chatKey, task) {
   };
   next.then(cleanup, cleanup);
   return next;
+}
+
+function noteChatEvent() {
+  const chatKey = currentChatKey();
+  chatEventCounts.set(chatKey, (chatEventCounts.get(chatKey) || 0) + 1);
 }
 
 function serializeActivation(chatKey, task) {
@@ -2122,7 +2128,7 @@ function updatePrivateInjection() {
   }
   const chat = getContext().chat || [];
   const end = chat.length - 1;
-  const exchange = end >= 0 ? boundedExchange(chat, end, 4, state.lineage) : [];
+  const exchange = end >= 0 ? boundedExchange(chat, end, 4, false) : [];
   const sceneText = recentText(exchange);
 
   let realityText = '';
@@ -3399,21 +3405,24 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const startInvalidations = operationInvalidations.get(chatKey) || 0;
     const startState = stateCache.get(chatKey);
     // The range proof hashes the chat up to the rebuilt range. The run checks currentness several times per
-    // boundary, so between exact checks the proof is reused for a second (a chat shorter than the range is
-    // caught at once); the host's own checks before saving and reporting are always exact.
-    let rangeProof = { at: -Infinity, current: true };
-    const isCurrent = (options = null) => {
+    // boundary, so the proof is reused until a host chat event (edit, swipe, delete, send) or a second passes
+    // (a hide has no event) and a chat shorter than the range is caught at once; the host's own checks before
+    // saving and reporting are always exact.
+    let rangeProof = { at: -Infinity, events: -1, current: true };
+    const rangeCurrent = exact => {
       if (currentChatKey() !== chatKey || (operationInvalidations.get(chatKey) || 0) !== startInvalidations) return false;
       if (stateCache.get(chatKey) !== startState) return false;
       const liveChat = getContext().chat || [];
       if (liveChat.length < startLineage.length) return false;
       const now = Date.now();
-      if (options?.exact !== true && now - rangeProof.at < 1000) return rangeProof.current;
+      const events = chatEventCounts.get(chatKey) || 0;
+      if (!exact && events === rangeProof.events && now - rangeProof.at < 1000) return rangeProof.current;
       const live = chatLineage(liveChat.slice(0, startLineage.length));
-      rangeProof = { at: now, current: !startTailKey || live[startLineage.length - 1]?.lineageKey === startTailKey };
+      rangeProof = { at: now, events, current: !startTailKey || live[startLineage.length - 1]?.lineageKey === startTailKey };
       return rangeProof.current;
     };
-    const isCurrentExact = () => isCurrent({ exact: true });
+    const isCurrent = () => rangeCurrent(false);
+    const isCurrentExact = () => rangeCurrent(true);
     const settings = getWorldStateSettings();
     const baseMap = await getChatBaseMap(chatKey, state);
     if (!isCurrentExact()) return;
@@ -4727,6 +4736,10 @@ function registerEvents() {
 
   for (const name of ['MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
     if (events[name]) source.on(events[name], () => handleBranchChange(name));
+  }
+  // Counted first (registered last, but every handler above reads the count only later, asynchronously).
+  for (const name of ['MESSAGE_SENT', 'MESSAGE_RECEIVED', 'MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
+    if (events[name]) source.on(events[name], () => noteChatEvent());
   }
   return true;
 }

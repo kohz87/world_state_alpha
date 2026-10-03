@@ -55,7 +55,7 @@ export function encodeSidecar({ chatKey, state, revision = 0, appVersion = '', u
 // uploaded last, and its write re-checks that same server text before replacing it: identical text decodes
 // to the identical result, so its checksum and schema are verified once, not three times per capture.
 const VERIFIED_SIDECARS = [];
-const VERIFIED_SIDECAR_LIMIT = 3;
+const VERIFIED_SIDECAR_LIMIT = 2;
 
 function decodedCopy(result) {
   return { ...result, state: cloneState(result.state) };

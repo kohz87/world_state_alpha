@@ -96,6 +96,10 @@ test('batch 5: a capture shares the journal and checkpoints instead of deep-copy
   assert.equal(committed.rollbackJournal[0], state.rollbackJournal[0]);
   // Records are still private copies.
   assert.notEqual(committed.records[0], state.records[0]);
+  // A shared entry cannot be edited in place by mistake (it would change every copy holding it).
+  assert.throws(() => { committed.rollbackJournal[0].prevSeq = 9; }, TypeError);
+  assert.throws(() => { committed.checkpoints[1].snapshot.records = []; }, TypeError);
+  assert.throws(() => { committed.lineage[0].lineageKey = 'x'; }, TypeError);
 });
 
 test('batch 5: shared journal entries are replaced, never edited, when the journal is trimmed', () => {
@@ -114,21 +118,28 @@ test('batch 5: shared journal entries are replaced, never edited, when the journ
   assert.match(rebuildSource, /candidate\.rollbackJournal\[0\] = \{ \.\.\.first, prevSeq: 0, beforeMessageId: Math\.max\(first\.beforeMessageId, cutoff\) \};/);
 });
 
-test('batch 5: ordinary boundaries read the sidecar once; a send extends the lineage instead of re-hashing the chat', () => {
+test('batch 5: a chat without a sidecar reads it once per boundary; the injection view never hashes the chat', () => {
   // Before: every boundary check of a chat with no sidecar ran the startup retry schedule (3 reads, 360 ms).
-  assert.match(source, /async function refreshChatStateFromServer\(chatKey = currentChatKey\(\), \{\s*reason = 'boundary',\s*retryDeterministicMiss = false,/);
+  // A chat with a pointer keeps the retries (one transient miss must not mark it missing).
+  assert.match(source, /async function refreshChatStateFromServer\(chatKey = currentChatKey\(\), \{\s*reason = 'boundary',\s*retryDeterministicMiss = null,/);
+  assert.match(source, /retryDeterministicMiss: retryDeterministicMiss \?\? Boolean\(preferredPointer\?\.path\),/);
   assert.match(source, /refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation', retryDeterministicMiss: true \}\)/);
   assert.match(source, /refreshChatStateFromServer\(chatKey, \{\s*reason: 'write-conflict',\s*retryDeterministicMiss: true,/);
-  // Before: a stored lineage one message short fell back to chatLineage(whole chat) on every send.
+  // Before: the stored lineage was one message short on a send, so the injection view re-hashed the whole
+  // chat for lineage keys it then discarded.
   const bounded = source.slice(source.indexOf('function boundedExchange('), source.indexOf('function recentText('));
-  assert.match(bounded, /const appended = extendChatLineage\(knownLineage, rows\.slice\(0, endMessageId \+ 1\)\);/);
+  assert.match(bounded, /const lineage = knownLineage === false\s*\? \[\]/);
+  assert.match(source, /const exchange = end >= 0 \? boundedExchange\(chat, end, 4, false\) : \[\];/);
 });
 
 test('batch 5: rebuild reuses the plan lineage and checks its range exactly only where it matters', () => {
   // Before: each step re-hashed the chat prefix (quadratic), and every currentness check hashed the whole chat.
   assert.equal((rebuildSource.match(/\{ lineage: plan\.lineage\.slice\(0, window\.messageId \+ 1\) \}/g) || []).length, 2);
   const rebuild = source.slice(source.indexOf("if (actionId === 'rebuild')"), source.indexOf('async function applySpatialAction('));
-  assert.match(rebuild, /if \(options\?\.exact !== true && now - rangeProof\.at < 1000\) return rangeProof\.current;/);
+  assert.match(rebuild, /if \(!exact && events === rangeProof\.events && now - rangeProof\.at < 1000\) return rangeProof\.current;/);
+  assert.match(rebuild, /const isCurrent = \(\) => rangeCurrent\(false\);\s*const isCurrentExact = \(\) => rangeCurrent\(true\);/);
+  // Any host chat event invalidates the reused proof at once.
+  assert.match(source, /for \(const name of \['MESSAGE_SENT', 'MESSAGE_RECEIVED', 'MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'\]\) \{\s*if \(events\[name\]\) source\.on\(events\[name\], \(\) => noteChatEvent\(\)\);/);
   assert.match(rebuild, /const live = chatLineage\(liveChat\.slice\(0, startLineage\.length\)\);/);
   // The host's own checks before saving and reporting stay exact.
   assert.doesNotMatch(rebuild.slice(rebuild.indexOf('const isCurrentExact')), /[^.\w]isCurrent\(\)/);
@@ -169,4 +180,16 @@ test('batch 5: an identical sidecar text is verified once; every caller still ge
   // A tampered text is a different text and is fully verified.
   assert.throws(() => decodeSidecar(body.replace('"revision":4', '"revision":5')), /checksum/);
   assert.match(fs.readFileSync('storage.js', 'utf8'), /const known = VERIFIED_SIDECARS\.find\(item => item\.text === source\);/);
+});
+
+test('review hardening: capture, evolution and Places edits copy state without its history', () => {
+  const capture = fs.readFileSync('capture.js', 'utf8');
+  const evolution = fs.readFileSync('evolution.js', 'utf8');
+  const spatialManual = fs.readFileSync('spatial-manual.js', 'utf8');
+  // Before: these deep-copied every checkpoint snapshot and undo patch right after the reducer avoided it.
+  assert.doesNotMatch(capture, /clone\((reduced\.state|inputState|state)\)/);
+  assert.doesNotMatch(evolution, /state: clone\(state\)/);
+  // The root checkpoint is replaced, not edited (its entry is shared and frozen).
+  assert.doesNotMatch(spatialManual, /rootCp\.snapshot\.spatial = /);
+  assert.match(spatialManual, /nextState\.checkpoints\[rootIndex\] = \{ \.\.\.rootCp, snapshot: \{ \.\.\.rootCp\.snapshot, spatial: clone\(nextState\.spatial\) \} \};/);
 });
