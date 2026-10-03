@@ -1215,7 +1215,7 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
   const staleAt = body.indexOf('rebuildSnapshotToken({ state, chat }) !== savedResume.resume.snapshotToken');
   assert.ok(staleAt > 0 && staleAt < body.indexOf('extendCurrentBranchFast(chatKey)') && staleAt < body.indexOf("phase: 'running'"));
   assert.match(body, /resumeParams\.bootstrapRecoveryAtStart !== bootstrapRecoveryAtStart/);
-  assert.match(body, /resumeParams\.routeKey !== stableStringify\(routeSettings\(\)\)/);
+  assert.match(body, /const routeKey = stableStringify\(routeFingerprint\);[\s\S]{0,240}resumeParams\.routeKey !== routeKey/);
   assert.match(body, /':resume-' \+ savedResume\.resume\.fromMessageId/);
   assert.match(body, /result\.providerCalls = priorTotals\.providerCalls \+/);
   // Consumed only after every no-call early return (base map, planning, branch proof).

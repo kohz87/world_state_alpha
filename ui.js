@@ -1799,6 +1799,13 @@ export function createWorldStateUiController({
     bulkScope: '',
     scrollMemory: createScrollMemory(),
     dismissedRebuildOperationId: '',
+    // Unsaved edits per open form (chat + place, or chat + Coordinate Profile): a re-render from canonical
+    // state puts back every field the operator changed. A form's draft ends when that form closes.
+    drafts: new Map(),
+    // While an input method composes text (Japanese, Chinese, Android keyboards), the panel is not
+    // re-rendered: replacing the focused input would abort the composition.
+    composingTarget: null,
+    refreshDeferred: false,
     rebuildForm: {
       mode: 'full',
       startMessageId: 0,
@@ -1863,8 +1870,52 @@ export function createWorldStateUiController({
     remember(DETAIL_SCROLL_SELECTORS, 'detail');
   }
 
+  const DRAFT_FIELDS = [['place', 'data-wsa-field'], ['profile', 'data-wsa-profile-field']];
+
+  function draftScope(kind) {
+    const chatKey = getState()?.chatKey || '';
+    if (kind === 'place') return ui.activeTab === 'spatial' && ui.spatialEditing && ui.selectedSpatialKey ? 'place|' + chatKey + '|' + ui.selectedSpatialKey : '';
+    return ui.activeTab === 'spatial' && ui.mapSettingsOpen ? 'profile|' + chatKey : '';
+  }
+
+  function rememberDraft(element) {
+    for (const [kind, attr] of DRAFT_FIELDS) {
+      const name = element?.getAttribute?.(attr);
+      const scope = name ? draftScope(kind) : '';
+      if (!scope) continue;
+      if (!ui.drafts.has(scope)) ui.drafts.set(scope, new Map());
+      ui.drafts.get(scope).set(name, element.type === 'checkbox' ? { checked: Boolean(element.checked) } : { value: String(element.value ?? '') });
+    }
+  }
+
+  function restoreDrafts() {
+    const live = new Set(DRAFT_FIELDS.map(([kind]) => draftScope(kind)).filter(Boolean));
+    for (const scope of [...ui.drafts.keys()]) if (!live.has(scope)) ui.drafts.delete(scope);
+    for (const [kind, attr] of DRAFT_FIELDS) {
+      const fields = ui.drafts.get(draftScope(kind));
+      for (const [name, draft] of fields || []) {
+        const element = root.querySelector?.('[' + attr + '="' + name + '"]');
+        if (!element) continue;
+        if ('checked' in draft) element.checked = draft.checked;
+        else element.value = draft.value;
+      }
+    }
+  }
+
+  function composing() {
+    const target = ui.composingTarget;
+    if (target && target.isConnected !== false && (typeof root.contains !== 'function' || root.contains(target))) return true;
+    ui.composingTarget = null;
+    return false;
+  }
+
   function refresh({ restoreSearchFocus = false, restoreSpatialFocus = false } = {}) {
     if (ui.destroyed) return null;
+    if (composing()) {
+      ui.refreshDeferred = true;
+      return null;
+    }
+    ui.refreshDeferred = false;
     const next = model();
     const liveOperationId = next.maintenance.rebuild.status?.operationId || '';
     if (ui.dismissedRebuildOperationId && liveOperationId && liveOperationId !== ui.dismissedRebuildOperationId) {
@@ -1904,6 +1955,7 @@ export function createWorldStateUiController({
       dismissedRebuildOperationId: ui.dismissedRebuildOperationId,
       bulk: ui.bulk,
     });
+    restoreDrafts();
     restoreScroll();
 
     if (restoreSearchFocus) {
@@ -2352,13 +2404,16 @@ export function createWorldStateUiController({
         relationId: currentLoc?.primaryRelation?.id || '',
       };
 
-      await onSpatialAction(action, {
+      const result = await onSpatialAction(action, {
         location: currentLoc,
         formData,
         mergeSuggestions: action === 'merge_location' ? (currentLoc?.mergeSuggestions || []).map(item => ({ ...item })) : [],
         spatialModel: currentModel.spatial,
       });
-      if (['save_location', 'archive_location', 'merge_location', 'delete_location'].includes(action)) ui.spatialEditing = false;
+      // A rejected or failed save keeps the form and its draft open, so nothing typed is lost.
+      if (action === 'save_location' ? result === true : ['archive_location', 'merge_location', 'delete_location'].includes(action)) {
+        ui.spatialEditing = false;
+      }
       refresh();
       return;
     }
@@ -2378,6 +2433,10 @@ export function createWorldStateUiController({
   }
 
   function input(event) {
+    rememberDraft(event.target);
+    // Mid-composition text is not final; the search runs once the input method commits it.
+    if (event.isComposing || composing()) return;
+
     const search = closest(event.target, '[data-wsa-search]');
     if (search) {
       ui.query = clean(search.value, 500);
@@ -2412,6 +2471,7 @@ export function createWorldStateUiController({
         const fallback = { '+y': '+x', '-y': '-x', '+x': '-y', '-x': '+y' };
         if (!perpendicular[northAxis.value]?.has(eastAxis.value)) {
           eastAxis.value = fallback[northAxis.value] || '+x';
+          rememberDraft(eastAxis);
         }
       }
       return;
@@ -2445,8 +2505,32 @@ export function createWorldStateUiController({
     }
   }
 
+  function compositionStart(event) {
+    ui.composingTarget = event.target || null;
+  }
+
+  function compositionEnd(event) {
+    if (ui.composingTarget !== event.target) return;
+    ui.composingTarget = null;
+    // The committed text: run the search (or note the draft), then any refresh deferred meanwhile.
+    input({ target: event.target, isComposing: false });
+    if (ui.refreshDeferred) refresh({
+      restoreSearchFocus: Boolean(closest(event.target, '[data-wsa-search]')),
+      restoreSpatialFocus: Boolean(closest(event.target, '[data-wsa-spatial-search]')),
+    });
+  }
+
+  function focusOut(event) {
+    if (ui.composingTarget !== event.target) return;
+    ui.composingTarget = null;
+    if (ui.refreshDeferred) refresh();
+  }
+
   root.addEventListener('click', click);
   root.addEventListener('input', input);
+  root.addEventListener('compositionstart', compositionStart);
+  root.addEventListener('compositionend', compositionEnd);
+  root.addEventListener('focusout', focusOut);
   root.addEventListener('scroll', scrolled, true);
   refresh();
 
@@ -2477,6 +2561,9 @@ export function createWorldStateUiController({
       ui.destroyed = true;
       root.removeEventListener('click', click);
       root.removeEventListener('input', input);
+      root.removeEventListener('compositionstart', compositionStart);
+      root.removeEventListener('compositionend', compositionEnd);
+      root.removeEventListener('focusout', focusOut);
       root.removeEventListener('scroll', scrolled, true);
       if (typeof root.replaceChildren === 'function') root.replaceChildren();
       else root.innerHTML = '';

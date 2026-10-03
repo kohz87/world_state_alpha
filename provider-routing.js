@@ -81,6 +81,35 @@ async function profileService(ctx) {
   throw worldStateRoutingError('Connection Manager request service is unavailable; no fallback was used.');
 }
 
+// What a request on this route would run as, read without sending anything: the selected profile's full
+// settings, or the host connection's API and model, plus the output cap. A resume compares it with the
+// failed run's so one rebuild never mixes models.
+export function worldStateRouteFingerprint(ctx, route = {}) {
+  const profileId = String(route.profileId || '').trim();
+  const maxOutputTokens = configuredWorldStateMaxOutputTokens(ctx);
+  if (profileId) {
+    let profile = null;
+    try {
+      const service = ctx?.ConnectionManagerRequestService;
+      profile = typeof service?.getProfile === 'function'
+        ? service.getProfile(profileId)
+        : (ctx?.extensionSettings?.connectionManager?.profiles || []).find(item => item?.id === profileId);
+    } catch {
+      profile = null;
+    }
+    return { profileId, signature: profile ? profileSignature(profile) : null, maxOutputTokens };
+  }
+  let model = null;
+  try {
+    model = ctx?.mainApi === 'openai' && typeof ctx?.getChatCompletionModel === 'function'
+      ? ctx.getChatCompletionModel()
+      : ctx?.onlineStatus;
+  } catch {
+    model = null;
+  }
+  return { profileId: '', mainApi: ctx?.mainApi ?? null, model: typeof model === 'string' ? model : null, maxOutputTokens };
+}
+
 function profileSignature(profile) {
   const canonical = value => Array.isArray(value)
     ? value.map(canonical)

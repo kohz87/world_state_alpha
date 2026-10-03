@@ -34,20 +34,31 @@ function deletePosting(map, key, id) {
   if (!posting.size) map.delete(key);
 }
 
-function nonAsciiBigrams(value, max = 64) {
+// newestFirst walks from the end, so a bounded query covers the newest mention first.
+function nonAsciiBigrams(value, max = 64, { newestFirst = false } = {}) {
   const compact = normalizeText(value).replace(/\s+/g, '');
   if (!/[^\x00-\x7F]/u.test(compact)) return [];
   const chars = [...compact];
   if (chars.length < 2) return chars.length ? [chars[0]] : [];
   const out = [];
   const seen = new Set();
-  for (let index = 0; index < chars.length - 1 && out.length < max; index += 1) {
+  for (let step = 0; step < chars.length - 1 && out.length < max; step += 1) {
+    const index = newestFirst ? chars.length - 2 - step : step;
     const gram = chars[index] + chars[index + 1];
     if (seen.has(gram)) continue;
     seen.add(gram);
     out.push(gram);
   }
   return out;
+}
+
+// Rare words first (newest first among equals): a word shared by hundreds of places cannot use up the visit
+// budget before the word that names the place in front of the scene.
+function rarestFirst(list, postings) {
+  return list
+    .map((token, order) => ({ token, order, size: postings.get(token)?.size || 0 }))
+    .sort((left, right) => left.size - right.size || left.order - right.order)
+    .map(item => item.token);
 }
 
 function phraseCandidates(tokenList, maxWords = 4, maxPhrases = 256, { newestFirst = false } = {}) {
@@ -62,11 +73,14 @@ function phraseCandidates(tokenList, maxWords = 4, maxPhrases = 256, { newestFir
       phrase = width === 1 ? tokenList[start] : phrase + ' ' + tokenList[start + width - 1];
       if (seen.has(phrase)) continue;
       seen.add(phrase);
-      out.push(phrase);
+      out.push({ phrase, width, order: out.length });
       if (out.length >= maxPhrases) break;
     }
   }
-  return out;
+  // Longest first, so a specific multi-word name reaches the bounded pool before a common one-word name.
+  return out
+    .sort((left, right) => right.width - left.width || left.order - right.order)
+    .map(item => item.phrase);
 }
 
 function indexLocationTerms(loc, index) {
@@ -330,10 +344,10 @@ export function selectRelevantLocations(spatialState, {
   }
 
   // 3. Name bigrams and tokens
-  for (const gram of nonAsciiBigrams(recentNorm, 64)) {
+  for (const gram of nonAsciiBigrams(recentNorm, 64, { newestFirst: true })) {
     visitPosting(spatialIndex.nameBigrams.get(gram), 50);
   }
-  for (const token of recentLookup) {
+  for (const token of rarestFirst(recentLookup, spatialIndex.nameTokens)) {
     visitPosting(spatialIndex.nameTokens.get(token), 30);
     visitPosting(spatialIndex.contextTokens.get(token), 12);
   }
