@@ -1,6 +1,6 @@
 import { chatLineage, commitMutationBoundary, firstLineageDivergence } from './branch.js';
 import { SPATIAL_AUTHORITIES, SPATIAL_LIMITS } from './constants.js';
-import { clone, normalizeState } from './state-core.js';
+import { clone, cloneState, normalizeState } from './state-core.js';
 import {
   normalizeCoordinate,
   reduceSpatialMutations,
@@ -88,7 +88,7 @@ export function applySpatialManualMutation({
   note = '',
   baseMap = null,
 } = {}) {
-  const before = normalizeState(clone(state), { chatKey });
+  const before = normalizeState(cloneState(state), { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
 

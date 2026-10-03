@@ -565,7 +565,7 @@ test('host panel actions are bound to the chat that opened the panel', () => {
   const source = fs.readFileSync('index.js', 'utf8');
 
   assert.match(source, /let panelChatKey = 'no-chat'/);
-  assert.match(source, /panelChatKey = chatKey;[\s\S]*getState: \(\) => getCachedState\(chatKey\)/);
+  assert.match(source, /panelChatKey = chatKey;[\s\S]*getState: \(\) => \{\s*const state = stateCache\.get\(chatKey\);/);
   assert.match(source, /onMaintenanceAction: \(actionId, payload\) => applyMaintenanceAction\(actionId, payload, chatKey\)/);
   assert.match(source, /onRecordAction: \(actionId, payload\) => applyRecordAction\(actionId, payload, chatKey\)/);
   assert.match(source, /onSpatialAction: \(actionId, payload\) => applySpatialAction\(actionId, payload, chatKey\)/);
@@ -870,7 +870,7 @@ test('host rebuild never persists or reports success before completed outcome ga
   const actionAt = source.indexOf("if (actionId === 'rebuild')");
   const end = source.indexOf('async function applySpatialAction(', actionAt);
   const body = source.slice(actionAt, end);
-  const gateAt = body.indexOf("if (result.outcome !== 'completed' || !isCurrent())");
+  const gateAt = body.indexOf("if (result.outcome !== 'completed' || !isCurrentExact())");
   const committingAt = body.indexOf("phase: 'committing'", gateAt);
   const persistAt = body.indexOf('await persistState(chatKey, result.state, {');
   const persistFailureAt = body.indexOf("outcome: 'rebuild-persist-failed'", persistAt);
@@ -895,8 +895,8 @@ test('host rebuild commit rechecks currentness around durable persistence and co
   const body = source.slice(actionAt, end);
   const persistAt = body.indexOf('await persistState(chatKey, result.state, {');
   assert.ok(persistAt > 0);
-  assert.ok(body.lastIndexOf('if (!isCurrent())', persistAt) > 0, 'currentness is checked immediately before persistence');
-  const staleAfterPersistAt = body.indexOf('if (!isCurrent())', persistAt);
+  assert.ok(body.lastIndexOf('if (!isCurrentExact())', persistAt) > 0, 'currentness is checked immediately before persistence');
+  const staleAfterPersistAt = body.indexOf('if (!isCurrentExact())', persistAt);
   assert.ok(staleAfterPersistAt > persistAt, 'currentness is rechecked after persistence');
   const compensateAt = body.indexOf('expectedPointer: rebuildCommitted', staleAfterPersistAt);
   assert.ok(compensateAt > staleAfterPersistAt, 'stale durable candidate is compensated with the prior canonical state using the candidate revision token');
@@ -1193,7 +1193,7 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   assert.match(source, /return withWorldStateFileLock\(operationLogFile\(chatKey\), task\);/);
   assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return false;/);
   assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);
-  assert.match(source, /void hydrateOperationLog\(chatKey\);\s*await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation' \}\);/);
+  assert.match(source, /void hydrateOperationLog\(chatKey\);\s*await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation', retryDeterministicMiss: true \}\);/);
   assert.match(source, /await retireOperationLog\(oldKey, newKey\);\s*clearChatRuntimeState\(oldKey\);/);
   assert.match(source, /await retireOperationLog\(chatKey\);\s*clearChatRuntimeState\(chatKey\);/);
   // Operation telemetry never enters the canonical sidecar payload.
@@ -1226,7 +1226,7 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
   assert.match(body, /resume: savedResume\?\.resume \|\| null,/);
 
   // Only a genuine failure that is still current leaves a resume point.
-  assert.match(body, /const resumable = result\.outcome === 'failure' && !cancelledOutcome && result\.resume && isCurrent\(\);/);
+  assert.match(body, /const resumable = result\.outcome === 'failure' && !cancelledOutcome && result\.resume && isCurrentExact\(\);/);
   assert.match(body, /rebuildResumes\.set\(chatKey, \{/);
   assert.match(body, /Use Resume from message ' \+ result\.resume\.fromMessageId/);
 

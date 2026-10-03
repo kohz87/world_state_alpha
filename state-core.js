@@ -21,6 +21,21 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+const HISTORY_FIELDS = ['lineage', 'rollbackJournal', 'checkpoints'];
+
+// A private copy of a state for mutation. The canonical domain and small fields are deep-copied; the
+// append-only history (lineage, rollback journal, checkpoints) gets its own arrays but shares their entries,
+// which are never edited in place (a changed entry is replaced). Copying 48 checkpoint snapshots and 256
+// undo patches on every capture was most of a capture's cost.
+export function cloneState(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return clone(state);
+  const rest = {};
+  for (const [key, value] of Object.entries(state)) if (!HISTORY_FIELDS.includes(key)) rest[key] = value;
+  const out = clone(rest);
+  for (const key of HISTORY_FIELDS) if (key in state) out[key] = Array.isArray(state[key]) ? [...state[key]] : clone(state[key]);
+  return out;
+}
+
 function boundedText(value, max) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
@@ -194,15 +209,16 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
       if (strictSchema) throw error;
     }
   }
-  state.lineage = Array.isArray(raw.lineage) ? clone(raw.lineage) : [];
+  // History entries are shared, never edited in place (see cloneState).
+  state.lineage = Array.isArray(raw.lineage) ? [...raw.lineage] : [];
   state.rollbackJournalVersion = ROLLBACK_JOURNAL_VERSION;
   state.rollbackJournalSequence = Math.max(0, Number(raw.rollbackJournalSequence) || 0);
   state.rollbackJournalFloorMessageId = Number.isInteger(raw.rollbackJournalFloorMessageId)
     ? raw.rollbackJournalFloorMessageId
     : -1;
-  state.rollbackJournal = Array.isArray(raw.rollbackJournal) ? clone(raw.rollbackJournal) : [];
+  state.rollbackJournal = Array.isArray(raw.rollbackJournal) ? [...raw.rollbackJournal] : [];
   state.rollbackHead = raw.rollbackHead && typeof raw.rollbackHead === 'object' ? clone(raw.rollbackHead) : null;
-  state.checkpoints = Array.isArray(raw.checkpoints) ? clone(raw.checkpoints) : [];
+  state.checkpoints = Array.isArray(raw.checkpoints) ? [...raw.checkpoints] : [];
   state.lastCaptureMessage = messageId(raw.lastCaptureMessage);
   state.recoveryRequired = raw.recoveryRequired && typeof raw.recoveryRequired === 'object'
     ? clone(raw.recoveryRequired)
@@ -295,7 +311,7 @@ function restoreKeyed(items, changes) {
 }
 
 export function applyUndoPatch(inputState, patch) {
-  const state = normalizeState(clone(inputState));
+  const state = normalizeState(cloneState(inputState));
   if (!patch) return state;
   state.records = restoreKeyed(state.records, patch.records);
   const evidenceItems = restoreKeyed(Object.values(state.evidence), patch.evidence);
@@ -402,8 +418,8 @@ export function compactEvidence(state) {
 }
 
 export function reduceMutations(inputState, batch) {
-  const state = normalizeState(clone(inputState));
-  const before = normalizeState(clone(inputState));
+  const state = normalizeState(cloneState(inputState));
+  const before = normalizeState(cloneState(inputState));
   const context = {
     chatKey: String(batch?.chatKey || state.chatKey || ''),
     messageId: messageId(batch?.messageId),

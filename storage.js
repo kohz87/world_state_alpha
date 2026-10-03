@@ -4,7 +4,7 @@ import {
   SIDECAR_FORMAT_VERSION,
 } from './constants.js';
 import { hashText, stableStringify } from './hash.js';
-import { clone, normalizeState } from './state-core.js';
+import { clone, cloneState, normalizeState } from './state-core.js';
 
 export class RevisionConflictError extends Error {
   constructor(message = 'sidecar revision conflict') {
@@ -30,7 +30,7 @@ export function makeSidecarPath(chatKey) {
 function corePayload({ chatKey, state, revision, appVersion, updatedAt }) {
   const owner = String(chatKey || '');
   if (!owner) throw new Error('chatKey is required');
-  const normalized = normalizeState(clone(state), { strictSchema: true, chatKey: owner });
+  const normalized = normalizeState(cloneState(state), { strictSchema: true, chatKey: owner });
   if (normalized.chatKey && normalized.chatKey !== owner) {
     throw new Error('state chatKey does not match sidecar owner');
   }

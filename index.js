@@ -38,7 +38,7 @@ import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelev
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
 import { normalizeSpatialProfile, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
-import { clone, createState, normalizeState } from './state-core.js';
+import { clone, cloneState, createState, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
@@ -777,7 +777,7 @@ function setCachedState(chatKey, state, {
 } = {}) {
   // Any new canonical state makes a failed rebuild's resume point stale.
   rebuildResumes.delete(chatKey);
-  const normalized = normalizeState(clone(state), { strictSchema: true, chatKey });
+  const normalized = normalizeState(cloneState(state), { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
   const hydratedPointer = sourcePointer === undefined ? pointerFor(chatKey) : sourcePointer;
   if (hydratedPointer?.path) hydratedPointers.set(chatKey, structuredClone(hydratedPointer));
@@ -1107,7 +1107,7 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
     return true;
   }
 
-  const migrated = normalizeState(clone(sourceState), { strictSchema: true, chatKey: oldKey });
+  const migrated = normalizeState(cloneState(sourceState), { strictSchema: true, chatKey: oldKey });
   migrated.chatKey = newKey;
   const committed = await writeSidecar({
     adapter: hostStorage,
@@ -1725,9 +1725,12 @@ function localChatIsBehindState(state, chat = getContext().chat || []) {
   return storedLineage.length > localLineage.length && lineageIsPrefix(localLineage, storedLineage);
 }
 
+// Ordinary boundary checks read the sidecar once. The startup retry schedule (a just-written sidecar may not
+// be visible yet) belongs to hydration, activation and conflict recovery; on every send of a chat that has
+// no sidecar it only delayed generation.
 async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   reason = 'boundary',
-  retryDeterministicMiss = true,
+  retryDeterministicMiss = false,
 } = {}) {
   if (!chatKey || chatKey === 'no-chat' || !hostHydrationReady) {
     return { outcome: 'skipped', changed: false };
@@ -1962,9 +1965,14 @@ function messageRole(message) {
 function boundedExchange(chat, endMessageId, limit = CAPTURE_LIMITS.exchangeMessages, knownLineage = null) {
   const rows = Array.isArray(chat) ? chat : [];
   if (!Number.isInteger(endMessageId) || endMessageId < 0 || endMessageId >= rows.length) return [];
-  const lineage = Array.isArray(knownLineage) && knownLineage.length > endMessageId
-    ? knownLineage
-    : chatLineage(rows);
+  // A stored lineage one message short (the user's new message) is extended, not recomputed: re-hashing the
+  // whole chat on every send broke the normal-turn bound.
+  let lineage = Array.isArray(knownLineage) && knownLineage.length > endMessageId ? knownLineage : null;
+  if (!lineage && Array.isArray(knownLineage) && knownLineage.length) {
+    const appended = extendChatLineage(knownLineage, rows.slice(0, endMessageId + 1));
+    if (appended) lineage = [...knownLineage, ...appended];
+  }
+  if (!lineage) lineage = chatLineage(rows);
   const out = [];
   for (let index = endMessageId; index >= 0 && out.length < limit; index -= 1) {
     const message = rows[index];
@@ -2806,7 +2814,7 @@ async function activateCurrentChat() {
     if (currentChatKey() !== chatKey) return;
     retiredOperationLogs.delete(chatKey);
     void hydrateOperationLog(chatKey);
-    await refreshChatStateFromServer(chatKey, { reason: 'chat-activation' });
+    await refreshChatStateFromServer(chatKey, { reason: 'chat-activation', retryDeterministicMiss: true });
     if (currentChatKey() !== chatKey) return;
     if (bootstrapRequiredChats.has(chatKey)) {
       notifyBootstrapRequiredOnce(chatKey);
@@ -3390,16 +3398,25 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     // device's save), or any change inside its range; branch events after the range do not stop it.
     const startInvalidations = operationInvalidations.get(chatKey) || 0;
     const startState = stateCache.get(chatKey);
-    const isCurrent = () => {
+    // The range proof hashes the chat up to the rebuilt range. The run checks currentness several times per
+    // boundary, so between exact checks the proof is reused for a second (a chat shorter than the range is
+    // caught at once); the host's own checks before saving and reporting are always exact.
+    let rangeProof = { at: -Infinity, current: true };
+    const isCurrent = (options = null) => {
       if (currentChatKey() !== chatKey || (operationInvalidations.get(chatKey) || 0) !== startInvalidations) return false;
       if (stateCache.get(chatKey) !== startState) return false;
-      const live = chatLineage(getContext().chat || []);
-      return live.length >= startLineage.length
-        && (!startTailKey || live[startLineage.length - 1]?.lineageKey === startTailKey);
+      const liveChat = getContext().chat || [];
+      if (liveChat.length < startLineage.length) return false;
+      const now = Date.now();
+      if (options?.exact !== true && now - rangeProof.at < 1000) return rangeProof.current;
+      const live = chatLineage(liveChat.slice(0, startLineage.length));
+      rangeProof = { at: now, current: !startTailKey || live[startLineage.length - 1]?.lineageKey === startTailKey };
+      return rangeProof.current;
     };
+    const isCurrentExact = () => isCurrent({ exact: true });
     const settings = getWorldStateSettings();
     const baseMap = await getChatBaseMap(chatKey, state);
-    if (!isCurrent()) return;
+    if (!isCurrentExact()) return;
     if (settings.spatialEnabled && state.spatial?.baseMapRef?.id && !baseMap) {
       notify('error', 'Rebuild paused because the attached Spatial base map is unavailable. Reattach or restore the base map first.');
       return;
@@ -3534,7 +3551,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const cancelledOutcome = result.outcome === 'stale'
       || result.outcome === 'cancelled'
       || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED';
-    const resumable = result.outcome === 'failure' && !cancelledOutcome && result.resume && isCurrent();
+    const resumable = result.outcome === 'failure' && !cancelledOutcome && result.resume && isCurrentExact();
     if (resumable) {
       rebuildResumes.set(chatKey, {
         resume: result.resume,
@@ -3552,7 +3569,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         },
       });
     }
-    if (result.outcome !== 'completed' || !isCurrent()) {
+    if (result.outcome !== 'completed' || !isCurrentExact()) {
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
         phase: cancelledOutcome ? 'cancelled' : 'failed',
@@ -3569,7 +3586,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         label: 'rebuild',
         sourceMessageId: Number.isInteger(result.failedBoundary) ? result.failedBoundary : sourceMessageId,
         outcome: cancelledOutcome ? 'rebuild-cancelled' : 'rebuild-failed',
-        code: result.errorCode || (isCurrent() ? 'WORLD_STATE_REBUILD_INCOMPLETE' : 'WORLD_STATE_REBUILD_STALE'),
+        code: result.errorCode || (isCurrentExact() ? 'WORLD_STATE_REBUILD_INCOMPLETE' : 'WORLD_STATE_REBUILD_STALE'),
         detail: failureDetail,
         providerCalls: result.providerCalls || 0,
         applied,
@@ -3597,7 +3614,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     });
     refreshPanel();
 
-    if (!isCurrent()) {
+    if (!isCurrentExact()) {
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
         phase: 'cancelled',
@@ -3694,7 +3711,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       return;
     }
 
-    if (!isCurrent()) {
+    if (!isCurrentExact()) {
       if (bootstrapRecoveryAtStart) {
         setCachedState(chatKey, result.state);
         passiveCaptureRebaseCandidates.delete(chatKey);
@@ -4638,7 +4655,13 @@ export async function openWorldStatePanel() {
   document.body.appendChild(panelRoot);
   panelController = createWorldStateUiController({
     root: panelRoot,
-    getState: () => getCachedState(chatKey) || createState(chatKey),
+    // The panel only reads it (its model is built from a private copy), so the cached state is passed as is.
+    getState: () => {
+      const state = stateCache.get(chatKey);
+      if (state) touchChatCache(chatKey);
+      return state || createState(chatKey);
+    },
+    getChatKey: () => chatKey,
     getBaseMap: () => getCachedBaseMap(stateCache.get(chatKey)?.spatial?.baseMapRef),
     getDiagnostics: () => diagnosticStore.records(chatKey),
     getRuntimeInfo: () => {

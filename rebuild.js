@@ -4,7 +4,7 @@ import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
 import { applySpatialUndoPatch } from './spatial-core.js';
-import { canonicalDomain, clone, createState, normalizeState } from './state-core.js';
+import { canonicalDomain, clone, cloneState, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
   maxBoundaries: 1024,
@@ -389,7 +389,7 @@ export async function runManualRebuild({
   spatialProfile = null,
   resume = null,
 } = {}) {
-  const original = normalizeState(clone(state), { chatKey });
+  const original = normalizeState(cloneState(state), { chatKey });
   const owner = String(chatKey || original.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
   if (original.chatKey && original.chatKey !== owner) throw new Error('rebuild chatKey does not match state owner');
@@ -464,7 +464,7 @@ export async function runManualRebuild({
       };
     }
     resumeFromMessageId = resume.fromMessageId;
-    candidate = normalizeState(clone(resume.candidate), { strictSchema: true, chatKey: owner });
+    candidate = normalizeState(cloneState(resume.candidate), { strictSchema: true, chatKey: owner });
   } else if (plan.metrics.startMessageId > 0) {
     const prefix = (Array.isArray(chat) ? chat : []).slice(0, plan.metrics.startMessageId);
     const currentLineage = chatLineage(Array.isArray(chat) ? chat : []);
@@ -506,7 +506,7 @@ export async function runManualRebuild({
             + ' cannot be proven from the saved history. Use Full chat.',
       };
     }
-    candidate = normalizeState(clone(restored.state), { strictSchema: true, chatKey: owner });
+    candidate = normalizeState(cloneState(restored.state), { strictSchema: true, chatKey: owner });
   } else {
     // Assemble the clean root first and only then snapshot it, so the root checkpoint carries the
     // Spatial profile/base map (or the preserved disabled Spatial state) that a later rollback restores.
@@ -586,7 +586,7 @@ export async function runManualRebuild({
     // reply, or only <writer_state>/tracker blocks) has nothing to capture. Live capture skips it with the
     // same captureDue rule, so the rebuild advances past it without a provider call instead of failing.
     if (!captureDue({ exchange: window.exchange, sourceMessageId: window.messageId })) {
-      candidate = commitMutationBoundary(candidate, withDisabledSpatial(candidate, window.messageId), chat.slice(0, window.messageId + 1), window.messageId, 'rebuild');
+      candidate = commitMutationBoundary(candidate, withDisabledSpatial(candidate, window.messageId), chat.slice(0, window.messageId + 1), window.messageId, 'rebuild', { lineage: plan.lineage.slice(0, window.messageId + 1) });
       receipts.push({ messageId: window.messageId, outcome: 'empty-boundary', providerCalls: 0, applied: 0, rejected: 0, aliasRepairs: 0, completenessHints: 0, rejections: [] });
       processedBoundaries += 1;
       await reportProgress(window.messageId, { boundaryApplied: 0, boundaryRejected: 0, aliasRepairs: 0, completenessHints: 0 });
@@ -707,6 +707,8 @@ export async function runManualRebuild({
         chat.slice(0, window.messageId + 1),
         window.messageId,
         'rebuild',
+        // The plan already holds the chat's lineage; re-hashing the prefix at every step was quadratic.
+        { lineage: plan.lineage.slice(0, window.messageId + 1) },
       );
     }
     processedBoundaries += 1;
@@ -729,8 +731,9 @@ export async function runManualRebuild({
     const cutoff = spatialTimeline.unprovableBelow;
     candidate.rollbackJournal = (candidate.rollbackJournal || []).filter(entry => entry.messageId > cutoff);
     if (candidate.rollbackJournal[0]) {
-      candidate.rollbackJournal[0].prevSeq = 0;
-      candidate.rollbackJournal[0].beforeMessageId = Math.max(candidate.rollbackJournal[0].beforeMessageId, cutoff);
+      // Journal entries are shared between state copies: replace, never edit in place.
+      const first = candidate.rollbackJournal[0];
+      candidate.rollbackJournal[0] = { ...first, prevSeq: 0, beforeMessageId: Math.max(first.beforeMessageId, cutoff) };
     }
     candidate.checkpoints = (candidate.checkpoints || []).filter(item => item.messageId >= cutoff);
     if (candidate.rollbackHead && !candidate.rollbackJournal.some(entry => entry.seq === candidate.rollbackHead.seq)) candidate.rollbackHead = null;
