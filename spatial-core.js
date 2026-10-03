@@ -1097,13 +1097,18 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
           targetLoc.coordinate = normalizeCoordinate(sourceLoc.coordinate);
         }
 
+        // Relations and routes point at effective ids (an override is addressed by the base id it
+        // shadows): move every id the source answers to onto the id the target answers to.
+        const sourceIds = new Set([sourceId, sourceLoc.baseRefId].filter(Boolean));
+        const targetEffectiveId = targetLoc.baseRefId || targetId;
+        const moveId = id => (sourceIds.has(id) || id === targetId ? targetEffectiveId : id);
         const rewritten = [];
         const relSeen = new Map();
         for (const rel of spatial.relations) {
           const nextRel = {
             ...rel,
-            fromId: rel.fromId === sourceId ? targetId : rel.fromId,
-            toId: rel.toId === sourceId ? targetId : rel.toId,
+            fromId: moveId(rel.fromId),
+            toId: moveId(rel.toId),
           };
           if (nextRel.fromId === nextRel.toId) continue;
           const sig = [nextRel.fromId, nextRel.toId, nextRel.direction || '', nextRel.distanceKm ?? '', nextRel.distanceMode || ''].join('|');
@@ -1119,8 +1124,8 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         spatial.relations = rewritten;
 
         for (const route of spatial.routes) {
-          route.endpoints = uniqueStrings((route.endpoints || []).map(id => id === sourceId ? targetId : id), 8, 120);
-          route.waypoints = uniqueStrings((route.waypoints || []).map(id => id === sourceId ? targetId : id), 32, 120);
+          route.endpoints = uniqueStrings((route.endpoints || []).map(moveId), 8, 120);
+          route.waypoints = uniqueStrings((route.waypoints || []).map(moveId), 32, 120);
         }
 
         sourceLoc.status = 'archived';
@@ -1260,6 +1265,38 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     }
 
     rejected.push({ proposal, reason: `unsupported spatial action: ${action}` });
+  }
+
+  // A place that moved under a locked True North must not keep a stored direction that its new
+  // coordinates contradict: the direction is cleared (its distance stays), never published as fact.
+  const lockedProfile = resolveSpatialProfile(spatial, baseMap);
+  if (lockedProfile?.trueNorthLocked === true && spatial.relations.length) {
+    const beforeById = new Map((before.locations || []).map(loc => [loc.id, loc]));
+    const moved = new Set();
+    for (const loc of spatial.locations) {
+      const prior = beforeById.get(loc.id);
+      if (prior && (prior.coordinate?.x !== loc.coordinate?.x || prior.coordinate?.y !== loc.coordinate?.y)) {
+        moved.add(loc.baseRefId || loc.id);
+      }
+    }
+    if (moved.size) {
+      const coordinateOf = id => {
+        const campaign = spatial.locations.find(loc => (loc.baseRefId || loc.id) === id && loc.status !== 'archived');
+        return campaign?.coordinate || effectiveCoordinateFor(id, effectiveById, spatial);
+      };
+      for (const rel of spatial.relations) {
+        if (!rel.direction || (!moved.has(rel.fromId) && !moved.has(rel.toId))) continue;
+        const fromCoord = coordinateOf(rel.fromId);
+        const toCoord = coordinateOf(rel.toId);
+        if (!Number.isFinite(fromCoord?.x) || !Number.isFinite(fromCoord?.y)
+          || !Number.isFinite(toCoord?.x) || !Number.isFinite(toCoord?.y)) continue;
+        const actual = directionFromDelta(toCoord.x - fromCoord.x, toCoord.y - fromCoord.y, lockedProfile);
+        if (actual && canonicalSpatialDirection(actual) !== canonicalSpatialDirection(rel.direction)) {
+          rel.direction = null;
+          applied.push({ action: 'clear_relation_direction', relationId: rel.id });
+        }
+      }
+    }
   }
 
   compactSpatialEvidence(spatial);

@@ -97,8 +97,11 @@ function normalizeMutation(raw) {
     evidence: evidenceRaw.map(evidenceItem),
     relatedRecordIds: uniqueStrings(raw.relatedRecordIds, CAPTURE_WIRE_LIMITS.relatedRecordIds),
   };
-  if (raw.anchors !== undefined) {
-    mutation.anchors = uniqueStrings(raw.anchors, LIMITS.anchorsPerRecord, LIMITS.anchorChars);
+  // Only an explicit empty list clears anchors. A malformed field (a string, null, a number, or a list
+  // with no usable entry) is ignored, never read as "clear the record's anchors".
+  if (Array.isArray(raw.anchors)) {
+    const anchors = uniqueStrings(raw.anchors, LIMITS.anchorsPerRecord, LIMITS.anchorChars);
+    if (anchors.length || raw.anchors.length === 0) mutation.anchors = anchors;
   }
   // A known trend sets it and an explicit null clears it; an unknown string (for example 'worsening') is
   // ignored rather than read as "clear the record's trend".
@@ -127,6 +130,8 @@ function normalizeMutation(raw) {
     if (!RECORD_STATUSES.includes(raw.status)) throw new CaptureWireError('invalid mutation status');
     mutation.status = raw.status;
   }
+  // A field that was present but unusable (an unknown trend, malformed anchors) leaves a harmless no-op
+  // update rather than failing the whole capture.
   if (action === 'update' && !mutation.summary && raw.trend === undefined && raw.anchors === undefined) {
     throw new CaptureWireError('update mutation contains no update fields');
   }

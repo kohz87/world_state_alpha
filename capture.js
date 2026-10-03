@@ -530,8 +530,13 @@ export function processCaptureResponse({
     },
   };
   if (spatialEnabled) {
+    // Omitted means no Spatial changes; present but not a list (an object, a string, null) is malformed
+    // output, and the whole boundary fails rather than reading it as "no places".
+    if (raw.spatialMutations !== undefined && !Array.isArray(raw.spatialMutations)) {
+      throw new CaptureWireError('capture response spatialMutations must be an array');
+    }
     spatialResult = processSpatialCapture({
-      rawSpatialMutations: Array.isArray(raw.spatialMutations) ? raw.spatialMutations : [],
+      rawSpatialMutations: raw.spatialMutations || [],
       spatial: nextState.spatial,
       exchange,
       visibleLocations,

@@ -24,8 +24,52 @@ function anchorSet(record) {
   return new Set((Array.isArray(record?.anchors) ? record.anchors : []).map(canonicalText).filter(Boolean));
 }
 
+// Words that tell two otherwise identical subjects apart when they modify the
+// same noun ("north gate" / "south gate", "first battalion" / "second").
+const DISTINGUISHING_WORDS = new Set([
+  'north', 'south', 'east', 'west', 'northern', 'southern', 'eastern', 'western',
+  'northeast', 'northwest', 'southeast', 'southwest', 'upper', 'lower', 'inner', 'outer',
+  'left', 'right', 'front', 'rear', 'back', 'high', 'low', 'old', 'new', 'first', 'second',
+  'third', 'fourth', 'fifth', 'last', 'main', 'side', 'central', 'middle',
+]);
+
+function subjectModifiers(summary, otherTokens) {
+  const words = String(summary ?? '').normalize('NFKC').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const modifiers = new Map();
+  for (let index = 0; index + 1 < words.length; index += 1) {
+    const word = words[index];
+    const lower = word.toLocaleLowerCase();
+    const noun = words[index + 1].toLocaleLowerCase();
+    if (!otherTokens.has(noun) || otherTokens.has(lower) || STOP.has(lower)) continue;
+    // A name (capitalized, not the summary's first word), a number, or a direction/ordinal word.
+    const distinguishing = DISTINGUISHING_WORDS.has(lower) || /\p{N}/u.test(word)
+      || (index > 0 && /^\p{Lu}/u.test(word));
+    if (!distinguishing) continue;
+    if (!modifiers.has(noun)) modifiers.set(noun, new Set());
+    modifiers.get(noun).add(lower);
+  }
+  return modifiers;
+}
+
+// Two summaries name different subjects when the same noun carries different
+// distinguishing modifiers in each; such conditions are never merged or
+// treated as one, however much else they share.
+export function distinctSubjects(left, right) {
+  const leftTokens = new Set(canonicalText(left).split(' ').filter(Boolean));
+  const rightTokens = new Set(canonicalText(right).split(' ').filter(Boolean));
+  const leftModifiers = subjectModifiers(left, rightTokens);
+  if (!leftModifiers.size) return false;
+  const rightModifiers = subjectModifiers(right, leftTokens);
+  for (const [noun, modifiers] of leftModifiers) {
+    const other = rightModifiers.get(noun);
+    if (other && [...modifiers].every(word => !other.has(word))) return true;
+  }
+  return false;
+}
+
 export function duplicateSimilarity(candidate, record) {
   if (!candidate || !record || candidate.kind !== record.kind) return 0;
+  if (distinctSubjects(candidate.summary, record.summary)) return 0;
   const leftSummary = canonicalText(candidate.summary);
   const rightSummary = canonicalText(record.summary);
   if (leftSummary && leftSummary === rightSummary) return 1;

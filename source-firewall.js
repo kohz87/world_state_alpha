@@ -127,11 +127,75 @@ export function evidenceClaimQuotedOnly(claim, sourceText) {
   return !evidenceClaimGrounded(claim, sourceWithoutQuotedDialogue(sourceText));
 }
 
+// Most of the claim's substance lies inside quoted dialogue (its words occur in
+// the quotes and nowhere in the narration around them): an excerpt that wraps
+// a quotation together with its "A trader says," frame is still a quotation.
+function claimSubstanceQuoted(claim, sourceText) {
+  const tokens = significantTokens(claim);
+  if (tokens.length < 2) return false;
+  const quoted = new Set(quotedDialogueSegments(sourceText).flatMap(segment => significantTokens(segment)));
+  if (!quoted.size) return false;
+  const narrated = new Set(significantTokens(sourceWithoutQuotedDialogue(sourceText)));
+  const quotedOnly = tokens.filter(token => quoted.has(token) && !narrated.has(token));
+  return quotedOnly.length >= 2 && quotedOnly.length * 2 >= tokens.length;
+}
+
+// Clauses of one sentence, with whether the separator before each one turns to
+// a different proposition ("while", "but", ";"): a reporting verb there does not
+// carry over.
+const CLAUSE_SEPARATOR = /(\s*[,;:]\s*|\s+(?:while|whereas|but|although|though|meanwhile|yet)\s+)/iu;
+const CONTRASTIVE_SEPARATOR = /;|\b(?:while|whereas|but|although|though|meanwhile|yet)\b/iu;
+const ATTRIBUTION_ONLY_TOKENS = 4;
+
+function sentenceClauses(sentence) {
+  const parts = String(sentence).split(CLAUSE_SEPARATOR);
+  const clauses = [];
+  let contrastive = false;
+  for (let index = 0; index < parts.length; index += 1) {
+    if (index % 2 === 1) {
+      contrastive = CONTRASTIVE_SEPARATOR.test(parts[index]);
+      continue;
+    }
+    const text = parts[index].trim();
+    if (text) clauses.push({ text, contrastiveBefore: clauses.length > 0 && contrastive });
+    contrastive = false;
+  }
+  return clauses;
+}
+
+// Attribution follows the claim's own clause: a reporting verb in that clause
+// or an earlier one of the same sentence (unless a contrastive turn intervenes),
+// or a short trailing attribution clause ("..., the trader said."). A reporting
+// clause about something else in the same sentence does not make a narrated
+// claim hearsay.
+function clauseAttributes(sentence, claimTokens) {
+  const clauses = sentenceClauses(sentence);
+  const bearing = clauses.map(clause => {
+    const tokens = significantTokens(clause.text);
+    const shared = tokens.filter(token => claimTokens.has(token)).length;
+    return shared > 0 && shared * 5 >= tokens.length * 2;
+  });
+  return clauses.some((clause, index) => {
+    if (!bearing[index]) return false;
+    if (ATTRIBUTION_RE.test(clause.text)) return true;
+    for (let earlier = index - 1; earlier >= 0; earlier -= 1) {
+      if (clauses[earlier + 1].contrastiveBefore) break;
+      if (ATTRIBUTION_RE.test(clauses[earlier].text)) return true;
+    }
+    const next = clauses[index + 1];
+    return Boolean(next && !next.contrastiveBefore && ATTRIBUTION_RE.test(next.text)
+      && canonicalText(next.text).split(' ').filter(Boolean).length <= ATTRIBUTION_ONLY_TOKENS);
+  });
+}
+
 function evidenceClaimAttributed(claim, sourceText) {
   if (evidenceClaimQuotedOnly(claim, sourceText)) return true;
+  if (claimSubstanceQuoted(claim, sourceText)) return true;
   const source = String(sourceText ?? '');
+  const claimTokens = new Set(significantTokens(claim));
   const segments = source.split(/(?<=[.!?])\s+|\r?\n+/u).filter(Boolean);
-  return segments.some(segment => evidenceClaimGrounded(claim, segment) && ATTRIBUTION_RE.test(segment));
+  return segments.some(segment => evidenceClaimGrounded(claim, segment) && ATTRIBUTION_RE.test(segment)
+    && clauseAttributes(segment, claimTokens));
 }
 
 function anchorSupported(anchor, evidence, existingRecord = null, assertionText = '') {
@@ -283,6 +347,18 @@ export function applyCaptureSourceFirewall(mutation, {
     // An update whose proposed anchors were all unsupported keeps the record's anchors (the reducer would
     // otherwise replace them with []); an explicit empty list from the provider still clears them.
     if (existing && proposedAnchors && !candidate.anchors.length) delete candidate.anchors;
+  }
+
+  // An unconfirmed account cannot end an established condition: ending it needs narrated support.
+  // (A record that is itself reported information may be ended by another report.)
+  const endsRecord = ['resolve', 'supersede'].includes(candidate.action)
+    || ['resolved', 'superseded'].includes(candidate.status);
+  if (existing && endsRecord && supportingEvidence.every(item => item.attributed)
+    && !preservesReportedInformationStatus(existing.summary)) {
+    return {
+      ok: false,
+      reason: 'a reported, quoted or attributed account cannot resolve or supersede an established condition; narrated confirmation is required',
+    };
   }
 
   if (supportingEvidence.every(item => item.attributed)) {
