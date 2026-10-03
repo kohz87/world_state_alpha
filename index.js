@@ -8,7 +8,7 @@ import {
 } from '../../../../script.js';
 
 import { chatLineage, commitMutationBoundary, contentLineageKey, contentLineageKeys, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, relinkParkedBranches, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
-import { assistantBoundaryExchange, CAPTURE_LIMITS, hiddenConversationRole, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
+import { assistantBoundaryExchange, boundedExchangeText, CAPTURE_LIMITS, hiddenConversationRole, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { affectsCaptureRecovery, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
@@ -31,7 +31,7 @@ import {
   previewWorldStateImport,
   previewWorldStateReset,
 } from './manual.js';
-import { cancelWorldStateRequests, worldStateProfileOptions } from './provider-routing.js';
+import { cancelWorldStateRequests, worldStateProfileOptions, worldStateRouteFingerprint } from './provider-routing.js';
 import { planChronologicalRebuild, REBUILD_LIMITS, rebuildSnapshotToken, runManualRebuild } from './rebuild.js';
 import { buildRelevanceIndex, selectLifecycleCandidates, selectRelevantRecords, selectRelevantTombstones, updateRelevanceIndex } from './relevance.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
@@ -43,7 +43,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.47';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.48';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -81,6 +81,7 @@ const bootstrapWarnings = new Set();
 const stateEpochs = new Map();
 const ownershipEpochs = new Map();
 const chatQueues = new Map();
+const activationQueues = new Map();
 const branchDirtyChats = new Set();
 const passiveCaptureRebaseCandidates = new Map();
 // In-memory only: abandoned branches (swipes, deletes, regenerations) that can
@@ -1980,11 +1981,9 @@ function boundedExchange(chat, endMessageId, limit = CAPTURE_LIMITS.exchangeMess
   return out.reverse();
 }
 
+// The relevance view of an exchange: bounded like capture's exchange, never a per-message prefix.
 function recentText(exchange) {
-  return (Array.isArray(exchange) ? exchange : [])
-    .map(row => String(row?.content || '').trim().slice(0, 3500))
-    .filter(Boolean)
-    .join('\n');
+  return boundedExchangeText((Array.isArray(exchange) ? exchange : []).map(row => row?.content));
 }
 
 function routeSettings() {
@@ -2009,9 +2008,22 @@ function queueChatWork(chatKey, task) {
   const previous = chatQueues.get(chatKey) || Promise.resolve();
   const next = previous.catch(() => {}).then(task);
   chatQueues.set(chatKey, next);
-  next.finally(() => {
+  // Cleanup must not re-raise: the caller handles the task's own failure.
+  const cleanup = () => {
     if (chatQueues.get(chatKey) === next) chatQueues.delete(chatKey);
-  });
+  };
+  next.then(cleanup, cleanup);
+  return next;
+}
+
+function serializeActivation(chatKey, task) {
+  const previous = activationQueues.get(chatKey) || Promise.resolve();
+  const next = previous.catch(() => {}).then(task);
+  activationQueues.set(chatKey, next);
+  const cleanup = () => {
+    if (activationQueues.get(chatKey) === next) activationQueues.delete(chatKey);
+  };
+  next.then(cleanup, cleanup);
   return next;
 }
 
@@ -2803,7 +2815,13 @@ async function activateCurrentChat() {
       evictDormantChatStates(chatKey);
       return;
     }
-    await reconcileCurrentBranch(chatKey, { persistRestore: true });
+    // One activation reconcile at a time per chat: overlapping load events (CHAT_CHANGED with CHAT_LOADED,
+    // or the start-up paths) never race one restore write against another from the same cache. It does not
+    // wait on the writer queue, so a long rebuild never holds back the reloaded chat's prompt and panel.
+    await serializeActivation(chatKey, async () => {
+      if (currentChatKey() !== chatKey) return;
+      await reconcileCurrentBranch(chatKey, { persistRestore: true });
+    });
     if (currentChatKey() !== chatKey) return;
     updatePrivateInjection();
     refreshPanel();
@@ -3115,7 +3133,19 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
     payload = { ...payload, file };
   }
 
-  return queueChatWork(chatKey, () => applyMaintenanceActionNow(actionId, payload, chatKey));
+  return queueChatWork(chatKey, () => applyMaintenanceActionNow(actionId, payload, chatKey))
+    .catch(error => actionFailed('World State maintenance (' + actionId + ')', error, chatKey));
+}
+
+// A panel action that throws (an unreadable import, a failed save) tells the operator instead of failing
+// silently with only a console error.
+function actionFailed(label, error, chatKey) {
+  console.error('[World State Alpha] ' + label + ' failed safely', error);
+  if (currentChatKey() === chatKey) {
+    notify('error', label + ' failed: ' + String(error?.message || 'unexpected error').replace(/^World State Alpha:\s*/u, '').slice(0, 240));
+    refreshPanel();
+  }
+  return false;
 }
 
 async function applyMaintenanceActionNow(actionId, payload, chatKey) {
@@ -3258,9 +3288,13 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       ? resumeParams.mode
       : recapture ? 'from' : (['full', 'last', 'from'].includes(rebuildRequest.mode) ? rebuildRequest.mode : 'full');
     const bootstrapRecoveryAtStart = bootstrapRequiredChats.has(chatKey);
+    // The route a resume must keep is the one the failed run started on: the same profile with the same
+    // settings and model (or the same host model), and the same output cap.
+    const routeFingerprint = worldStateRouteFingerprint(getContext(), routeSettings());
+    const routeKey = stableStringify(routeFingerprint);
     if (resumeParams && (resumeParams.bootstrapRecoveryAtStart !== bootstrapRecoveryAtStart
       || resumeParams.spatialEnabled !== Boolean(getWorldStateSettings().spatialEnabled)
-      || resumeParams.routeKey !== stableStringify(routeSettings()))) {
+      || resumeParams.routeKey !== routeKey)) {
       refuseResume('World State settings or the connection profile changed since the rebuild failed, so it cannot resume without mixing models. Start a new rebuild.');
       return;
     }
@@ -3429,7 +3463,8 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         state,
         chat,
         chatKey,
-        route: routeSettings(),
+        // A profile edited after this check still fails closed: every boundary must match this signature.
+        route: routeFingerprint.signature ? { ...routeSettings(), signature: routeFingerprint.signature } : routeSettings(),
         operationId,
         signal: rebuildController.signal,
         isCurrent,
@@ -3511,7 +3546,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
           includeHiddenMessages,
           bootstrapRecoveryAtStart,
           spatialEnabled: Boolean(settings.spatialEnabled),
-          routeKey: stableStringify(routeSettings()),
+          routeKey,
           totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
           chatLength: chat.length,
         },
@@ -4024,7 +4059,8 @@ async function applySpatialAction(actionId, payload = {}, expectedChatKey = curr
     if (!file || currentChatKey() !== chatKey) return;
     payload = { ...payload, file };
   }
-  return queueChatWork(chatKey, () => applySpatialActionNow(actionId, payload, chatKey));
+  return queueChatWork(chatKey, () => applySpatialActionNow(actionId, payload, chatKey))
+    .catch(error => actionFailed('Places edit', error, chatKey));
 }
 
 async function applySpatialActionNow(actionId, payload, chatKey) {
@@ -4159,7 +4195,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       baseMap: null,
     });
     if (res.outcome === 'applied') {
-      await persistSpatialState(
+      return await persistSpatialState(
         res.state,
         clearDerivedCoordinates
           ? label + ' and cleared ' + derived.length + ' stale derived coordinate' + (derived.length === 1 ? '' : 's')
@@ -4178,8 +4214,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       notify('error', 'Invalid Coordinate Profile: ' + String(error?.message || error));
       return;
     }
-    await applyManualProfile(profile, 'Saved manual Coordinate Profile');
-    return;
+    return await applyManualProfile(profile, 'Saved manual Coordinate Profile');
   }
 
   if (actionId === 'reset_profile') {
@@ -4313,8 +4348,21 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       note: 'Manual location update',
     }];
 
-    const relationId = String(fd.relationId || '').trim();
-    const anchorName = String(fd.relativeAnchor || '').trim();
+    let relationId = String(fd.relationId || '').trim();
+    let anchorName = String(fd.relativeAnchor || '').trim();
+    // The form shows the place's first relation. Left as it was, that relation is kept untouched, even when
+    // its other place is archived (which a name lookup would no longer find).
+    const shownRelation = payload.location.primaryRelation || {};
+    const sameNumber = (left, right) => (Number.isFinite(left) ? left : null) === (Number.isFinite(right) ? right : null);
+    const keptAnchor = relationId && shownRelation.anchorId && anchorName === String(shownRelation.anchorName || '').trim()
+      ? shownRelation.anchorId
+      : '';
+    if (keptAnchor && (fd.direction || '') === (shownRelation.direction || '')
+      && sameNumber(fd.distanceKm, shownRelation.distanceKm)
+      && (fd.distanceMode || 'unspecified') === (shownRelation.distanceMode || 'unspecified')) {
+      relationId = '';
+      anchorName = '';
+    }
     if (relationId) {
       steps.push({
         mutation: { action: 'delete_relation', relationId },
@@ -4328,7 +4376,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
         notify('error', 'Location update rejected.');
         return;
       }
-      const anchor = findEffectiveByName(afterLocation.state, anchorName);
+      const anchor = keptAnchor ? { id: keptAnchor } : findEffectiveByName(afterLocation.state, anchorName);
       if (!anchor) {
         notify('error', 'Relative anchor not found: ' + anchorName);
         return;
@@ -4354,11 +4402,11 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
 
     const res = applySequence(state, steps);
     if (res.outcome === 'applied') {
-      await persistSpatialState(res.state, 'Saved location ' + (fd.name || payload.location.name));
-    } else {
-      notify('error', 'Spatial update rejected: ' + (res.rejected?.[0]?.reason || 'invalid edit'));
+      // The panel leaves edit mode (dropping the draft) only once the save is committed.
+      return await persistSpatialState(res.state, 'Saved location ' + (fd.name || payload.location.name));
     }
-    return;
+    notify('error', 'Spatial update rejected: ' + (res.rejected?.[0]?.reason || 'invalid edit'));
+    return false;
   }
 
   if (actionId === 'toggle_lock' && payload.location) {

@@ -1,6 +1,6 @@
 import { SPATIAL_LIMITS } from './constants.js';
 import { resolveEffectiveLocations, resolveEffectiveRoutes } from './spatial-core.js';
-import { RELEVANCE_STOPWORDS } from './relevance.js';
+import { nonAsciiBigrams, phraseCandidates, rarestFirst, RELEVANCE_STOPWORDS } from './relevance.js';
 
 function normalizeText(value) {
   return String(value ?? '')
@@ -32,41 +32,6 @@ function deletePosting(map, key, id) {
   if (!posting) return;
   posting.delete(id);
   if (!posting.size) map.delete(key);
-}
-
-function nonAsciiBigrams(value, max = 64) {
-  const compact = normalizeText(value).replace(/\s+/g, '');
-  if (!/[^\x00-\x7F]/u.test(compact)) return [];
-  const chars = [...compact];
-  if (chars.length < 2) return chars.length ? [chars[0]] : [];
-  const out = [];
-  const seen = new Set();
-  for (let index = 0; index < chars.length - 1 && out.length < max; index += 1) {
-    const gram = chars[index] + chars[index + 1];
-    if (seen.has(gram)) continue;
-    seen.add(gram);
-    out.push(gram);
-  }
-  return out;
-}
-
-function phraseCandidates(tokenList, maxWords = 4, maxPhrases = 256, { newestFirst = false } = {}) {
-  const out = [];
-  const seen = new Set();
-  const starts = tokenList.map((_, index) => index);
-  if (newestFirst) starts.reverse();
-  for (const start of starts) {
-    if (out.length >= maxPhrases) break;
-    let phrase = '';
-    for (let width = 1; width <= maxWords && start + width <= tokenList.length; width += 1) {
-      phrase = width === 1 ? tokenList[start] : phrase + ' ' + tokenList[start + width - 1];
-      if (seen.has(phrase)) continue;
-      seen.add(phrase);
-      out.push(phrase);
-      if (out.length >= maxPhrases) break;
-    }
-  }
-  return out;
 }
 
 function indexLocationTerms(loc, index) {
@@ -318,26 +283,26 @@ export function selectRelevantLocations(spatialState, {
   };
 
   // 1. Phrase candidates from recent text
-  for (const phrase of phraseCandidates(recentTokenList, 4, 256, { newestFirst: true })) {
+  for (const phrase of rarestFirst(phraseCandidates(recentTokenList, 4, 256, { newestFirst: true }), spatialIndex.namePhrases, spatialIndex.routeNames)) {
     visitPosting(spatialIndex.namePhrases.get(phrase), 100);
     visitPosting(spatialIndex.routeNames.get(phrase), 60);
   }
 
   // 2. Phrase candidates from lore text
-  for (const phrase of phraseCandidates(loreTokenList, 4, 128)) {
+  for (const phrase of rarestFirst(phraseCandidates(loreTokenList, 4, 128), spatialIndex.namePhrases, spatialIndex.routeNames)) {
     visitPosting(spatialIndex.namePhrases.get(phrase), 40);
     visitPosting(spatialIndex.routeNames.get(phrase), 20);
   }
 
   // 3. Name bigrams and tokens
-  for (const gram of nonAsciiBigrams(recentNorm, 64)) {
+  for (const gram of nonAsciiBigrams(recentNorm, 64, { newestFirst: true })) {
     visitPosting(spatialIndex.nameBigrams.get(gram), 50);
   }
-  for (const token of recentLookup) {
+  for (const token of rarestFirst(recentLookup, spatialIndex.nameTokens, spatialIndex.contextTokens)) {
     visitPosting(spatialIndex.nameTokens.get(token), 30);
     visitPosting(spatialIndex.contextTokens.get(token), 12);
   }
-  for (const token of loreLookup) {
+  for (const token of rarestFirst(loreLookup, spatialIndex.nameTokens, spatialIndex.contextTokens)) {
     visitPosting(spatialIndex.nameTokens.get(token), 15);
     visitPosting(spatialIndex.contextTokens.get(token), 6);
   }

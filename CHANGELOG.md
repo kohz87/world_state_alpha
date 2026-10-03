@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.9.0-alpha.48 - Relevance, Resume and panel robustness (audit A19-A21, A27-A29, batch 4)
+
+Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.47. A18 was already fixed in alpha.45, and the batch 4 "stale records after a save conflict" item was fixed by A02.
+
+### Fixed
+
+- **A19 - Resolved neighbours used up the linked-record slots.** A relevant record whose first three linked records were resolved linked nothing, so its active neighbour was dropped. Only active neighbours now count towards the cap.
+- **A20 - A common word crowded out a specific match.** With 600 records about "Gate", a mention of "the Kesselpass Gate" never reached scoring. Longer phrases and rarer words are now looked up first, for records and for Places.
+- **A21 - The end of a long reply was ignored when choosing what to inject.** Each message was cut to its first 3,500 characters. The view is now bounded like capture's: newest message first, and a long message keeps its start and its end.
+- **A27 - A background refresh wiped Places edits.** A capture finishing while you edited a place reset every field. Fields you changed now stay; untouched fields show the new value. A rejected save also keeps the editor open with your changes.
+- **A28 - Resume could mix models.** Editing the selected connection profile to another model between a failed rebuild and Resume went unnoticed. Resume now compares the profile's full settings (or the host connection's API and model) and the output cap.
+- **A29 - A newest Chinese (or other non-Latin) name was missed after a long earlier passage.** Character pairs are now read from the newest text first.
+- **Typing Japanese, Chinese or with Android GBoard in the search box broke the text.** The panel re-rendered mid-composition, giving results like "ととり砦". It now waits for the committed text.
+- **A place related to an archived place couldn't be saved.** Saving failed with "Relative anchor not found". An unchanged relation is now left as it is, and a changed one keeps its other place.
+- **Failed import, reset and Places actions said nothing.** A bad import file only logged "Uncaught (in promise)". These now show an error.
+- **Two overlapping chat-load events could clear continuity for a turn.** Both wrote the same restore and the second hit its own conflict. Chat loads for the same chat now run one at a time.
+
+### Code review hardening
+
+- Phrases are also looked up rarest first, so a common two-word anchor cannot use up the budget before a rare name; for Places a word counts its description matches too.
+- The relevance view reuses capture's bounding, including its guard for a nearly spent budget.
+- A saved or reset Coordinate Profile drops its draft, and a field set by a base map always shows the map's value.
+- The place editor keeps the relation it opened with, so a relation changed by a capture meanwhile is never deleted by the save.
+- A tap on another control while a keyboard is composing re-renders the panel at once.
+- Resume with the host connection also compares the chat-completion source or text-completion type; a model it cannot read never matches.
+- Chat loads wait only for each other, not for a running rebuild.
+
+### Architecture
+
+- Core contract updated for relevance, the Resume route fingerprint, chat loading, and panel drafts and errors. No durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha48.test.js`; each case fails on the previous release.
+- Live in SillyTavern with a stub model. On alpha.47:
+  - a late mention in a long reply injected nothing;
+  - a capture refresh wiped a Places draft;
+  - the archived-anchor save failed;
+  - IME composition produced "ととり砦";
+  - a bad import gave no message.
+
+  On alpha.48 none of these happen. The alpha.44-47 live scripts behave as before.
+- Not verified: Resume with a real connection profile (the stub model replaces the dispatcher), and real Japanese/Chinese IMEs or GBoard on a phone. The IME check used Chromium's input-method API on desktop. The overlapping chat-load race is covered by a source check only.
+
 ## 0.9.0-alpha.47 - Admission and Places grounding (audit A13-A17, A22-A26)
 
 Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.46.

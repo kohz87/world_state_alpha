@@ -225,14 +225,16 @@ function deletePosting(map, key, recordId) {
   if (!posting.size) map.delete(key);
 }
 
-function nonAsciiBigrams(value, max = 64) {
+// newestFirst walks from the end, so a bounded query covers the newest mention first.
+export function nonAsciiBigrams(value, max = 64, { newestFirst = false } = {}) {
   const compact = normalizeText(value).replace(/\s+/g, '');
   if (!/[^\x00-\x7F]/u.test(compact)) return [];
   const chars = [...compact];
   if (chars.length < 2) return chars.length ? [chars[0]] : [];
   const out = [];
   const seen = new Set();
-  for (let index = 0; index < chars.length - 1 && out.length < max; index += 1) {
+  for (let step = 0; step < chars.length - 1 && out.length < max; step += 1) {
+    const index = newestFirst ? chars.length - 2 - step : step;
     const gram = chars[index] + chars[index + 1];
     if (seen.has(gram)) continue;
     seen.add(gram);
@@ -552,8 +554,10 @@ export function selectBackgroundDevelopments(index, {
   };
 }
 
-// newestFirst walks start positions from the end, so the phrase budget covers the newest text first.
-function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384, { newestFirst = false } = {}) {
+// newestFirst walks start positions from the end, so the phrase budget covers the newest text first. The
+// chosen phrases come out longest first (newest first among equals); callers then order them rarest first.
+// Shared with Places relevance.
+export function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384, { newestFirst = false } = {}) {
   const out = [];
   const seen = new Set();
   const starts = tokenList.map((_, index) => index);
@@ -565,11 +569,23 @@ function phraseCandidates(tokenList, maxWords = 6, maxPhrases = 384, { newestFir
       phrase = width === 1 ? tokenList[start] : phrase + ' ' + tokenList[start + width - 1];
       if (seen.has(phrase)) continue;
       seen.add(phrase);
-      out.push(phrase);
+      out.push({ phrase, width, order: out.length });
       if (out.length >= maxPhrases) break;
     }
   }
-  return out;
+  return out
+    .sort((left, right) => right.width - left.width || left.order - right.order)
+    .map(item => item.phrase);
+}
+
+// Rarest first (by the postings a key will visit; input order among equals): a word or phrase shared by
+// hundreds of records cannot use up the visit budget before the one that singles out the record the scene
+// is about. Shared with Places relevance.
+export function rarestFirst(list, ...postings) {
+  return list
+    .map((key, order) => ({ key, order, size: postings.reduce((sum, map) => sum + (map.get(key)?.size || 0), 0) }))
+    .sort((left, right) => left.size - right.size || left.order - right.order)
+    .map(item => item.key);
 }
 
 function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
@@ -595,26 +611,26 @@ function gatherCandidateRecords(index, context, { candidateCap = 128 } = {}) {
     }
   };
 
-  for (const phrase of phraseCandidates(context.recentTokenList, 6, 384, { newestFirst: true })) {
+  for (const phrase of rarestFirst(phraseCandidates(context.recentTokenList, 6, 384, { newestFirst: true }), index.anchorPhrases)) {
     phraseLookups += 1;
     visitPosting(index.anchorPhrases.get(phrase), 1000 + Math.min(100, phrase.length));
   }
-  for (const phrase of phraseCandidates(context.loreTokenList, 6, 256)) {
+  for (const phrase of rarestFirst(phraseCandidates(context.loreTokenList, 6, 256), index.anchorPhrases)) {
     phraseLookups += 1;
     visitPosting(index.anchorPhrases.get(phrase), 400 + Math.min(100, phrase.length));
   }
 
-  for (const gram of nonAsciiBigrams(context.recentNorm, 128)) {
+  for (const gram of nonAsciiBigrams(context.recentNorm, 128, { newestFirst: true })) {
     visitPosting(index.anchorBigrams.get(gram), 350);
   }
   for (const gram of nonAsciiBigrams(context.loreNorm, 96)) {
     visitPosting(index.anchorBigrams.get(gram), 120);
   }
 
-  for (const token of context.recentAnchorTokens) visitPosting(index.anchorTokens.get(token), 300);
-  for (const token of context.loreAnchorTokens) visitPosting(index.anchorTokens.get(token), 100);
+  for (const token of rarestFirst(context.recentAnchorTokens, index.anchorTokens)) visitPosting(index.anchorTokens.get(token), 300);
+  for (const token of rarestFirst(context.loreAnchorTokens, index.anchorTokens)) visitPosting(index.anchorTokens.get(token), 100);
 
-  for (const token of context.recentLookupTokens) {
+  for (const token of rarestFirst(context.recentLookupTokens, index.summaryTokens)) {
     visitPosting(index.summaryTokens.get(token), token.length >= 4 ? 10 : 2);
   }
   for (const token of context.loreLookupTokens) {
@@ -859,13 +875,13 @@ export function selectRelevantRecords(state, {
   const seedLimit = boundedInt(maxSeedExpansion, 4, 0, 16);
   const neighborLimit = boundedInt(maxNeighborsPerSeed, 3, 0, 12);
   for (const seed of scored.slice(0, seedLimit)) {
+    // The cap counts only neighbours that can still be linked: retired or already chosen ones never use it up.
     const neighbors = [...(isIndexed ? indexedNeighbors(index, seed.record.id) : (graph.get(seed.record.id) || []))]
+      .filter(id => !combined.has(id) && byId.get(id)?.status === 'active')
       .sort()
       .slice(0, neighborLimit);
     for (const id of neighbors) {
-      if (combined.has(id)) continue;
       const record = byId.get(id);
-      if (!record || record.status !== 'active') continue;
       linkedCandidates += 1;
       const recency = recordRecency(record, currentMessageId);
       const rawLinkedScore = Math.max(0.75, seed.score * 0.24) + recency;

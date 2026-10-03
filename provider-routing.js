@@ -4,6 +4,7 @@ export const WORLD_STATE_OUTPUT_TOKENS_MAX = 12000;
 
 const inflight = new Map();
 let sequence = 0;
+let fingerprintSequence = 0;
 
 export function normalizeWorldStateMaxOutputTokens(value) {
   const number = Number(value);
@@ -79,6 +80,43 @@ async function profileService(ctx) {
     // Normalize host API availability without copying credentials or changing host settings.
   }
   throw worldStateRoutingError('Connection Manager request service is unavailable; no fallback was used.');
+}
+
+// What a request on this route would run as, read without sending anything: the selected profile's full
+// settings, or the host connection's API and model, plus the output cap. A resume compares it with the
+// failed run's so one rebuild never mixes models.
+export function worldStateRouteFingerprint(ctx, route = {}) {
+  const profileId = String(route.profileId || '').trim();
+  const maxOutputTokens = configuredWorldStateMaxOutputTokens(ctx);
+  if (profileId) {
+    let profile = null;
+    try {
+      const service = ctx?.ConnectionManagerRequestService;
+      profile = typeof service?.getProfile === 'function'
+        ? service.getProfile(profileId)
+        : (ctx?.extensionSettings?.connectionManager?.profiles || []).find(item => item?.id === profileId);
+    } catch {
+      profile = null;
+    }
+    return { profileId, signature: profile ? profileSignature(profile) : null, maxOutputTokens };
+  }
+  const chatCompletion = ctx?.mainApi === 'openai';
+  let model = null;
+  try {
+    model = chatCompletion
+      ? (typeof ctx?.getChatCompletionModel === 'function' ? ctx.getChatCompletionModel() : null)
+      : ctx?.onlineStatus;
+  } catch {
+    model = null;
+  }
+  return {
+    profileId: '',
+    mainApi: ctx?.mainApi ?? null,
+    source: chatCompletion ? ctx?.chatCompletionSettings?.chat_completion_source ?? null : ctx?.textCompletionSettings?.type ?? null,
+    // A model that cannot be read never matches, so Resume fails closed instead of guessing.
+    model: typeof model === 'string' && model ? model : 'unknown:' + (++fingerprintSequence),
+    maxOutputTokens,
+  };
 }
 
 function profileSignature(profile) {
