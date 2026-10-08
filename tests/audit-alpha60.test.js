@@ -1,6 +1,7 @@
 // alpha.60: forfeit a missed live capture without a rebuild.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 import { affectsCaptureRecovery, unrecoveredCaptureFailures } from '../diagnostics.js';
@@ -128,6 +129,9 @@ test('the Missed captures notice offers Forfeit for each listed message, outside
 test('forfeiting in the host clears the notice without a rebuild, changes no World State and saves the log row', () => {
   const result = scenario('forfeit-capture');
   assert.deepEqual(result.failedBefore, [2]);
+  // Review hardening: refused at once while a rebuild runs; a full log and an unreadable sidecar (both set up
+  // before the forfeit below) neither stop it nor delay its save.
+  assert.equal(result.refusedWhileRunning, true);
   // Declined: still listed. A message that is not listed is refused.
   assert.deepEqual(result.afterDecline, [2]);
   assert.equal(result.staleNotice, true);
@@ -136,4 +140,20 @@ test('forfeiting in the host clears the notice without a rebuild, changes no Wor
   assert.equal(result.records[0], result.records[1]);
   assert.equal(result.savedForfeit, true);
   assert.equal(result.success, true);
+});
+
+test('review hardening: Forfeit reaches more messages than the notice names, and says a later rebuild still re-reads it', () => {
+  const state = createState('chat:test:forfeit-many');
+  const ids = n => Array.from({ length: n }, (_, i) => 10 + i * 2);
+  const fifteen = renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 200, earliestPartialStart: 1, captureFailures: ids(15) } }), {});
+  assert.equal((fifteen.match(/data-wsa-forfeit-capture=/g) || []).length, 15);
+  const many = renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 200, earliestPartialStart: 1, captureFailures: ids(45) } }), {});
+  assert.equal((many.match(/data-wsa-forfeit-capture=/g) || []).length, 40);
+  assert.match(many, /and 5 more \(shown once these are forfeited or recovered\)/);
+
+  const source = fs.readFileSync('index.js', 'utf8');
+  const forfeit = source.slice(source.indexOf('async function forfeitMissedCapture('), source.indexOf('async function applyMaintenanceActionNow('));
+  assert.match(forfeit, /a later Recapture or rebuild that covers this message still re-reads it/);
+  assert.match(forfeit, /scheduleOperationLogSave\(chatKey, \{ now: true \}\)/);
+  assert.doesNotMatch(forfeit, /refreshChatStateFromServer|ensureChatStateLoaded/);
 });

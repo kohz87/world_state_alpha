@@ -28,6 +28,18 @@ await exchange('We camp.', 'The mill burns through the night.', id => JSON.strin
 const failedBefore = listed();
 const before = server(env);
 
+// A rebuild running: refused at once, never queued behind it.
+__test.rebuildStatuses.set(env.chatKey, { phase: 'running', operationId: 'rebuild:test' });
+await __test.applyMaintenanceAction('forfeit_capture', { messageId: 2 }, env.chatKey);
+const refusedWhileRunning = env.host.notices.some(notice => /A rebuild is running/.test(notice)) && listed().includes(2);
+__test.rebuildStatuses.delete(env.chatKey);
+
+// A full in-memory log (ordinary rows after the failure) and an unreadable sidecar: neither stops the
+// forfeit, and it is saved at once.
+for (let i = 0; i < 90; i += 1) __test.diagnosticStore.record(env.chatKey, { label: 'hydration', outcome: 'recovered', detail: 'filler ' + i });
+await tick(2000);
+env.host.hooks.onGet = async url => (url === env.sidecarPath ? { ok: false, status: 500, text: async () => 'down' } : null);
+
 globalThis.window.confirm = () => false;
 await __test.applyMaintenanceAction('forfeit_capture', { messageId: 2 }, env.chatKey);
 await tick(100);
@@ -40,9 +52,11 @@ const staleNotice = env.host.notices.some(notice => /no longer listed/.test(noti
 
 await __test.applyMaintenanceAction('forfeit_capture', { messageId: 2 }, env.chatKey);
 await tick(300);
+env.host.hooks.onGet = null;
 const after = server(env);
 const opsFile = [...env.host.files.entries()].find(([path]) => path.includes('world-state-alpha-ops-'));
 report({
+  refusedWhileRunning,
   failedBefore,
   afterDecline,
   staleNotice,

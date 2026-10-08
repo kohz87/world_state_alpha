@@ -164,6 +164,8 @@ const CAPTURE_NOT_ATTEMPTED = new Set(['skipped', CAPTURE_SUPERSEDED]);
 // 'forfeited': the operator gave up a missed capture of that message version without recovering it. It
 // clears the failures of that version like a successful capture, and changes no World State.
 export const CAPTURE_FORFEITED = 'forfeited';
+// Outcomes that clear the failures of their message version.
+const CAPTURE_CLEARS = new Set([...CAPTURE_SETTLED, CAPTURE_FORFEITED]);
 const PINNED_FAILURES = 40;
 
 function recoveryView(row) {
@@ -183,12 +185,12 @@ function isCaptureFailure(row) {
   // tied to a version, and those releases treated it as never attempted.
   if (row.outcome === 'stale' && !row.lineageKey) return false;
   return row.label === 'capture' && Number.isInteger(row.sourceMessageId)
-    && !CAPTURE_SETTLED.has(row.outcome) && !CAPTURE_NOT_ATTEMPTED.has(row.outcome) && row.outcome !== CAPTURE_FORFEITED;
+    && !CAPTURE_CLEARS.has(row.outcome) && !CAPTURE_NOT_ATTEMPTED.has(row.outcome);
 }
 
 function isCaptureRecovery(row) {
   return (row.label === 'capture' && Number.isInteger(row.sourceMessageId)
-    && (CAPTURE_SETTLED.has(row.outcome) || row.outcome === CAPTURE_SUPERSEDED || row.outcome === CAPTURE_FORFEITED))
+    && (CAPTURE_CLEARS.has(row.outcome) || row.outcome === CAPTURE_SUPERSEDED))
     || (row.label === 'rebuild' && row.outcome === 'rebuild-completed')
     || ((row.label === 'import' || row.label === 'reset') && row.outcome === 'applied');
 }
@@ -248,8 +250,7 @@ function unrecoveredFailureLists(rows = []) {
       }
       const key = row.sourceMessageId + '\u0001' + (row.lineageKey || '');
       failed.set(key, [...carried, ...(failed.get(key) || []), row]);
-    } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId)
-      && (CAPTURE_SETTLED.has(row.outcome) || row.outcome === CAPTURE_FORFEITED)) {
+    } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId) && CAPTURE_CLEARS.has(row.outcome)) {
       drop(row, failure => sameCaptureLineage(failure, row));
     } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId) && row.outcome === CAPTURE_SUPERSEDED) {
       drop(row, failure => Boolean(failure.operationId) && failure.operationId === row.operationId);
