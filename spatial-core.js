@@ -910,7 +910,31 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     }
 
     if (action === 'set_base_map_ref') {
-      spatial.baseMapRef = normalizeBaseMapRef(proposal.baseMapRef);
+      const nextRef = normalizeBaseMapRef(proposal.baseMapRef);
+      spatial.baseMapRef = nextRef;
+      // Relations and routes address an override by the base id it shadows only while that base place
+      // exists: re-key them when the map is detached, attached or replaced (`baseMap` is the map now attached;
+      // without it an attach cannot tell which places exist, so nothing is re-keyed).
+      const known = !nextRef || (baseMap && Array.isArray(baseMap.locations));
+      if (known) {
+        const nextBase = nextRef ? baseLocationIndex(baseMap) : new Map();
+        const rekey = new Map();
+        for (const loc of spatial.locations) {
+          if (!loc.baseRefId) continue;
+          if (nextBase.has(loc.baseRefId)) rekey.set(loc.id, loc.baseRefId);
+          else rekey.set(loc.baseRefId, loc.id);
+        }
+        if (rekey.size) {
+          const to = id => rekey.get(id) || id;
+          spatial.relations = spatial.relations
+            .map(rel => ({ ...rel, fromId: to(rel.fromId), toId: to(rel.toId) }))
+            .filter(rel => rel.fromId !== rel.toId);
+          for (const route of spatial.routes) {
+            route.endpoints = uniqueStrings((route.endpoints || []).map(to), 8, 120);
+            route.waypoints = uniqueStrings((route.waypoints || []).map(to), 32, 120);
+          }
+        }
+      }
       applied.push({ action: 'set_base_map_ref' });
       continue;
     }
@@ -1149,7 +1173,9 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         // shadows): move every id the source answers to onto the id the target answers to.
         const sourceIds = new Set([sourceId, sourceLoc.baseRefId].filter(Boolean));
         const targetEffectiveId = effectiveLocationId(targetLoc, baseMap, spatial);
-        const moveId = id => (sourceIds.has(id) || id === targetId ? targetEffectiveId : id);
+        // The target's own stored and base ids join its effective id too, so its relations never split.
+        const targetIds = new Set([targetId, targetLoc.baseRefId].filter(Boolean));
+        const moveId = id => (sourceIds.has(id) || targetIds.has(id) ? targetEffectiveId : id);
         const rewritten = [];
         const relSeen = new Map();
         for (const rel of spatial.relations) {
@@ -1396,8 +1422,11 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
   for (const storedId of changedStoredLocationIds) {
     const afterLoc = afterCampaignById.get(storedId);
     const beforeLoc = beforeCampaignById.get(storedId);
-    const effectiveId = afterLoc ? effectiveLocationId(afterLoc, baseMap, spatial)
-      : beforeLoc ? effectiveLocationId(beforeLoc, baseMap, before) : storedId;
+    // Keyed exactly as resolveEffectiveLocations keys the place, so the index delta matches the resolved list.
+    const resolvedKey = loc => (loc.baseRefId && baseMap && Array.isArray(baseMap.locations) && baseLocationIndex(baseMap).has(loc.baseRefId)
+      ? loc.baseRefId
+      : loc.id);
+    const effectiveId = afterLoc ? resolvedKey(afterLoc) : beforeLoc ? resolvedKey(beforeLoc) : storedId;
     if (effectiveId) changedEffectiveIds.add(effectiveId);
   }
   // Only the changed places are resolved; an empty batch touches no base entry.

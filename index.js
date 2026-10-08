@@ -38,7 +38,7 @@ import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelev
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
 import { normalizeSpatialProfile, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
-import { clone, cloneState, createState, normalizeState } from './state-core.js';
+import { clone, cloneState, createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
@@ -118,7 +118,7 @@ const BASE_MAP_CACHE_LIMIT = 8;
 const CHARACTER_RENAME_CONTEXT_LIMIT = 8;
 const DELETE_OWNERSHIP_RETRY_MS = 1000;
 const STARTUP_SIDECAR_RETRY_DELAYS_MS = Object.freeze([120, 240]);
-const BOOTSTRAP_NOTICE_DELAY_MS = 2000;
+const BOOTSTRAP_NOTICE_DELAY_MS = 5000;
 const SERVER_FRESHNESS_RESUME_DEBOUNCE_MS = 150;
 let cacheTouchSequence = 0;
 
@@ -811,8 +811,6 @@ function getCachedState(chatKey = currentChatKey()) {
   return state ? clone(state) : null;
 }
 
-const HISTORY_FIELDS = ['lineage', 'rollbackJournal', 'checkpoints'];
-
 // History entries are frozen and shared between copies, so an unchanged entry is the same object; only an
 // entry that is not is stringified. Stringifying every checkpoint snapshot and undo patch of both states
 // took most of a second per turn at a few hundred records.
@@ -1382,7 +1380,7 @@ async function handleChatRenamed(eventData = {}) {
 
   const oldKey = buildWorldStateChatKey(kind, ownerId, oldChatId);
   const newKey = buildWorldStateChatKey(kind, ownerId, newChatId);
-  renameTargets.add(newKey);
+  renameTargets.set(newKey, (renameTargets.get(newKey) || 0) + 1);
   try {
     const migrated = await migrateWorldStateChatKey(oldKey, newKey);
     if (!migrated) {
@@ -1394,7 +1392,9 @@ async function handleChatRenamed(eventData = {}) {
     console.error('[World State Alpha] chat rename migration failed safely', error);
     notify('error', 'World State Alpha could not migrate renamed chat continuity safely.');
   } finally {
-    renameTargets.delete(newKey);
+    const pending = (renameTargets.get(newKey) || 1) - 1;
+    if (pending > 0) renameTargets.set(newKey, pending);
+    else renameTargets.delete(newKey);
   }
 }
 
@@ -1965,7 +1965,8 @@ function scheduleServerFreshnessRefresh(reason = 'resume') {
 
 // SillyTavern reloads a renamed chat (and activation finds no sidecar under the new name) before it
 // announces the rename. The warning waits a moment, and a rename that has started for this chat cancels it.
-const renameTargets = new Set();
+// Every later boundary (send, capture, panel) still warns at once, so the delay costs nothing in play.
+const renameTargets = new Map();
 function scheduleBootstrapNotice(chatKey) {
   if (!globalThis.setTimeout) return notifyBootstrapRequiredOnce(chatKey);
   setTimeout(() => {
@@ -2403,21 +2404,29 @@ async function handleAssistantMessage(messageId) {
   // Until capture itself starts, a thrown step (a failed server read, a failed branch restore) would drop
   // the reply with only a console message; it is recorded as a missed capture instead.
   let captureStarted = false;
+  const startFingerprint = storyFingerprintOf(message);
   await queueChatWork(chatKey, async () => {
     try {
       await captureAssistantBoundary(chatKey, messageId, () => { captureStarted = true; });
     } catch (error) {
-      if (!captureStarted) recordCaptureStartFailure(chatKey, messageId, error);
+      if (!captureStarted) recordCaptureStartFailure(chatKey, messageId, startFingerprint, error);
       throw error;
     }
   });
 }
 
-function recordCaptureStartFailure(chatKey, messageId, error) {
+// A message's story version (hiding aside), as capture compares it.
+function storyFingerprintOf(message) {
+  return fingerprintMessage({ ...message, is_system: false });
+}
+
+function recordCaptureStartFailure(chatKey, messageId, startFingerprint, error) {
   const settings = getWorldStateSettings();
   if (currentChatKey() !== chatKey || !settings.enabled || !settings.autoCapture) return;
   const chat = getContext().chat || [];
   if (messageId >= chat.length || messageRole(chat[messageId]) !== 'assistant') return;
+  // Swiped or edited while the capture waited: that version is gone, and the new one is captured on its own.
+  if (storyFingerprintOf(chat[messageId]) !== startFingerprint) return;
   const prefix = chat.slice(0, messageId + 1);
   diagnosticStore.record(chatKey, {
     operationId: 'capture:' + messageId + ':not-started:' + Date.now(),
@@ -2432,226 +2441,224 @@ function recordCaptureStartFailure(chatKey, messageId, error) {
 }
 
 async function captureAssistantBoundary(chatKey, messageId, markStarted) {
-  {
-    await ensureChatStateLoaded(chatKey);
-    if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
-    await refreshChatStateFromServer(chatKey, { reason: 'assistant-boundary' });
-    if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
-    if (bootstrapRequiredChats.has(chatKey)) {
-      notifyBootstrapRequiredOnce(chatKey);
-      clearPrivatePrompt();
-      refreshPanel();
-      return;
-    }
-    const liveSettings = getWorldStateSettings();
-    if (!liveSettings.enabled || !liveSettings.autoCapture) return;
-    const branch = extendCurrentBranchFast(chatKey)
-      || await reconcileCurrentBranch(chatKey, { persistRestore: true });
-    if (branch?.failClosed) {
-      updatePrivateInjection();
-      refreshPanel();
-      return;
-    }
-
-    const liveChat = getContext().chat || [];
-    if (messageId >= liveChat.length || messageRole(liveChat[messageId]) !== 'assistant') return;
-    const currentState = stateCache.get(chatKey);
-    // Match rebuild's exact assistant-boundary semantics. A rolling window
-    // includes the previous assistant turn and can bias capture toward stale
-    // already-seen material instead of the newly completed exchange.
-    const exchange = assistantBoundaryExchange(liveChat, messageId, currentState?.lineage);
-    const sourceLineageKey = currentState?.lineage?.[messageId]?.lineageKey || '';
-    if (!sourceLineageKey) return;
-    // The hide-insensitive key is hashed only for rows that can list or clear a
-    // missed capture, from the messages as they were when this capture began
-    // (a chat switch replaces the live chat's contents).
-    const captureMessages = liveChat.slice(0, messageId + 1);
-    // Fingerprints at capture start: an in-place edit since then yields no key rather than a newer chat's.
-    const captureLineage = (currentState?.lineage || []).slice(0, messageId + 1);
-    const captureOperationId = 'capture:' + messageId + ':' + epoch(chatKey) + ':' + (captureAttemptSeq += 1);
-    const storyFingerprint = message => fingerprintMessage({ ...message, is_system: false });
-    const sourceStoryFingerprint = storyFingerprint(liveChat[messageId]);
-    let captureContentKey = null;
-    const sourceContentLineageKey = outcome => {
-      const settled = outcome === 'applied' || outcome === 'no-change';
-      // Until the saved log has loaded, a failure it holds is unknown, so a success still carries its key.
-      if (settled && operationLogsHydrated.has(chatKey) && !unrecoveredCaptureFailures(diagnosticStore.recoveryRows(chatKey))
-        .some(failure => failure.messageId === messageId)) return '';
-      if (captureContentKey === null) captureContentKey = contentLineageKey(captureMessages, messageId, captureLineage);
-      return captureContentKey;
-    };
-
-    const before = stateCache.get(chatKey);
-    const index = getRelevanceIndex(chatKey, before);
-    const captureText = recentText(normalizeCaptureExchange(exchange));
-    const currentExchangeIds = new Set(exchange.map(row => row?.messageId).filter(Number.isInteger));
-    const lifecycleContext = recentText(normalizeCaptureExchange(
-      boundedExchange(
-        liveChat,
-        messageId,
-        CAPTURE_LIMITS.lifecycleContextMessages,
-        currentState?.lineage,
-      ).filter(row => !currentExchangeIds.has(row?.messageId)),
-    ));
-    const lifecycleSelection = selectLifecycleCandidates(before, {
-      index,
-      currentText: captureText,
-      contextText: lifecycleContext,
-      currentMessageId: messageId,
-      maxRecords: CAPTURE_LIMITS.lifecycleVisibleRecords,
-    });
-    const lifecycleVisible = lifecycleSelection.selected.map(item => item.record);
-    const lifecycleContextRecordIds = lifecycleSelection.selected.length === 1
-      && lifecycleSelection.selected[0]?.lifecycleSource === 'scene-context'
-      ? [lifecycleSelection.selected[0].record?.id].filter(Boolean)
-      : [];
-    const activeVisible = selectRelevantRecords(before, {
-      index,
-      recentText: captureText,
-      currentMessageId: messageId,
-      maxRecords: CAPTURE_LIMITS.visibleRecords,
-    }).selected.map(item => item.record);
-    const tombstones = selectRelevantTombstones(index, {
-      recentText: captureText,
-      currentMessageId: messageId,
-      maxRecords: 2,
-      candidateCap: 32,
-    }).selected.map(item => item.record);
-
-    const visibleById = new Map();
-    for (const record of lifecycleVisible) {
-      if (record?.id && !visibleById.has(record.id)) visibleById.set(record.id, record);
-    }
-    for (const record of tombstones) {
-      if (visibleById.size >= CAPTURE_LIMITS.visibleRecords) break;
-      if (record?.id && !visibleById.has(record.id)) visibleById.set(record.id, record);
-    }
-    for (const record of activeVisible) {
-      if (visibleById.size >= CAPTURE_LIMITS.visibleRecords) break;
-      if (record?.id && !visibleById.has(record.id)) visibleById.set(record.id, record);
-    }
-    const visible = [...visibleById.values()].slice(0, CAPTURE_LIMITS.visibleRecords);
-
-    let visibleLocations = [];
-    let baseMap = null;
-    let spatialCaptureEnabled = Boolean(liveSettings.spatialEnabled);
-    if (spatialCaptureEnabled) {
-      baseMap = await getChatBaseMap(chatKey, before);
-      if (before.spatial?.baseMapRef?.id && !baseMap) {
-        spatialCaptureEnabled = false;
-      } else {
-        const spIndex = getSpatialRelevanceIndex(chatKey, before.spatial, baseMap);
-        const spRel = selectRelevantLocations(before.spatial, {
-          baseMap,
-          index: spIndex,
-          recentText: captureText,
-          maxLocations: 6,
-        });
-        visibleLocations = spRel.selected.map(item => item.location);
-      }
-    }
-
-    const isCurrent = operationGuard(chatKey, messageId);
-    markStarted();
-    const result = await runCaptureOperation({
-      ctx: getContext(),
-      state: before,
-      exchange,
-      visibleRecords: visible,
-      lifecycleContextRecordIds,
-      loreText: '',
-      chatKey,
-      sourceMessageId: messageId,
-      sourceLineageKey,
-      sourceContentLineageKey,
-      route: routeSettings(),
-      operationId: captureOperationId,
-      isCurrent,
-      diagnostics: diagnosticStore,
-      spatialEnabled: spatialCaptureEnabled,
-      visibleLocations,
-      baseMap,
-      spatialProfile: resolveSpatialProfile(before.spatial, baseMap),
-    });
-
-    // The capture row above is written before the sidecar save; if the result is dropped or that save
-    // fails, record the boundary as a failure so the Operations log never shows a lost capture as recovered.
-    const recordUnsaved = (code, detail) => diagnosticStore.record(chatKey, {
-      operationId: 'capture:' + messageId + ':unsaved:' + Date.now(),
-      label: 'capture',
-      sourceMessageId: messageId,
-      lineageKey: sourceLineageKey,
-      contentLineageKey: sourceContentLineageKey('not-saved'),
-      outcome: 'not-saved',
-      code,
-      detail,
-    });
-    // A capture whose own message was swiped, edited or deleted (hiding aside) has nothing to recover:
-    // that version is gone and the new one is captured on its own, so settle its row instead.
-    const messageSuperseded = () => {
-      if (currentChatKey() !== chatKey) return false;
-      const live = (getContext().chat || [])[messageId];
-      return !live || storyFingerprint(live) !== sourceStoryFingerprint;
-    };
-    const recordSuperseded = () => diagnosticStore.record(chatKey, {
-      // The attempt's own id: it settles this attempt only.
-      operationId: captureOperationId,
-      label: 'capture',
-      sourceMessageId: messageId,
-      lineageKey: sourceLineageKey,
-      outcome: 'superseded',
-      code: 'WORLD_STATE_CAPTURE_SUPERSEDED',
-      detail: 'The message changed before its capture finished; nothing to recover for that version.',
-    });
-    const recordAbandoned = detail => (messageSuperseded()
-      ? recordSuperseded()
-      : recordUnsaved('WORLD_STATE_CAPTURE_STALE', detail));
-    if (result.outcome === 'skipped') return;
-    if (result.outcome !== 'applied' && result.outcome !== 'no-change' && messageSuperseded()) {
-      recordSuperseded();
-      return;
-    }
-    if (result.outcome === 'stale') return;
-    if (!isCurrent()) {
-      if (result.outcome === 'applied') recordAbandoned('Capture was discarded because the chat changed before it was saved.');
-      return;
-    }
-    const committed = commitMutationBoundary(before, result.state, liveChat, messageId, 'capture', { lineage: before.lineage });
-    let persisted;
-    try {
-      persisted = await persistGuardedMutation({
-        chatKey,
-        candidateState: committed,
-        recoveryState: before,
-        isCurrent,
-        label: 'capture',
-        sourceMessageId: messageId,
-      });
-    } catch (error) {
-      recordUnsaved(error?.code || 'WORLD_STATE_CAPTURE_PERSIST_FAILURE', 'Capture could not be saved: ' + String(error?.message || error).slice(0, 240));
-      throw error;
-    }
-    if (persisted.conflict) {
-      recordUnsaved('WORLD_STATE_REVISION_CONFLICT', 'Capture was discarded because another session saved newer World State first.');
-    } else if (persisted.stale) {
-      // Not written, or written and then compensated back to the prior state.
-      recordAbandoned('Capture was discarded because the chat changed while it was being saved.');
-    }
-    // Capture never changes the shared index before this point, and a conflict already re-hydrated it.
-    if (persisted.stale) return;
-    setCachedState(chatKey, committed, {
-      indexMode: 'delta',
-      indexDelta: result.indexDelta,
-      spatialIndexDelta: result.spatial?.indexDelta,
-    });
-    // The host may still normalize the just-received assistant message after
-    // this background capture finishes. Remember only this latest captured
-    // boundary so an unannounced presentation-only rewrite can rebase lineage
-    // metadata instead of being mistaken for a branch rollback.
-    passiveCaptureRebaseCandidates.set(chatKey, messageId);
+  await ensureChatStateLoaded(chatKey);
+  if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+  await refreshChatStateFromServer(chatKey, { reason: 'assistant-boundary' });
+  if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
+  if (bootstrapRequiredChats.has(chatKey)) {
+    notifyBootstrapRequiredOnce(chatKey);
+    clearPrivatePrompt();
+    refreshPanel();
+    return;
+  }
+  const liveSettings = getWorldStateSettings();
+  if (!liveSettings.enabled || !liveSettings.autoCapture) return;
+  const branch = extendCurrentBranchFast(chatKey)
+    || await reconcileCurrentBranch(chatKey, { persistRestore: true });
+  if (branch?.failClosed) {
     updatePrivateInjection();
     refreshPanel();
+    return;
   }
+
+  const liveChat = getContext().chat || [];
+  if (messageId >= liveChat.length || messageRole(liveChat[messageId]) !== 'assistant') return;
+  const currentState = stateCache.get(chatKey);
+  // Match rebuild's exact assistant-boundary semantics. A rolling window
+  // includes the previous assistant turn and can bias capture toward stale
+  // already-seen material instead of the newly completed exchange.
+  const exchange = assistantBoundaryExchange(liveChat, messageId, currentState?.lineage);
+  const sourceLineageKey = currentState?.lineage?.[messageId]?.lineageKey || '';
+  if (!sourceLineageKey) return;
+  // The hide-insensitive key is hashed only for rows that can list or clear a
+  // missed capture, from the messages as they were when this capture began
+  // (a chat switch replaces the live chat's contents).
+  const captureMessages = liveChat.slice(0, messageId + 1);
+  // Fingerprints at capture start: an in-place edit since then yields no key rather than a newer chat's.
+  const captureLineage = (currentState?.lineage || []).slice(0, messageId + 1);
+  const captureOperationId = 'capture:' + messageId + ':' + epoch(chatKey) + ':' + (captureAttemptSeq += 1);
+  const storyFingerprint = storyFingerprintOf;
+  const sourceStoryFingerprint = storyFingerprint(liveChat[messageId]);
+  let captureContentKey = null;
+  const sourceContentLineageKey = outcome => {
+    const settled = outcome === 'applied' || outcome === 'no-change';
+    // Until the saved log has loaded, a failure it holds is unknown, so a success still carries its key.
+    if (settled && operationLogsHydrated.has(chatKey) && !unrecoveredCaptureFailures(diagnosticStore.recoveryRows(chatKey))
+      .some(failure => failure.messageId === messageId)) return '';
+    if (captureContentKey === null) captureContentKey = contentLineageKey(captureMessages, messageId, captureLineage);
+    return captureContentKey;
+  };
+
+  const before = stateCache.get(chatKey);
+  const index = getRelevanceIndex(chatKey, before);
+  const captureText = recentText(normalizeCaptureExchange(exchange));
+  const currentExchangeIds = new Set(exchange.map(row => row?.messageId).filter(Number.isInteger));
+  const lifecycleContext = recentText(normalizeCaptureExchange(
+    boundedExchange(
+      liveChat,
+      messageId,
+      CAPTURE_LIMITS.lifecycleContextMessages,
+      currentState?.lineage,
+    ).filter(row => !currentExchangeIds.has(row?.messageId)),
+  ));
+  const lifecycleSelection = selectLifecycleCandidates(before, {
+    index,
+    currentText: captureText,
+    contextText: lifecycleContext,
+    currentMessageId: messageId,
+    maxRecords: CAPTURE_LIMITS.lifecycleVisibleRecords,
+  });
+  const lifecycleVisible = lifecycleSelection.selected.map(item => item.record);
+  const lifecycleContextRecordIds = lifecycleSelection.selected.length === 1
+    && lifecycleSelection.selected[0]?.lifecycleSource === 'scene-context'
+    ? [lifecycleSelection.selected[0].record?.id].filter(Boolean)
+    : [];
+  const activeVisible = selectRelevantRecords(before, {
+    index,
+    recentText: captureText,
+    currentMessageId: messageId,
+    maxRecords: CAPTURE_LIMITS.visibleRecords,
+  }).selected.map(item => item.record);
+  const tombstones = selectRelevantTombstones(index, {
+    recentText: captureText,
+    currentMessageId: messageId,
+    maxRecords: 2,
+    candidateCap: 32,
+  }).selected.map(item => item.record);
+
+  const visibleById = new Map();
+  for (const record of lifecycleVisible) {
+    if (record?.id && !visibleById.has(record.id)) visibleById.set(record.id, record);
+  }
+  for (const record of tombstones) {
+    if (visibleById.size >= CAPTURE_LIMITS.visibleRecords) break;
+    if (record?.id && !visibleById.has(record.id)) visibleById.set(record.id, record);
+  }
+  for (const record of activeVisible) {
+    if (visibleById.size >= CAPTURE_LIMITS.visibleRecords) break;
+    if (record?.id && !visibleById.has(record.id)) visibleById.set(record.id, record);
+  }
+  const visible = [...visibleById.values()].slice(0, CAPTURE_LIMITS.visibleRecords);
+
+  let visibleLocations = [];
+  let baseMap = null;
+  let spatialCaptureEnabled = Boolean(liveSettings.spatialEnabled);
+  if (spatialCaptureEnabled) {
+    baseMap = await getChatBaseMap(chatKey, before);
+    if (before.spatial?.baseMapRef?.id && !baseMap) {
+      spatialCaptureEnabled = false;
+    } else {
+      const spIndex = getSpatialRelevanceIndex(chatKey, before.spatial, baseMap);
+      const spRel = selectRelevantLocations(before.spatial, {
+        baseMap,
+        index: spIndex,
+        recentText: captureText,
+        maxLocations: 6,
+      });
+      visibleLocations = spRel.selected.map(item => item.location);
+    }
+  }
+
+  const isCurrent = operationGuard(chatKey, messageId);
+  markStarted();
+  const result = await runCaptureOperation({
+    ctx: getContext(),
+    state: before,
+    exchange,
+    visibleRecords: visible,
+    lifecycleContextRecordIds,
+    loreText: '',
+    chatKey,
+    sourceMessageId: messageId,
+    sourceLineageKey,
+    sourceContentLineageKey,
+    route: routeSettings(),
+    operationId: captureOperationId,
+    isCurrent,
+    diagnostics: diagnosticStore,
+    spatialEnabled: spatialCaptureEnabled,
+    visibleLocations,
+    baseMap,
+    spatialProfile: resolveSpatialProfile(before.spatial, baseMap),
+  });
+
+  // The capture row above is written before the sidecar save; if the result is dropped or that save
+  // fails, record the boundary as a failure so the Operations log never shows a lost capture as recovered.
+  const recordUnsaved = (code, detail) => diagnosticStore.record(chatKey, {
+    operationId: 'capture:' + messageId + ':unsaved:' + Date.now(),
+    label: 'capture',
+    sourceMessageId: messageId,
+    lineageKey: sourceLineageKey,
+    contentLineageKey: sourceContentLineageKey('not-saved'),
+    outcome: 'not-saved',
+    code,
+    detail,
+  });
+  // A capture whose own message was swiped, edited or deleted (hiding aside) has nothing to recover:
+  // that version is gone and the new one is captured on its own, so settle its row instead.
+  const messageSuperseded = () => {
+    if (currentChatKey() !== chatKey) return false;
+    const live = (getContext().chat || [])[messageId];
+    return !live || storyFingerprint(live) !== sourceStoryFingerprint;
+  };
+  const recordSuperseded = () => diagnosticStore.record(chatKey, {
+    // The attempt's own id: it settles this attempt only.
+    operationId: captureOperationId,
+    label: 'capture',
+    sourceMessageId: messageId,
+    lineageKey: sourceLineageKey,
+    outcome: 'superseded',
+    code: 'WORLD_STATE_CAPTURE_SUPERSEDED',
+    detail: 'The message changed before its capture finished; nothing to recover for that version.',
+  });
+  const recordAbandoned = detail => (messageSuperseded()
+    ? recordSuperseded()
+    : recordUnsaved('WORLD_STATE_CAPTURE_STALE', detail));
+  if (result.outcome === 'skipped') return;
+  if (result.outcome !== 'applied' && result.outcome !== 'no-change' && messageSuperseded()) {
+    recordSuperseded();
+    return;
+  }
+  if (result.outcome === 'stale') return;
+  if (!isCurrent()) {
+    if (result.outcome === 'applied') recordAbandoned('Capture was discarded because the chat changed before it was saved.');
+    return;
+  }
+  const committed = commitMutationBoundary(before, result.state, liveChat, messageId, 'capture', { lineage: before.lineage });
+  let persisted;
+  try {
+    persisted = await persistGuardedMutation({
+      chatKey,
+      candidateState: committed,
+      recoveryState: before,
+      isCurrent,
+      label: 'capture',
+      sourceMessageId: messageId,
+    });
+  } catch (error) {
+    recordUnsaved(error?.code || 'WORLD_STATE_CAPTURE_PERSIST_FAILURE', 'Capture could not be saved: ' + String(error?.message || error).slice(0, 240));
+    throw error;
+  }
+  if (persisted.conflict) {
+    recordUnsaved('WORLD_STATE_REVISION_CONFLICT', 'Capture was discarded because another session saved newer World State first.');
+  } else if (persisted.stale) {
+    // Not written, or written and then compensated back to the prior state.
+    recordAbandoned('Capture was discarded because the chat changed while it was being saved.');
+  }
+  // Capture never changes the shared index before this point, and a conflict already re-hydrated it.
+  if (persisted.stale) return;
+  setCachedState(chatKey, committed, {
+    indexMode: 'delta',
+    indexDelta: result.indexDelta,
+    spatialIndexDelta: result.spatial?.indexDelta,
+  });
+  // The host may still normalize the just-received assistant message after
+  // this background capture finishes. Remember only this latest captured
+  // boundary so an unannounced presentation-only rewrite can rebase lineage
+  // metadata instead of being mistaken for a branch rollback.
+  passiveCaptureRebaseCandidates.set(chatKey, messageId);
+  updatePrivateInjection();
+  refreshPanel();
 }
 
 async function handleUserMessage(messageId) {
@@ -2835,7 +2842,7 @@ async function handleBranchChange(reason = 'branch') {
   // the prompt carries no World State until the queued reconcile runs after the rebuild.
   if (rebuildAbortControllers.has(chatKey)) {
     updatePrivateInjection();
-    void work.catch(error => console.error('[World State Alpha] branch reconciliation failed safely (' + reason + ')', error));
+    void work;
     return;
   }
   await work;
@@ -4220,7 +4227,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     return true;
   };
 
-  const applySequence = (initialState, steps) => {
+  // `stepBaseMap` is the map the steps apply against (attaching a base map passes the new one).
+  const applySequence = (initialState, steps, stepBaseMap = baseMap) => {
     let working = initialState;
     const combined = [];
     for (const step of steps) {
@@ -4231,7 +4239,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
         messageId,
         mutation: step.mutation,
         note: step.note,
-        baseMap,
+        baseMap: stepBaseMap,
       });
       if (res.outcome !== 'applied') {
         return { outcome: 'rejected', state: initialState, rejected: res.rejected || [] };
@@ -4681,7 +4689,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
         note: 'Attached base map ' + stored.baseMap.name,
       },
     ];
-    const res = applySequence(state, steps);
+    const res = applySequence(state, steps, stored.baseMap);
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state, 'Base map attached: ' + stored.baseMap.name);
     } else {

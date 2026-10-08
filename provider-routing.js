@@ -171,9 +171,14 @@ function providerText(response) {
 // A host may reject with a string, null or a parsed JSON body; keep its text and give it a receipt.
 function providerError(cause) {
   if (cause instanceof Error && Object.isExtensible(cause)) return cause;
-  const detail = typeof cause === 'string' ? cause
-    : cause && typeof cause === 'object' ? (cause.message || cause.error?.message || JSON.stringify(cause))
-      : String(cause);
+  let detail;
+  try {
+    detail = typeof cause === 'string' ? cause
+      : cause && typeof cause === 'object' ? (cause.message || cause.error?.message || JSON.stringify(cause))
+        : String(cause);
+  } catch {
+    detail = Object.prototype.toString.call(cause);
+  }
   const error = worldStateRoutingError('Provider request failed: ' + String(detail).slice(0, 300), 'WORLD_STATE_PROVIDER_ERROR');
   error.cause = cause;
   return error;

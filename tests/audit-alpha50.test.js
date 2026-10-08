@@ -106,7 +106,7 @@ test('4: re-adding a name at the same chat head creates a new active place', () 
 });
 
 test('5: a capture that fails before it starts is recorded as a missed capture', () => {
-  assert.match(source, /try \{\s*await captureAssistantBoundary\(chatKey, messageId, \(\) => \{ captureStarted = true; \}\);\s*\} catch \(error\) \{\s*if \(!captureStarted\) recordCaptureStartFailure\(chatKey, messageId, error\);/);
+  assert.match(source, /try \{\s*await captureAssistantBoundary\(chatKey, messageId, \(\) => \{ captureStarted = true; \}\);\s*\} catch \(error\) \{\s*if \(!captureStarted\) recordCaptureStartFailure\(chatKey, messageId, startFingerprint, error\);/);
   const record = source.slice(source.indexOf('function recordCaptureStartFailure('), source.indexOf('async function captureAssistantBoundary('));
   assert.match(record, /label: 'capture',[\s\S]*outcome: 'not-started',/);
   assert.match(source, /markStarted\(\);\s*const result = await runCaptureOperation\(\{/);
@@ -153,7 +153,7 @@ test('7: a renamed chat does not warn that its continuity is missing before the 
   assert.doesNotMatch(activate, /notifyBootstrapRequiredOnce\(chatKey\);/);
   assert.match(activate, /scheduleBootstrapNotice\(chatKey\);/);
   assert.match(source, /function scheduleBootstrapNotice\(chatKey\) \{[\s\S]{0,400}renameTargets\.has\(chatKey\)/);
-  assert.match(source, /renameTargets\.add\(newKey\);/);
+  assert.match(source, /renameTargets\.set\(newKey, \(renameTargets\.get\(newKey\) \|\| 0\) \+ 1\);/);
 });
 
 test('8: the place editor closes when its place disappears instead of editing another place', async () => {
@@ -180,7 +180,7 @@ test('8: the place editor closes when its place disappears instead of editing an
 test('9: a swipe, edit or delete during a running rebuild does not wait for it', () => {
   const branch = source.slice(source.indexOf('async function handleBranchChange('), source.indexOf('const BRANCH_CAPTURE_REASONS'));
   // Before: the host's awaited branch event waited on the writer queue, behind the whole rebuild.
-  assert.match(branch, /if \(rebuildAbortControllers\.has\(chatKey\)\) \{\s*updatePrivateInjection\(\);\s*void work\.catch\(/);
+  assert.match(branch, /if \(rebuildAbortControllers\.has\(chatKey\)\) \{\s*updatePrivateInjection\(\);\s*void work;\s*return;/);
   assert.match(branch, /const work = queueChatWork\(chatKey, async \(\) => \{/);
 });
 
@@ -218,4 +218,43 @@ test('16: a provider rejection that is not an Error keeps its message and receip
     await assert.rejects(dispatchWorldStateRequest(ctx, { prompt: 'x' }), error => error instanceof Error
       && error.receipt?.outcome === 'failure' && error.message.includes(String(thrown)));
   }
+});
+
+test('review hardening: base-map changes re-key override endpoints; a merge target never splits its relations', () => {
+  const place = (id, name, extra = {}) => ({ id, name, status: 'active', coordinate: { x: null, y: null, authority: 'unknown', locked: false }, ...extra });
+  const attached = () => normalizeSpatialState({
+    baseMapRef: { id: 'map1', name: 'Map' },
+    locations: [place('o1', 'Brackenford', { baseRefId: 'b1' }), place('p', 'Pine')],
+    relations: [{ id: 'r1', fromId: 'b1', toId: 'p', direction: 'north', distanceKm: null }],
+    routes: [{ id: 'rt', name: 'Kings Road', endpoints: ['b1', 'p'], waypoints: [] }],
+  });
+  const base = { id: 'map1', locations: [{ id: 'b1', name: 'Brackenford', coordinate: { x: 0, y: 0 } }] };
+  const batch = mutations => ({ chatKey: 'c', messageId: 4, lineageKey: 'L4', operation: 'manual', mutations });
+  // Detaching: the override is its own place now, so its relations and routes follow it.
+  const detached = reduceSpatialMutations(attached(), batch([{ action: 'set_base_map_ref', baseMapRef: null }]), base, { allowBaseScan: true });
+  assert.deepEqual([detached.spatial.relations[0].fromId, detached.spatial.relations[0].toId], ['o1', 'p']);
+  assert.deepEqual(detached.spatial.routes[0].endpoints, ['o1', 'p']);
+  // Attaching it again: back to the base id it shadows.
+  const again = reduceSpatialMutations(detached.spatial, batch([{ action: 'set_base_map_ref', baseMapRef: { id: 'map1', name: 'Map' } }]), base, { allowBaseScan: true });
+  assert.equal(again.spatial.relations[0].fromId, 'b1');
+  // An attach without the map at hand changes nothing.
+  const blind = reduceSpatialMutations(detached.spatial, batch([{ action: 'set_base_map_ref', baseMapRef: { id: 'map1', name: 'Map' } }]), null, { allowBaseScan: true });
+  assert.equal(blind.spatial.relations[0].fromId, 'o1');
+  // Merging into a former override whose own relation still uses the old base id keeps them together.
+  const stale = normalizeSpatialState({ baseMapRef: null, locations: [place('o1', 'Brackenford', { baseRefId: 'b1' }), place('c1', 'Brackenford Town'), place('p', 'Pine'), place('q', 'Quarry')],
+    relations: [{ id: 'r1', fromId: 'b1', toId: 'p', direction: 'north', distanceKm: null }, { id: 'r2', fromId: 'c1', toId: 'q', direction: 'east', distanceKm: null }] });
+  const merged = reduceSpatialMutations(stale, batch([{ action: 'merge_locations', sourceId: 'c1', targetId: 'o1' }]), null, { allowBaseScan: true });
+  assert.deepEqual(merged.spatial.relations.map(rel => rel.fromId).sort(), ['o1', 'o1']);
+  // The host passes the new map when attaching one.
+  assert.match(source, /const res = applySequence\(state, steps, stored\.baseMap\);/);
+});
+
+test('review hardening: a start failure is not recorded for a version swiped away meanwhile; a circular rejection keeps its receipt', async () => {
+  const record = source.slice(source.indexOf('function recordCaptureStartFailure('), source.indexOf('async function captureAssistantBoundary('));
+  assert.match(record, /if \(storyFingerprintOf\(chat\[messageId\]\) !== startFingerprint\) return;/);
+  const { dispatchWorldStateRequest } = await import('../provider-routing.js');
+  const circular = { code: 0 };
+  circular.self = circular;
+  await assert.rejects(dispatchWorldStateRequest({ generateRaw: async () => { throw circular; }, extensionSettings: {} }, { prompt: 'x' }),
+    error => error.receipt?.outcome === 'failure' && /Provider request failed/.test(error.message));
 });
