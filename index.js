@@ -4347,8 +4347,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       decimalStep: 0.1,
       trueNorthLocked: true,
     }, { strict: true });
-    await applyManualProfile(reset, 'Reset manual Coordinate Profile');
-    return;
+    // true only once the reset is saved: a declined or failed reset keeps the operator's typed values.
+    return await applyManualProfile(reset, 'Reset manual Coordinate Profile');
   }
 
   if (actionId === 'add_location_modal') {
