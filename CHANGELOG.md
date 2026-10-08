@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.9.0-alpha.54 - Performance and cleanups (deep pass on alpha.49)
+
+Each change has a regression test that fails on 0.9.0-alpha.53. Costs are tested as counts (copies, reads, model builds), never as timings.
+
+### Performance
+
+Measured at 400 records, a 600-message chat and 2,000 places, before → after:
+
+| Path | alpha.53 | alpha.54 |
+|---|---|---|
+| Reality reducer (one capture) | 88 ms | 5 ms |
+| Capture response processing | 111 ms | 7 ms |
+| Commit boundary | 121 ms | 80 ms |
+| Manual edit | 311 ms | 131 ms |
+| Places capture with no proposals | 722 ms | 0.1 ms |
+| Places reducer, empty batch | 435 ms | 26 ms |
+
+- **Records:** the reducer copied the state twice and built an undo patch nobody read. Normalizing is already a private copy, and the journal's undo patch is built only when the change is committed. The canonical-domain view and the commit no longer copy twice either.
+- **Places:** the reducer copied the whole Places state twice and built an unused undo patch, and a capture ran it twice even with nothing to apply. A capture without Places proposals now copies nothing.
+- **Capture, manual edits and rebuild:**
+  - capture no longer adds another full copy after the reducer;
+  - a manual edit fingerprints the chat once instead of twice;
+  - the end of a rebuild checks its range once instead of up to four times (the fourth check could never fail and is gone);
+  - a panel click reuses the model already on screen instead of building it again.
+
+### Cleanups
+
+- One text canonicalizer (in `hash.js`) replaces seven identical copies across modules.
+- One opposite-direction table is shared by the Places core and the panel.
+- The rebuild's resume entry is looked up once.
+- Removed:
+  - two routing branches that did the same thing;
+  - an unreachable elapsed-time branch;
+  - the second pass of the record search.
+
+### Architecture
+
+- Core contract C23.1 records the copy, fingerprint and range-check bounds. No behaviour or durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha54.test.js`. Three source checks were updated for the renamed resume variable and the single exact check. The Phase 8 validator now builds its undo patch at the commit boundary, like the runtime.
+
 ## 0.9.0-alpha.53 - UI and relevance (deep pass on alpha.49)
 
 Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.52.

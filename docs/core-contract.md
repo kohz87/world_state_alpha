@@ -481,6 +481,8 @@ On an append-only ordinary turn:
 
 Whole-chat lineage reconciliation remains authorized for hydration/recovery, edit/delete/swipe, rebuild, and other explicit operations requiring whole-history proof.
 
+A canonical mutation copies the state once: normalization is the reducer's private copy (only the frozen history entries are shared), the journal's undo patch is built only at the commit boundary, the canonical-domain projection is not copied again, and a Places pass with nothing to apply is skipped (a capture with no Places proposals copies no Places state). A manual edit reuses the lineage its boundary check computed for the commit. A rebuild takes one exact range check when it returns, and again after its save. Panel clicks read the model of the last render; the host re-validates every action against canonical state.
+
 ### C23.2 Indexed relevance bound
 
 The Phase 8 index is ephemeral and non-canonical. It must not be serialized or treated as source authority.
