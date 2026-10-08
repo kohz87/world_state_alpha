@@ -108,6 +108,23 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     return (byChat.get(clean(chatKey, 500)) || []).map(recoveryView);
   }
 
+  // Rows keyed to message versions a host rewrite renamed (a character rename rewrites message names) move to
+  // the new keys, so a missed capture stays listed and clearable. Returns how many rows changed.
+  function relink(chatKey, keyMap) {
+    const rows = byChat.get(clean(chatKey, 500));
+    if (!rows || !(keyMap instanceof Map) || !keyMap.size) return 0;
+    let changed = 0;
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const lineageKey = row.lineageKey && keyMap.get(row.lineageKey);
+      const contentKey = row.contentLineageKey && keyMap.get(row.contentLineageKey);
+      if (!lineageKey && !contentKey) continue;
+      rows[index] = { ...row, ...(lineageKey ? { lineageKey } : {}), ...(contentKey ? { contentLineageKey: contentKey } : {}) };
+      changed += 1;
+    }
+    return changed;
+  }
+
   function clear(chatKey) {
     const key = clean(chatKey, 500);
     const count = byChat.get(key)?.length || 0;
@@ -126,7 +143,7 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     };
   }
 
-  return Object.freeze({ record, records, allRecords, recoveryRows, merge, clear, bundle });
+  return Object.freeze({ record, records, allRecords, recoveryRows, merge, relink, clear, bundle });
 }
 
 // A rebuild operation id is `rebuild:<sourceMessageId>:<epoch>:<startMessageId>[:resume-…]`.

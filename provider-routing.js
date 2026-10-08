@@ -119,6 +119,23 @@ export function worldStateRouteFingerprint(ctx, route = {}) {
   };
 }
 
+// The host connection a request goes to (API, source or type, model), or null when the model cannot be read.
+// A run pinned to it (a rebuild) fails closed when the operator switches model mid-run, like a changed profile.
+export function worldStateHostRouteKey(ctx) {
+  const chatCompletion = ctx?.mainApi === 'openai';
+  let model = null;
+  try {
+    model = chatCompletion
+      ? (typeof ctx?.getChatCompletionModel === 'function' ? ctx.getChatCompletionModel() : null)
+      : ctx?.onlineStatus;
+  } catch {
+    model = null;
+  }
+  if (typeof model !== 'string' || !model) return null;
+  const source = chatCompletion ? ctx?.chatCompletionSettings?.chat_completion_source ?? null : ctx?.textCompletionSettings?.type ?? null;
+  return JSON.stringify([ctx?.mainApi ?? null, source, model]);
+}
+
 function profileSignature(profile) {
   const canonical = value => Array.isArray(value)
     ? value.map(canonical)
@@ -169,17 +186,19 @@ function providerText(response) {
 }
 
 // A host may reject with a string, null or a parsed JSON body; keep its text and give it a receipt.
+function causeDetail(cause) {
+  try {
+    return String(typeof cause === 'string' ? cause
+      : cause && typeof cause === 'object' ? (cause.message || cause.error?.message || JSON.stringify(cause))
+        : String(cause)).slice(0, 300);
+  } catch {
+    return Object.prototype.toString.call(cause);
+  }
+}
+
 function providerError(cause) {
   if (cause instanceof Error && Object.isExtensible(cause)) return cause;
-  let detail;
-  try {
-    detail = typeof cause === 'string' ? cause
-      : cause && typeof cause === 'object' ? (cause.message || cause.error?.message || JSON.stringify(cause))
-        : String(cause);
-  } catch {
-    detail = Object.prototype.toString.call(cause);
-  }
-  const error = worldStateRoutingError('Provider request failed: ' + String(detail).slice(0, 300), 'WORLD_STATE_PROVIDER_ERROR');
+  const error = worldStateRoutingError('Provider request failed: ' + causeDetail(cause), 'WORLD_STATE_PROVIDER_ERROR');
   error.cause = cause;
   return error;
 }
@@ -247,6 +266,14 @@ export async function dispatchWorldStateRequest(ctx, options = {}, scope = {}) {
       }
       // (routedOptions is options itself when no output cap is configured.)
       invoke = () => ctx.generateRaw(routedOptions);
+      if (route.hostKey) {
+        verifyProfile = () => {
+          if (worldStateHostRouteKey(ctx) !== route.hostKey) {
+            throw worldStateRoutingError('The connection or model changed during the operation.', 'WORLD_STATE_PROFILE_CHANGED');
+          }
+        };
+        verifyProfile();
+      }
     } else {
       const service = await Promise.race([profileService(ctx), stopped]);
       assertCurrent();
@@ -313,7 +340,7 @@ export async function dispatchWorldStateRequest(ctx, options = {}, scope = {}) {
       : cause?.name === 'AbortError'
         ? stoppedError(false)
         : profileId
-          ? worldStateRoutingError('Connection Profile request failed; no fallback was used.', 'WORLD_STATE_PROFILE_REQUEST_FAILED')
+          ? Object.assign(worldStateRoutingError('Connection Profile request failed; no fallback was used: ' + causeDetail(cause), 'WORLD_STATE_PROFILE_REQUEST_FAILED'), { cause })
           : providerError(cause));
     const code = String(error?.code || 'PROVIDER_ERROR');
     error.receipt = receipt(

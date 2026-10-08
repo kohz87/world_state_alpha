@@ -1,13 +1,15 @@
 // Sentences (or lines) of a text bind a coordinate to the place it describes (shared with the firewall).
-import { captureExchangeIndex, containsOnWordBoundaries, evidenceClaimGrounded, evidenceClaimQuotedOnly, sentencesOf } from './source-firewall.js';
+import { captureExchangeIndex, containsOnWordBoundaries, evidenceClaimGrounded, evidenceClaimQuotedOnly, quotedDialogueRanges, sentencesOf } from './source-firewall.js';
 import {
   baseLocationByName,
+  baseRouteByName,
   canonicalSpatialDirection,
   deriveCoordinate,
   directionFromDelta,
   effectiveLocationId,
   normalizeCoordinate,
   normalizeSpatialState,
+  placeNameKey,
   reduceSpatialMutations,
   resolveEffectiveLocations,
   resolveSpatialProfile,
@@ -68,6 +70,18 @@ function locationNameGrounded(name, evidence, exchangeById) {
     }
   }
   return false;
+}
+
+// The active place a merged-away duplicate named `name` ended up in (following chained merges), or null.
+function mergeTargetByName(spatial, name) {
+  const key = placeNameKey(name);
+  const locations = Array.isArray(spatial?.locations) ? spatial.locations : [];
+  if (!key || locations.some(loc => loc.status === 'active' && placeNameKey(loc.name) === key)) return null;
+  let current = locations.find(loc => loc.status === 'archived' && loc.mergedInto && placeNameKey(loc.name) === key);
+  for (let hops = 0; current && current.status !== 'active' && hops < 8; hops += 1) {
+    current = current.mergedInto ? locations.find(loc => loc.id === current.mergedInto) : null;
+  }
+  return current?.status === 'active' ? current : null;
 }
 
 function groundEvidence(items, exchangeById, evidenceSourceClass = '') {
@@ -146,12 +160,15 @@ function narratedCoordinateFor(coord, evidence, exchangeById, decimalStep = 0.1,
     const source = exchangeById.get(item.sourceMessageId);
     if (!source) continue;
     if (evidenceClaimQuotedOnly(item.claim, source.text)) continue;
-    // Narration only: a pair spoken in dialogue is hearsay wherever the cited claim sits.
+    // Narration only: a pair spoken in dialogue is hearsay wherever the cited claim sits. Only a cited
+    // sentence counts: one the claim lies in, or one inside a claim that spans several.
     const sentences = sentencesOf(withoutSpokenDialogue(source.text));
     sentences.forEach((sentence, at) => {
-      if (name && !sentenceNamesPlace(sentence, name)
-        // "The Old Mill stands by the river. It sits at [12, 4]."
-        && !(at > 0 && REFERS_BACK.test(sentence) && sentenceNamesPlace(sentences[at - 1], name))) return;
+      // "The Old Mill stands by the river. It sits at [12, 4]." refers straight back to a cited sentence naming it.
+      const refersBack = at > 0 && REFERS_BACK.test(sentence) && sentenceCited(sentences[at - 1], item.claim)
+        && (!name || sentenceNamesPlace(sentences[at - 1], name));
+      if (!refersBack && !sentenceCited(sentence, item.claim)) return;
+      if (name && !refersBack && !sentenceNamesPlace(sentence, name)) return;
       matches(sentence);
     });
   }
@@ -160,12 +177,32 @@ function narratedCoordinateFor(coord, evidence, exchangeById, decimalStep = 0.1,
   return found.reduce((best, item) => (distance(item) < distance(best) ? item : best));
 }
 
-// Quoted dialogue (a quoted span with more than one word); a quoted axis label such as "X": 12 is kept.
+// Quoted dialogue (a quoted span with more than one word) is blanked out; a quoted axis label such as "X": 12
+// is kept. Spans are paired like the firewall's: across wrapped lines, in every quote style („…“ included).
 function withoutSpokenDialogue(text) {
-  const spoken = span => (/\s/u.test(span.slice(1, -1).trim()) ? ' ' : span);
-  return String(text || '')
-    .replace(/"[^"\n]*"/gu, spoken)
-    .replace(/“[^”\n]*”/gu, spoken);
+  const source = String(text || '');
+  let out = '';
+  let at = 0;
+  for (const [from, to] of quotedDialogueRanges(source).sort((a, b) => a[0] - b[0])) {
+    if (from < at || !/\s/u.test(source.slice(from, to).trim())) continue;
+    out += source.slice(at, from) + source.slice(from, to).replace(/[^\n]/gu, ' ');
+    at = to;
+  }
+  return out + source.slice(at);
+}
+
+// A sentence is cited by a claim when the claim lies in it, it lies in the claim (a claim spanning several
+// sentences), or they share a run of three words (a claim cut short, or a sentence with dialogue blanked out).
+function sentenceCited(sentence, claim) {
+  const text = norm(sentence);
+  const cited = norm(claim);
+  if (!text || !cited) return false;
+  if (containsOnWordBoundaries(text, cited) || containsOnWordBoundaries(cited, text)) return true;
+  const words = cited.split(' ');
+  for (let index = 0; index + 3 <= words.length; index += 1) {
+    if (containsOnWordBoundaries(text, words.slice(index, index + 3).join(' '))) return true;
+  }
+  return false;
 }
 
 const REFERS_BACK = /^\s*it\s+(?:sits|stands|lies|rests|is located|is found|is set|is situated)\b/iu;
@@ -190,10 +227,10 @@ function placeEvidenceHypothetical(evidence, exchangeById) {
 }
 
 const DIRECTION_TEXT_FORMS = Object.freeze({
-  north: ['north'],
-  south: ['south'],
-  east: ['east'],
-  west: ['west'],
+  north: ['north', 'northward', 'northwards'],
+  south: ['south', 'southward', 'southwards'],
+  east: ['east', 'eastward', 'eastwards'],
+  west: ['west', 'westward', 'westwards'],
   northeast: ['northeast', 'north east'],
   northwest: ['northwest', 'north west'],
   southeast: ['southeast', 'south east'],
@@ -202,48 +239,61 @@ const DIRECTION_TEXT_FORMS = Object.freeze({
 
 const canonicalDirection = canonicalSpatialDirection;
 
-function evidenceSourceTexts(evidence, exchangeById) {
-  const out = [];
-  const seen = new Set();
+// The sentences that state a relation: cited by its evidence, outside dialogue, and naming one of its places
+// (or "It lies ..." right after a sentence that does). Direction and distance are read only there, never
+// anywhere in the message ("the north wind" in another sentence grounds nothing).
+function relationSentences(evidence, exchangeById, names = []) {
+  const out = new Set();
   for (const item of evidence || []) {
     const source = exchangeById.get(item.sourceMessageId);
-    if (!source?.text || seen.has(item.sourceMessageId)) continue;
-    seen.add(item.sourceMessageId);
-    out.push(source.text);
+    if (!source?.text) continue;
+    const sentences = sentencesOf(withoutSpokenDialogue(source.text));
+    sentences.forEach((sentence, at) => {
+      if (!sentenceCited(sentence, item.claim)) return;
+      const named = sentence => names.some(name => name && sentenceNamesPlace(sentence, name));
+      if (!named(sentence) && !(at > 0 && /^\s*it\b/iu.test(sentence) && named(sentences[at - 1]))) return;
+      out.add(sentence);
+    });
   }
-  return out;
+  return [...out];
 }
 
-function directionGroundedInNarration(direction, evidence, exchangeById) {
-  const canonical = canonicalDirection(direction);
-  const forms = DIRECTION_TEXT_FORMS[canonical] || [];
-  if (!forms.length) return false;
-  for (const text of evidenceSourceTexts(evidence, exchangeById)) {
-    const normalized = norm(text);
-    if (forms.some(form => ` ${normalized} `.includes(` ${form} `))) return true;
+// A compass word states a direction only where it is used as one: "north of", "lies north", "due north",
+// "12 km north", "northward"; "the north wind" or "the north gate" names something else.
+const DIRECTION_FOLLOWERS = new Set(['of', 'from', 'by', 'along', 'across', 'beyond', 'past', 'and', 'or', 'then', 'at',
+  'as', 'toward', 'towards', 'into', 'to', 'over', 'through', 'on', 'in', 'for', 'about', 'some']);
+function directionStated(sentence, form) {
+  const words = norm(sentence).split(' ');
+  const formWords = form.split(' ');
+  for (let index = 0; index + formWords.length <= words.length; index += 1) {
+    if (formWords.some((word, offset) => words[index + offset] !== word)) continue;
+    const next = words[index + formWords.length];
+    if (/wards?$/u.test(form) || next === undefined || DIRECTION_FOLLOWERS.has(next) || /^\d/u.test(next)) return true;
   }
   return false;
 }
 
-function distanceGroundedInNarration(distanceKm, evidence, exchangeById) {
-  if (!Number.isFinite(distanceKm) || distanceKm < 0) return false;
-  const tolerance = Math.max(0.01, Math.abs(distanceKm) * 1e-6);
-  for (const text of evidenceSourceTexts(evidence, exchangeById)) {
-    const matches = text.matchAll(/(-?\d+(?:\.\d+)?)\s*(?:km\b|kilomet(?:er|re)s?\b)/gi);
-    for (const match of matches) {
-      if (Math.abs(Number(match[1]) - distanceKm) <= tolerance) return true;
-    }
-  }
-  return false;
+function directionGroundedInNarration(direction, sentences) {
+  const forms = DIRECTION_TEXT_FORMS[canonicalDirection(direction)] || [];
+  return forms.length > 0 && sentences.some(sentence => forms.some(form => directionStated(sentence, form)));
+}
+
+// Narrated kilometre distances; thousands separators belong to the number ("1,200 km" is 1200, not 200).
+const DISTANCE_PATTERN = /(?<![\d.,])(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)\s*(?:km\b|kilomet(?:er|re)s?\b)/giu;
+function narratedDistances(text) {
+  return [...String(text || '').matchAll(DISTANCE_PATTERN)].map(match => Number(match[1].replace(/,/gu, '')));
+}
+
+function distanceGroundedInNarration(distanceKm, sentences) {
+  return distanceSentences(distanceKm, sentences).length > 0;
 }
 
 // The sentences that state this distance: what qualifies a distance is read there, not anywhere in the
 // message ("The winds howled. Millbrook lies 12 km north" is no route).
-function distanceSentences(distanceKm, evidence, exchangeById) {
-  if (!Number.isFinite(distanceKm)) return [];
+function distanceSentences(distanceKm, sentences) {
+  if (!Number.isFinite(distanceKm) || distanceKm < 0) return [];
   const tolerance = Math.max(0.01, Math.abs(distanceKm) * 1e-6);
-  return evidenceSourceTexts(evidence, exchangeById).flatMap(sentencesOf).filter(sentence => [...sentence.matchAll(/(-?\d+(?:\.\d+)?)\s*(?:km\b|kilomet(?:er|re)s?\b)/gi)]
-    .some(match => Math.abs(Number(match[1]) - distanceKm) <= tolerance));
+  return sentences.filter(sentence => narratedDistances(sentence).some(value => Math.abs(value - distanceKm) <= tolerance));
 }
 
 const ROUTE_TRAVEL = /\b(?:road|route|trail|path|river|sea|sail|sailing|travel|travelled|traveled|journey|along|ride|riding|rode|walk|walking|march|marching|hike|hiking|trek|trekking|voyage|winding)\b/u;
@@ -252,8 +302,8 @@ const STRAIGHT_DISTANCE = /\b(?:straight line|straightline|direct distance|as th
 // A distance is straight-line only where its sentence says so; a ride, walk or road length is route context,
 // never Cartesian displacement. The model's label decides only when the sentence carries both kinds of
 // wording, and it can never promote an unqualified distance (a 'route' label may still mark one as route).
-function distanceModeFor(proposedMode, distanceKm, evidence, exchangeById) {
-  const sentences = distanceSentences(distanceKm, evidence, exchangeById).map(norm);
+function distanceModeFor(proposedMode, distanceKm, relationText) {
+  const sentences = distanceSentences(distanceKm, relationText).map(norm);
   const route = sentences.some(sentence => ROUTE_TRAVEL.test(sentence));
   const straight = sentences.some(sentence => STRAIGHT_DISTANCE.test(sentence));
   if (straight && !route) return 'straight_line';
@@ -268,13 +318,14 @@ function groundDirectRelationProposal(proposal, from, to, evidence, exchangeById
     return { ok: false, reason: 'relation endpoint names are not grounded together in accepted narration' };
   }
 
-  const direction = proposal.direction && directionGroundedInNarration(proposal.direction, evidence, exchangeById)
+  const sentences = relationSentences(evidence, exchangeById, [from.name, to.name]);
+  const direction = proposal.direction && directionGroundedInNarration(proposal.direction, sentences)
     ? canonicalDirection(proposal.direction)
     : null;
   const distanceGrounded = Number.isFinite(proposal.distanceKm)
-    && distanceGroundedInNarration(proposal.distanceKm, evidence, exchangeById);
+    && distanceGroundedInNarration(proposal.distanceKm, sentences);
   const distanceKm = distanceGrounded ? proposal.distanceKm : null;
-  const distanceMode = distanceGrounded ? distanceModeFor(proposal.distanceMode, distanceKm, evidence, exchangeById) : 'unspecified';
+  const distanceMode = distanceGrounded ? distanceModeFor(proposal.distanceMode, distanceKm, sentences) : 'unspecified';
 
   if (!direction && distanceKm === null) {
     return { ok: false, reason: 'relation has no grounded direction or numeric distance' };
@@ -291,19 +342,20 @@ function groundDirectRelationProposal(proposal, from, to, evidence, exchangeById
   };
 }
 
-function groundRelativeProposal(relative, anchor, evidence, exchangeById) {
+function groundRelativeProposal(relative, anchor, evidence, exchangeById, placeName = '') {
   if (!relative || !anchor) return { ok: false, reason: 'relative position requires an established anchor' };
   if (!locationNameGrounded(anchor.name, evidence, exchangeById)) {
     return { ok: false, reason: 'relative anchor name is not grounded in accepted narration' };
   }
-  if (!directionGroundedInNarration(relative.direction, evidence, exchangeById)) {
+  const sentences = relationSentences(evidence, exchangeById, [anchor.name, placeName]);
+  if (!directionGroundedInNarration(relative.direction, sentences)) {
     return { ok: false, reason: 'relative direction is not grounded in accepted narration' };
   }
 
   const hasDistance = Number.isFinite(relative.distanceKm);
-  const distanceGrounded = hasDistance && distanceGroundedInNarration(relative.distanceKm, evidence, exchangeById);
+  const distanceGrounded = hasDistance && distanceGroundedInNarration(relative.distanceKm, sentences);
   const distanceKm = distanceGrounded ? relative.distanceKm : null;
-  const distanceMode = distanceGrounded ? distanceModeFor(relative.distanceMode, distanceKm, evidence, exchangeById) : 'unspecified';
+  const distanceMode = distanceGrounded ? distanceModeFor(relative.distanceMode, distanceKm, sentences) : 'unspecified';
 
   return {
     ok: true,
@@ -552,15 +604,33 @@ export function processSpatialCapture({
           continue;
         }
         const effective = base ? resolveEffectiveLocations(spatial, baseMap, { onlyIds: new Set([base.id]) })[0] : null;
-        // An archived or merged override is a place the operator retired: narration never updates it.
-        if (effective?.id && (effective.status || 'active') === 'active') {
-          visibleById.set(effective.id, effective);
-          namedBase.push(effective);
-          proposal.locationId = effective.id;
+        // A merged-away duplicate's old name is the place it was merged into (its name kept).
+        const mergedTarget = !visibleMatch && !effective ? mergeTargetByName(spatial, proposal.name) : null;
+        const known = mergedTarget || effective;
+        if (known?.id && (known.status || 'active') !== 'active' && !mergedTarget) {
+          // An archived override is a base place the operator retired: narration neither updates it nor
+          // re-creates it as a campaign place.
+          rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'the operator archived this place' });
+          continue;
+        }
+        if (known?.id) {
+          const target = mergedTarget
+            ? resolveEffectiveLocations(spatial, baseMap, { onlyIds: new Set([effectiveLocationId(mergedTarget, baseMap, spatial)]) })[0] || mergedTarget
+            : effective;
+          visibleById.set(target.id, target);
+          namedBase.push(target);
+          proposal.locationId = target.id;
+          if (mergedTarget) proposal.name = target.name;
         }
       }
 
       const targetIsUpdate = Boolean(proposal.locationId);
+
+      // Route names the place lies on are kept only when the narration names them.
+      if (Array.isArray(proposal.routeRefs)) {
+        proposal.routeRefs = proposal.routeRefs.filter(ref => locationNameGrounded(ref, proposal.evidence, exchangeById));
+        if (!proposal.routeRefs.length) delete proposal.routeRefs;
+      }
 
       // Check Coordinate Firewall
       let finalCoord = null;
@@ -612,6 +682,7 @@ export function processSpatialCapture({
             anchor,
             proposal.evidence,
             exchangeById,
+            proposal.name,
           );
           if (!checkedRelative.ok) {
             rejected.push({
@@ -692,7 +763,7 @@ export function processSpatialCapture({
 
       proposal.coordinate = finalCoord;
 
-      accepted.push(proposal);
+      accepted.push({ ...proposal, __row: rowIndex });
       continue;
     }
 
@@ -708,19 +779,9 @@ export function processSpatialCapture({
         rejected.push({ stage: 'spatial-relation-grounding', index: rowIndex, reason: groundedRelation.reason });
         continue;
       }
-      const groundedProposal = groundedRelation.proposal;
-      if (groundedProposal.direction && coordKnown(from.coordinate) && coordKnown(to.coordinate) && activeProfile?.trueNorthLocked === true) {
-        const actual = directionFromDelta(
-          to.coordinate.x - from.coordinate.x,
-          to.coordinate.y - from.coordinate.y,
-          activeProfile,
-        );
-        if (actual && !directionsCompatible(groundedProposal.direction, actual)) {
-          rejected.push({ stage: 'spatial-true-north', index: rowIndex, reason: 'relation direction conflicts with authoritative coordinate delta' });
-          continue;
-        }
-      }
-      accepted.push(groundedProposal);
+      // True North is checked by the reducer against the coordinates after this response's places are saved,
+      // so a place moved and related in the same reply is judged where it now is.
+      accepted.push({ ...groundedRelation.proposal, __row: rowIndex });
       continue;
     }
 
@@ -733,19 +794,32 @@ export function processSpatialCapture({
         rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'route name is not grounded in accepted narration' });
         continue;
       }
+      // A base-map route is read-only geography: narrating its name never replaces it with a campaign route.
+      if (!proposal.routeId && baseRouteByName(baseMap, proposal.name)
+        && !(spatial?.routes || []).some(route => placeNameKey(route.name) === placeNameKey(proposal.name))) {
+        rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'route is a read-only base-map route' });
+        continue;
+      }
       if ((proposal.endpoints || []).some(id => !visibleById.has(id))) {
         rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'route endpoints must be visible established locations' });
         continue;
       }
-      accepted.push(proposal);
+      accepted.push({ ...proposal, __row: rowIndex });
     }
   }
 
   // Create/update locations before relations so a newly created relation can resolve the generated ID.
   // A pass with nothing to apply is skipped: with no proposals at all the caller's (private) Spatial state is
   // returned as it is, rather than copied and diffed twice.
-  const locationMutations = accepted.filter(item => item.action === 'upsert_location');
-  const otherMutations = accepted.filter(item => item.action !== 'upsert_location' && !item.__deferredTargetName);
+  // The model's row of each proposal handed to the reducer, so its rejections name that row too.
+  const rows = new Map();
+  const withoutRow = item => {
+    const { __row: row, ...rest } = item;
+    if (Number.isInteger(row)) rows.set(rest, row);
+    return rest;
+  };
+  const locationMutations = accepted.filter(item => item.action === 'upsert_location').map(withoutRow);
+  const otherMutations = accepted.filter(item => item.action !== 'upsert_location' && !item.__deferredTargetName).map(withoutRow);
   const unchanged = input => ({
     spatial: input && typeof input === 'object' && Array.isArray(input.locations) ? input : normalizeSpatialState(input),
     applied: [],
@@ -771,7 +845,7 @@ export function processSpatialCapture({
 
   for (const deferred of accepted.filter(item => item.__deferredTargetName)) {
     const targetId = savedNameToId.get(norm(deferred.__deferredTargetName));
-    if (targetId) otherMutations.push({ ...deferred, toId: targetId, __deferredTargetName: undefined });
+    if (targetId) otherMutations.push(withoutRow({ ...deferred, toId: targetId, __deferredTargetName: undefined }));
     else rejected.push({ stage: 'spatial-relative', reason: 'relative relation dropped: its place was not saved' });
   }
 
@@ -789,8 +863,9 @@ export function processSpatialCapture({
     ],
   });
 
-  for (const item of reducedLocations.rejected || []) rejected.push({ stage: 'spatial-reducer', reason: item.reason });
-  for (const item of reducedOther.rejected || []) rejected.push({ stage: 'spatial-reducer', reason: item.reason });
+  const rowFor = item => (rows.has(item.proposal) ? { index: rows.get(item.proposal) } : {});
+  for (const item of reducedLocations.rejected || []) rejected.push({ stage: 'spatial-reducer', ...rowFor(item), reason: item.reason });
+  for (const item of reducedOther.rejected || []) rejected.push({ stage: 'spatial-reducer', ...rowFor(item), reason: item.reason });
 
   // (The reducer already records lastCaptureMessage for an applied capture.)
   const next = reducedOther.spatial;

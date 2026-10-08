@@ -215,6 +215,11 @@ function quotedSpans(sourceText) {
   return spans.filter(([from, to]) => to > from && !nameLikeQuote(source.slice(from, to), source.slice(Math.max(0, from - 21), from - 1)));
 }
 
+// Inner ranges [from, to) of the quoted spans of a text, for callers that blank dialogue out themselves.
+export function quotedDialogueRanges(sourceText) {
+  return quotedSpans(sourceText);
+}
+
 function quotedDialogueSegments(sourceText) {
   const source = String(sourceText ?? '');
   return quotedSpans(source).map(([from, to]) => source.slice(from, to)).filter(segment => segment.trim());

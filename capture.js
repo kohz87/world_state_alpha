@@ -6,6 +6,7 @@ import { hashText, stableStringify } from './hash.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 import { processSpatialCapture } from './spatial-capture.js';
+import { SPATIAL_WIRE_LIMITS } from './spatial-wire.js';
 import { applyCaptureSourceFirewall } from './source-firewall.js';
 import { clone, cloneState, reduceMutations } from './state-core.js';
 
@@ -367,7 +368,7 @@ export function buildCapturePrompt({
       ? '{"mutations":[' + REALITY_MUTATION_SHAPE + '],"spatialMutations":[{"action":"upsert_location|upsert_relation|upsert_route","locationId":"visible existing id only when updating","name":"grounded persistent place name","type":"generic place type","context":"established context","coordinate":{"x":1.2,"y":3.4,"authority":"narrative_explicit"},"relative":{"toLocationId":"visible anchor id","direction":"east","distanceKm":10,"distanceMode":"straight_line|route|unspecified"},"routeRefs":["visible route"],"admissionReason":"named|explicit_position|explicit_coordinate|revisited|persistent_feature|route_landmark|material_event","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from CURRENT EXCHANGE"}]}]}'
       : '{"mutations":[' + REALITY_MUTATION_SHAPE + ']}',
     spatialEnabled
-      ? 'Spatial rules: track only persistent established places; never capture generic scenery. Planning/writer_state is not evidence. Do not invent precise coordinates. Route/travel distance is not straight-line displacement. Never assign manual/base/campaign_override authority. If no spatial change return spatialMutations:[] alongside mutations.'
+      ? 'Spatial rules: track only persistent established places; never capture generic scenery. Planning/writer_state is not evidence. Do not invent precise coordinates. Route/travel distance is not straight-line displacement. Never assign manual/base/campaign_override authority. At most ' + SPATIAL_WIRE_LIMITS.mutations + ' spatialMutations per response: keep the most material ones. If no spatial change return spatialMutations:[] alongside mutations.'
       : '',
     spatialEnabled ? 'For no material change return exactly {"mutations":[],"spatialMutations":[]}.' : 'For no material change return exactly {"mutations":[]}.',
   ].filter(Boolean).join('\n');
@@ -570,7 +571,8 @@ export function processCaptureResponse({
       operation,
       evidenceSourceClass,
     });
-    const structuralSpatial = (spatialResult.rejected || []).find(item => item?.stage === 'spatial-wire');
+    // A row past the per-response cap is dropped on its own; only a malformed row fails the boundary.
+    const structuralSpatial = (spatialResult.rejected || []).find(item => item?.stage === 'spatial-wire' && item.code !== 'WORLD_STATE_SPATIAL_WIRE_LIMIT');
     if (structuralSpatial) {
       throw new CaptureWireError(
         `${operation === 'rebuild' ? 'rebuild' : 'capture'} rejected structurally invalid Spatial mutation row ${structuralSpatial.index ?? '?'}: ${structuralSpatial.reason}`,
