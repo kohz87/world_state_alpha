@@ -1,6 +1,7 @@
 import { captureExchangeIndex, containsOnWordBoundaries, evidenceClaimGrounded, evidenceClaimQuotedOnly } from './source-firewall.js';
 import {
   baseLocationByName,
+  canonicalSpatialDirection,
   deriveCoordinate,
   directionFromDelta,
   effectiveLocationId,
@@ -100,38 +101,23 @@ function coordKnown(coord) {
 }
 
 function directionsCompatible(stated, actual) {
-  const a = String(stated || '').trim().toLowerCase();
-  const b = String(actual || '').trim().toLowerCase();
-  const aliases = {
-    n: 'north', s: 'south', e: 'east', w: 'west',
-    ne: 'northeast', nw: 'northwest', se: 'southeast', sw: 'southwest',
-  };
-  return (aliases[a] || a) === (aliases[b] || b);
+  return canonicalSpatialDirection(stated) === canonicalSpatialDirection(actual);
 }
+
+// The written coordinate forms: [x, y]; (x, y); and x=12.4, y=45.0 (signed values, Markdown axis labels,
+// JSON-quoted keys, and comma/pipe/whitespace separators).
+const COORDINATE_FORMS = Object.freeze([
+  /\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g,
+  /\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)/g,
+  /(?:\*\*)?["']?x["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)\s*(?:,|\||\s+)\s*(?:\*\*)?["']?y["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)/gi,
+]);
 
 function extractExplicitCoordinatesFromText(text) {
   const coords = [];
   if (typeof text !== 'string') return coords;
-
-  // Form 1: [x, y]
-  const bracketMatches = text.matchAll(/\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g);
-  for (const match of bracketMatches) {
-    coords.push({ x: Number(match[1]), y: Number(match[2]) });
+  for (const form of COORDINATE_FORMS) {
+    for (const match of text.matchAll(form)) coords.push({ x: Number(match[1]), y: Number(match[2]) });
   }
-
-  // Form 2: (x, y)
-  const parenMatches = text.matchAll(/\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)/g);
-  for (const match of parenMatches) {
-    coords.push({ x: Number(match[1]), y: Number(match[2]) });
-  }
-
-  // Form 3: x=12.4, y=45.0; also accepts signed values, Markdown
-  // axis labels, JSON-quoted keys, and comma/pipe/whitespace separators.
-  const namedMatches = text.matchAll(/(?:\*\*)?["']?x["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)\s*(?:,|\||\s+)\s*(?:\*\*)?["']?y["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)/gi);
-  for (const match of namedMatches) {
-    coords.push({ x: Number(match[1]), y: Number(match[2]) });
-  }
-
   return coords;
 }
 
@@ -225,14 +211,7 @@ const DIRECTION_TEXT_FORMS = Object.freeze({
   southwest: ['southwest', 'south west'],
 });
 
-function canonicalDirection(value) {
-  const raw = String(value || '').trim().toLowerCase();
-  const aliases = {
-    n: 'north', s: 'south', e: 'east', w: 'west',
-    ne: 'northeast', nw: 'northwest', se: 'southeast', sw: 'southwest',
-  };
-  return aliases[raw] || raw;
-}
+const canonicalDirection = canonicalSpatialDirection;
 
 function evidenceSourceTexts(evidence, exchangeById) {
   const out = [];
@@ -269,24 +248,28 @@ function distanceGroundedInNarration(distanceKm, evidence, exchangeById) {
   return false;
 }
 
-function routeTravelLanguageGrounded(evidence, exchangeById) {
-  for (const text of evidenceSourceTexts(evidence, exchangeById)) {
-    const normalized = norm(text);
-    if (/\b(?:road|route|trail|path|river|sea|sail|sailing|travel|travelled|traveled|journey|along|ride|rides|riding|rode|walk|walks|walking|walked|march|marching|marched|hike|hiking|trek|trekking|voyage|drive|driving|winding|winds)\b/u.test(normalized)) {
-      return true;
-    }
-  }
-  return false;
+// The sentences that state this distance: what qualifies a distance is read there, not anywhere in the
+// message ("The winds howled. Millbrook lies 12 km north" is no route).
+function distanceSentences(distanceKm, evidence, exchangeById) {
+  if (!Number.isFinite(distanceKm)) return [];
+  const tolerance = Math.max(0.01, Math.abs(distanceKm) * 1e-6);
+  return evidenceSourceTexts(evidence, exchangeById).flatMap(sentencesOf).filter(sentence => [...sentence.matchAll(/(-?\d+(?:\.\d+)?)\s*(?:km\b|kilomet(?:er|re)s?\b)/gi)]
+    .some(match => Math.abs(Number(match[1]) - distanceKm) <= tolerance));
 }
 
-function straightDistanceLanguageGrounded(evidence, exchangeById) {
-  for (const text of evidenceSourceTexts(evidence, exchangeById)) {
-    const normalized = norm(text);
-    if (/\b(?:straight line|straightline|direct distance|as the crow flies)\b/u.test(normalized)) {
-      return true;
-    }
-  }
-  return false;
+const ROUTE_TRAVEL = /\b(?:road|route|trail|path|river|sea|sail|sailing|travel|travelled|traveled|journey|along|ride|riding|rode|walk|walking|march|marching|hike|hiking|trek|trekking|voyage|winding)\b/u;
+const STRAIGHT_DISTANCE = /\b(?:straight line|straightline|direct distance|as the crow flies)\b/u;
+
+// A distance is straight-line only where its sentence says so; a ride, walk or road length is route context,
+// never Cartesian displacement. The model's label decides only when the sentence carries both kinds of
+// wording, and it can never promote an unqualified distance (a 'route' label may still mark one as route).
+function distanceModeFor(proposedMode, distanceKm, evidence, exchangeById) {
+  const sentences = distanceSentences(distanceKm, evidence, exchangeById).map(norm);
+  const route = sentences.some(sentence => ROUTE_TRAVEL.test(sentence));
+  const straight = sentences.some(sentence => STRAIGHT_DISTANCE.test(sentence));
+  if (straight && !route) return 'straight_line';
+  if (straight) return proposedMode === 'route' || proposedMode === 'straight_line' ? proposedMode : 'unspecified';
+  return route || proposedMode === 'route' ? 'route' : 'unspecified';
 }
 
 function groundDirectRelationProposal(proposal, from, to, evidence, exchangeById) {
@@ -301,15 +284,8 @@ function groundDirectRelationProposal(proposal, from, to, evidence, exchangeById
     : null;
   const distanceGrounded = Number.isFinite(proposal.distanceKm)
     && distanceGroundedInNarration(proposal.distanceKm, evidence, exchangeById);
-  const routeGrounded = routeTravelLanguageGrounded(evidence, exchangeById);
-  const straightGrounded = straightDistanceLanguageGrounded(evidence, exchangeById);
-
-  let distanceKm = distanceGrounded ? proposal.distanceKm : null;
-  let distanceMode = 'unspecified';
-  if (distanceGrounded) {
-    if (routeGrounded && !straightGrounded) distanceMode = 'route';
-    else if (straightGrounded) distanceMode = 'straight_line';
-  }
+  const distanceKm = distanceGrounded ? proposal.distanceKm : null;
+  const distanceMode = distanceGrounded ? distanceModeFor(proposal.distanceMode, distanceKm, evidence, exchangeById) : 'unspecified';
 
   if (!direction && distanceKm === null) {
     return { ok: false, reason: 'relation has no grounded direction or numeric distance' };
@@ -337,19 +313,8 @@ function groundRelativeProposal(relative, anchor, evidence, exchangeById) {
 
   const hasDistance = Number.isFinite(relative.distanceKm);
   const distanceGrounded = hasDistance && distanceGroundedInNarration(relative.distanceKm, evidence, exchangeById);
-  const routeTravel = routeTravelLanguageGrounded(evidence, exchangeById);
-  const straightExplicit = straightDistanceLanguageGrounded(evidence, exchangeById);
-
   const distanceKm = distanceGrounded ? relative.distanceKm : null;
-  // A distance is straight-line only where the narration says so ("as the crow flies"); a ride, walk or
-  // road length is route context, never Cartesian displacement. The model's own label decides only when
-  // the narration carries both kinds of wording, and it can never promote an unqualified distance.
-  let distanceMode = 'unspecified';
-  if (distanceGrounded) {
-    if (straightExplicit && !routeTravel) distanceMode = 'straight_line';
-    else if (straightExplicit) distanceMode = relative.distanceMode;
-    else if (routeTravel || relative.distanceMode === 'route') distanceMode = 'route';
-  }
+  const distanceMode = distanceGrounded ? distanceModeFor(relative.distanceMode, distanceKm, evidence, exchangeById) : 'unspecified';
 
   return {
     ok: true,
@@ -359,7 +324,7 @@ function groundRelativeProposal(relative, anchor, evidence, exchangeById) {
       distanceKm,
       distanceMode,
     },
-    mayDeriveStraight: Boolean(distanceGrounded && distanceKm > 0 && distanceMode === 'straight_line' && straightExplicit),
+    mayDeriveStraight: Boolean(distanceGrounded && distanceKm > 0 && distanceMode === 'straight_line'),
   };
 }
 
@@ -372,11 +337,6 @@ function cleanHeaderText(value, max = 240) {
 }
 
 // A coordinate written beside the name ("Old Mill [12, 4]", "Old Mill — x=12, y=4") is not part of it.
-const COORDINATE_FORMS = [
-  /\[\s*[+-]?\d+(?:\.\d+)?\s*,\s*[+-]?\d+(?:\.\d+)?\s*\]/g,
-  /\(\s*[+-]?\d+(?:\.\d+)?\s*,\s*[+-]?\d+(?:\.\d+)?\s*\)/g,
-  /(?:\*\*)?["']?x["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*[+-]?\d+(?:\.\d+)?\s*(?:,|\||\s+)\s*(?:\*\*)?["']?y["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*[+-]?\d+(?:\.\d+)?/gi,
-];
 function headerPlaceName(value) {
   let name = String(value || '');
   for (const form of COORDINATE_FORMS) name = name.replace(form, ' ');
@@ -598,8 +558,13 @@ export function processSpatialCapture({
         const base = !visibleMatch && baseMap && !(spatial?.locations || []).some(item => item.status === 'active' && norm(item.name) === nameKey)
           ? baseLocationByName(baseMap, proposal.name)
           : null;
+        if (base?.ambiguous) {
+          rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'place name matches more than one base-map place' });
+          continue;
+        }
         const effective = base ? resolveEffectiveLocations(spatial, baseMap, { onlyIds: new Set([base.id]) })[0] : null;
-        if (effective?.id) {
+        // An archived or merged override is a place the operator retired: narration never updates it.
+        if (effective?.id && (effective.status || 'active') === 'active') {
           visibleById.set(effective.id, effective);
           namedBase.push(effective);
           proposal.locationId = effective.id;

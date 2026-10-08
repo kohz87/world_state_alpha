@@ -171,3 +171,63 @@ test('39: routes reach the prompt, and rejections keep the model row number', ()
   // Before: the second row's rejection was logged as row 0.
   assert.deepEqual(out.rejected.map(item => item.index), [0, 1]);
 });
+
+// Code review hardening.
+
+test('review: a base place found by name never routes narration into a retired override', () => {
+  const baseMap = { locations: [{ id: 'b1', name: 'Brackenford', coordinate: { x: 3, y: 3 } }] };
+  const spatial = normalizeSpatialState({ locations: [place('ov1', 'Brackenford', { x: 3, y: 3, authority: 'campaign_override', locked: false }, { baseRefId: 'b1', status: 'archived', context: 'retired' })] });
+  const text = 'The caravan reaches Brackenford at dusk.';
+  const out = spatialCapture(text, [location('Brackenford', text, { context: 'busy at dusk' })], spatial, { baseMap, visible: [] });
+  assert.equal(out.spatial.locations.find(item => item.id === 'ov1').context, 'retired');
+  // Two base places sharing the name are ambiguous: neither is chosen.
+  const twin = { locations: [{ id: 'n1', name: 'Newton' }, { id: 'n2', name: 'Newton' }] };
+  const ambiguous = spatialCapture('We reach Newton.', [location('Newton', 'We reach Newton')], normalizeSpatialState({}), { baseMap: twin, visible: [] });
+  assert.equal(ambiguous.spatial.locations.length, 0);
+  assert.ok(ambiguous.rejected.some(item => /more than one base-map place/.test(item.reason)));
+});
+
+test('review: whole-word names still ground with attached particles in other scripts', () => {
+  assert.equal(spatialCapture('우리는 서울에 도착했다.', [location('서울', '우리는 서울에 도착했다')], normalizeSpatialState({})).spatial.locations.length, 1);
+  // Latin words keep their boundaries.
+  assert.equal(spatialCapture('Her cloak was soaked through.', [location('Oak', 'Her cloak was soaked through')], normalizeSpatialState({})).spatial.locations.length, 0);
+});
+
+test('review: reverse matching keeps free-text and hyphenated directions', () => {
+  const spatial = normalizeSpatialState({
+    locations: [place('oak', 'Oakvale'), place('mb', 'Millbrook')],
+    relations: [{ id: 'r1', fromId: 'oak', toId: 'mb', direction: 'east' }],
+  });
+  const manual = dir => reduceSpatialMutations(spatial, {
+    chatKey: 'a52', messageId: 3, lineageKey: 'ln3', operation: 'manual',
+    mutations: [{ action: 'upsert_relation', fromId: 'mb', toId: 'oak', direction: dir, evidence: [{ sourceMessageId: 3, claim: 'Edited', sourceClass: 'manual' }] }],
+  }, null, { allowBaseScan: true });
+  assert.deepEqual(manual('north-east').spatial.relations.map(rel => [rel.fromId, rel.direction]), [['oak', 'southwest']]);
+  // A free-text direction has no opposite: it is kept as stated, never dropped.
+  assert.ok(manual('upriver').spatial.relations.some(rel => rel.fromId === 'mb' && rel.direction === 'upriver'));
+});
+
+test('review: distance wording is read from the distance sentence and never decays a stored mode', () => {
+  const spatial = normalizeSpatialState({
+    locations: [place('oak', 'Oakvale'), place('mb', 'Millbrook')],
+    relations: [{ id: 'r1', fromId: 'oak', toId: 'mb', direction: 'north', distanceKm: 12, distanceMode: 'straight_line' }],
+  });
+  const text = 'The winds howled all night. Millbrook lies 12 km north of Oakvale.';
+  const out = spatialCapture(text, [{ action: 'upsert_relation', fromId: 'oak', toId: 'mb', direction: 'north', distanceKm: 12, distanceMode: 'straight_line', evidence: [{ sourceMessageId: 2, claim: 'Millbrook lies 12 km north of Oakvale' }] }], spatial);
+  // Weather 'winds' is not route travel, and an unqualified restatement keeps the established mode.
+  assert.equal(out.spatial.relations[0].distanceMode, 'straight_line');
+  const fresh = spatialCapture(text, [{ action: 'upsert_relation', fromId: 'oak', toId: 'mb', direction: 'north', distanceKm: 12, evidence: [{ sourceMessageId: 2, claim: 'Millbrook lies 12 km north of Oakvale' }] }],
+    normalizeSpatialState({ locations: [place('oak', 'Oakvale'), place('mb', 'Millbrook')] }));
+  assert.equal(fresh.spatial.relations[0].distanceMode, 'unspecified');
+});
+
+test('review: repeated base names get ids that survive unrelated edits; punctuation-folded names match', () => {
+  const ids = rows => parseBaseMap({ id: 'shire', locations: rows }).locations.filter(item => item.name === 'Newton').map(item => item.id);
+  const before = ids([{ name: 'Newton' }, { name: 'Hill' }, { name: 'Newton' }]);
+  const after = ids([{ name: 'Newton' }, { name: 'Dale' }, { name: 'Hill' }, { name: 'Newton' }]);
+  assert.deepEqual(after, before);
+  const spatial = normalizeSpatialState({ locations: [place('kr', 'Kings Rest')] });
+  const text = 'We camp at Kings-Rest.';
+  const out = spatialCapture(text, [location('Kings-Rest', 'We camp at Kings-Rest')], spatial, { visible: [] });
+  assert.equal(out.spatial.locations.length, 1);
+});

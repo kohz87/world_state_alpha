@@ -44,6 +44,8 @@ export function parseBaseMap(rawInput) {
     : null;
 
   const locations = [];
+  const generatedIds = new Set();
+  const nameCounts = new Map();
   for (let index = 0; index < (Array.isArray(raw.locations) ? raw.locations : []).length; index += 1) {
     const item = raw.locations[index];
     if (!item || typeof item !== 'object') continue;
@@ -51,9 +53,16 @@ export function parseBaseMap(rawInput) {
     const locName = boundedText(item.name, SPATIAL_LIMITS.nameChars);
     if (!locName) continue;
 
-    // Two places may share a name: a repeated generated id gets the place's row number instead of failing.
-    let locId = boundedText(item.id, 120) || deterministicId('bloc', [id, locName]);
-    if (!boundedText(item.id, 120) && locations.some(location => location.id === locId)) locId = deterministicId('bloc', [id, locName, index]);
+    // Two places may share a name: without ids, the later ones are told apart by their order among the
+    // places of that name, so unrelated rows can be added, removed or moved without re-keying them.
+    let locId = boundedText(item.id, 120);
+    if (!locId) {
+      const seen = nameCounts.get(locName) || 0;
+      nameCounts.set(locName, seen + 1);
+      locId = deterministicId('bloc', seen ? [id, locName, seen] : [id, locName]);
+      for (let salt = 1; generatedIds.has(locId); salt += 1) locId = deterministicId('bloc', [id, locName, seen, salt]);
+      generatedIds.add(locId);
+    }
     const coordinate = normalizeBaseCoordinate(item);
     const hasCoordinate = Number.isFinite(coordinate.x) && Number.isFinite(coordinate.y);
     coordinate.authority = hasCoordinate ? 'base_canonical' : 'unknown';

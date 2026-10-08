@@ -94,10 +94,15 @@ function targetAffinity(record, text) {
 // Scripts written without spaces between words: there a match may start or end inside a run of letters.
 const SPACELESS_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
+// Word boundaries are enforced where words are separated by spaces and carry no attached particles or
+// prefixes (Latin, Greek, Cyrillic, Armenian, Georgian letters, and digits). Korean particles ("서울에"),
+// Arabic/Hebrew prefixes and scripts written without spaces may attach to the excerpt's edge.
+const BOUNDED_WORD_EDGE = /[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Armenian}\p{Script=Georgian}\p{N}]/u;
+
 // The excerpt occurs verbatim on word boundaries: "active volcano" is not in "inactive volcano".
 export function containsOnWordBoundaries(haystack, needle) {
-  const first = SPACELESS_SCRIPT.test(needle[0]);
-  const last = SPACELESS_SCRIPT.test(needle[needle.length - 1]);
+  const first = !BOUNDED_WORD_EDGE.test(needle[0]);
+  const last = !BOUNDED_WORD_EDGE.test(needle[needle.length - 1]);
   for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
     const before = haystack[at - 1];
     const after = haystack[at + needle.length];

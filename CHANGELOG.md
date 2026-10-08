@@ -35,7 +35,17 @@ Each fix was reproduced first and has a regression test that fails on 0.9.0-alph
   - the injection had no route line.
 
   On alpha.52 none of these happen, and a header confirming a locked place adds its evidence without a rejection.
-- Not verified: a real model, and base maps larger than the test fixtures.
+- Not verified: a real model, and base maps larger than the test fixtures. Names in languages that attach suffixes to Latin-script words (Hungarian, Finnish, Turkish) must still appear in their bare form to ground.
+
+### Code review hardening
+
+- A base-map place found by name never sends narration to an archived or merged override of it, and a name that several base places share is rejected as ambiguous instead of picking the first.
+- Whole-word name matching applies to Latin, Greek, Cyrillic, Armenian and Georgian words and to numbers, so Korean names with particles ("서울에") and Arabic or Hebrew names with prefixes still ground.
+- A reverse relation with "north-east" is read as northeast; a free-text direction ("upriver") has no opposite and is kept as its own relation instead of being dropped.
+- Distance wording is read from the sentence that states the distance ("The winds howled" elsewhere is not a route), and a restatement without wording keeps the relation's established straight-line or route mode.
+- Repeated base-map names without ids are numbered by their order among places of that name, so inserting or removing other rows does not re-key them; the check is linear.
+- Capture and the reducer match place names the same way (case and punctuation folded), so "Kings-Rest" finds "Kings Rest".
+- One distance-mode rule and one list of coordinate patterns are shared by every caller; the direction aliases come from the core.
 
 ## 0.9.0-alpha.51 - Capture accuracy (deep pass on alpha.49)
 

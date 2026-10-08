@@ -487,8 +487,9 @@ export function directionFromDelta(dx, dy, {
   return 'northwest';
 }
 
-function canonicalSpatialDirection(value) {
-  const raw = boundedText(value, 30).toLowerCase();
+export function canonicalSpatialDirection(value) {
+  // "north-east" and "north east" are northeast.
+  const raw = boundedText(value, 30).toLowerCase().replace(/^(north|south)[\s-]+(east|west)$/u, '$1$2');
   const aliases = {
     n: 'north',
     ne: 'northeast',
@@ -595,11 +596,12 @@ function baseLocationIndex(baseMap) {
   return index;
 }
 
-function placeNameKey(value) {
+export function placeNameKey(value) {
   return String(value ?? '').normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
-// name -> first base entry with that name, built once per (read-only) base map like the id index.
+// name -> base entries with that name, built once per (read-only) base map like the id index. A name that
+// several base places share is ambiguous: `{ ambiguous: true }`, never an arbitrary one of them.
 const baseNameIndexes = new WeakMap();
 export function baseLocationByName(baseMap, name) {
   const locations = baseMap && Array.isArray(baseMap.locations) ? baseMap.locations : null;
@@ -610,7 +612,7 @@ export function baseLocationByName(baseMap, name) {
     index = new Map();
     for (const item of locations) {
       const itemKey = item?.id ? placeNameKey(item.name) : '';
-      if (itemKey && !index.has(itemKey)) index.set(itemKey, item);
+      if (itemKey) index.set(itemKey, index.has(itemKey) ? { ambiguous: true } : item);
     }
     baseNameIndexes.set(locations, index);
   }
@@ -1003,9 +1005,9 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       }
 
       if (!existingLoc && !targetId) {
-        // Name consolidation for duplicates
-        const normName = name.toLowerCase();
-        const existingCandidate = spatial.locations.find(l => l.status === 'active' && l.name.toLowerCase() === normName);
+        // Name consolidation for duplicates (punctuation-folded, as capture matches names).
+        const normName = placeNameKey(name);
+        const existingCandidate = spatial.locations.find(l => l.status === 'active' && placeNameKey(l.name) === normName);
         if (existingCandidate) {
           existingLoc = existingCandidate;
         }
@@ -1281,11 +1283,12 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       const id = boundedText(proposal.relationId, 140) || relationIdFor(chatKey, fromId, toId, context);
       let existingRel = spatial.relations.find(r => r.id === id || (r.fromId === fromId && r.toId === toId));
       let stated = direction;
-      if (!existingRel) {
+      if (!existingRel && (!direction || OPPOSITE_DIRECTION[direction])) {
         // The same pair stated the other way round ("Oakvale lies west of Millbrook" for Millbrook east of
         // Oakvale) is that relation, read from its own side: never a second, possibly contradictory one.
+        // A free-text direction has no opposite, so it stays a relation of its own rather than being lost.
         existingRel = spatial.relations.find(r => r.fromId === toId && r.toId === fromId) || null;
-        if (existingRel && direction) stated = OPPOSITE_DIRECTION[direction] || null;
+        if (existingRel && direction) stated = OPPOSITE_DIRECTION[direction];
       }
 
       if (existingRel) {
@@ -1295,8 +1298,10 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         if (!preserveManualRelation) {
           if (stated) existingRel.direction = stated;
           if (Number.isFinite(proposal.distanceKm)) {
+            // Narration restating the same distance without qualifying it never decays an established mode.
+            const restated = automaticNarrative && proposal.distanceMode === 'unspecified' && existingRel.distanceKm === proposal.distanceKm;
             existingRel.distanceKm = proposal.distanceKm;
-            if (proposal.distanceMode) existingRel.distanceMode = proposal.distanceMode;
+            if (proposal.distanceMode && !restated) existingRel.distanceMode = proposal.distanceMode;
           } else if (proposal.distanceMode && !automaticNarrative) {
             existingRel.distanceMode = proposal.distanceMode;
           }
