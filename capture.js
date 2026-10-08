@@ -26,8 +26,9 @@ export const CAPTURE_LIMITS = Object.freeze({
 
 // A checklist bullet: '-', '*', '+', '•' and similar marks, or a number ('1.', '2)').
 const CHECKLIST_BULLET = /^\s*(?:[-*+•‣◦▪●]|\d{1,3}[.)])\s+/u;
-// A bullet that is itself a bold section label ('- **🌱 Planted Seeds:** …').
-const CHECKLIST_LABEL_BULLET = /^\s*(?:[-*+•‣◦▪●]|\d{1,3}[.)])\s+\*\*[^*\n]{1,80}?:\s*\*\*/u;
+// A bullet that is itself a section label: bold ('- **🌱 Planted Seeds:** …') or ending at its colon
+// ('1. Scene goals for next reply:').
+const CHECKLIST_LABEL_BULLET = /^\s*(?:[-*+•‣◦▪●]|\d{1,3}[.)])\s+(?:\*\*[^*\n]{1,80}?:\s*\*\*|[^:\n]{1,80}:[\s*_]*$)/u;
 
 function normalizeChecklistText(value) {
   return String(value ?? '')

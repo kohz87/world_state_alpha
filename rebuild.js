@@ -134,7 +134,9 @@ export function planChronologicalRebuild(chat = [], {
 function rebuildMatchContext(recentText) {
   return {
     haystack: normalizeAnchor(recentText),
-    terms: new Set(extractContextTerms(recentText, { maxTerms: 256 }).filter(term => !RELEVANCE_STOPWORDS.has(term))),
+    // Every content word of the exchange (it is bounded), so a long reply's newest words are never cut off.
+    terms: new Set(normalizeAnchor(recentText).split(' ')
+      .filter(term => (term.length >= 2 || /^\d+$/u.test(term)) && !RELEVANCE_STOPWORDS.has(term))),
     names: functionWordNames(recentText),
     // The exchange's content words for the direct-address check, read once per exchange.
     directTerms: new Set(significantTokens(recentText, REBUILD_DIRECT_STOPWORDS)),
@@ -177,9 +179,6 @@ function rebuildDirectlyAddresses(record, context) {
 
 function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessageId) {
   const lifecycle = [];
-  // Recently changed developments the exchange does not touch: the only antecedents an ending that names
-  // nothing ("it finally ends") can mean, so they are offered only when the exchange touches no development.
-  const untouchedRecent = [];
   let touchesDevelopment = false;
   const historical = [];
   const context = rebuildMatchContext(recentText);
@@ -198,11 +197,10 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
         && boundaryMessageId > lastChanged
         && (boundaryMessageId - lastChanged) <= REBUILD_LIMITS.lifecycleRecentMessages;
       if (overlap.touched) touchesDevelopment = true;
-      // A recent change alone is no antecedent while the exchange is about another development.
-      if (overlapsExchange || (recentlyChanged && overlap.touched)) {
-        lifecycle.push({ record, overlapsExchange, directlyAddressed, lastChanged });
-      } else if (recentlyChanged) {
-        untouchedRecent.push({ record, overlapsExchange, directlyAddressed, lastChanged });
+      // A recently changed development stays visible (an ending may name it by a synonym), after those the
+      // exchange touches.
+      if (overlapsExchange || recentlyChanged) {
+        lifecycle.push({ record, overlapsExchange, touched: overlap.touched, directlyAddressed, lastChanged });
       }
       continue;
     }
@@ -212,9 +210,9 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
     }
   }
 
-  if (!touchesDevelopment) lifecycle.push(...untouchedRecent);
   lifecycle.sort((left, right) => {
     if (left.overlapsExchange !== right.overlapsExchange) return left.overlapsExchange ? -1 : 1;
+    if (left.touched !== right.touched) return left.touched ? -1 : 1;
     if (right.lastChanged !== left.lastChanged) return right.lastChanged - left.lastChanged;
     return String(left.record?.id || '').localeCompare(String(right.record?.id || ''));
   });
@@ -226,7 +224,10 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
   const selectedLifecycle = lifecycle.slice(0, REBUILD_LIMITS.lifecycleVisibleRecords);
   return {
     lifecycle: selectedLifecycle.map(item => item.record),
+    // The interpretive antecedent of an indirect ending: never a record the exchange does not touch while it
+    // is about another development (only an ending that names nothing, "it finally ends", gets that one).
     lifecycleContextRecordIds: selectedLifecycle.length === 1 && !selectedLifecycle[0].directlyAddressed
+      && (selectedLifecycle[0].touched || !touchesDevelopment)
       ? [selectedLifecycle[0].record?.id].filter(Boolean)
       : [],
     historical: historical.slice(0, REBUILD_LIMITS.resolvedVisibleRecords).map(item => item.record),
@@ -347,6 +348,7 @@ function disabledSpatialTimeline(original, chat, { operatorOnly = false, lineage
       unprovableBelow: heldBeforeFloor ? floor : -1,
       unverified: heldBeforeFloor && firstStoryChange(original.lineage, chat, lineage) <= floor,
       at: () => clone(original.spatial),
+      changesAfter: () => false,
     };
   }
   const divergence = firstStoryChange(original.lineage, chat, lineage);
@@ -377,6 +379,8 @@ function disabledSpatialTimeline(original, chat, { operatorOnly = false, lineage
       for (const step of steps) if (last || step.messageId <= messageId) current = step.spatial;
       return clone(current);
     },
+    // Whether a replayed change was made after `messageId` (after every boundary when it is null).
+    changesAfter: messageId => steps.some(step => messageId === null || step.messageId > messageId),
   };
 }
 
@@ -822,7 +826,9 @@ export async function runManualRebuild({
   // assistant boundary (or in a range with none) are committed at the last message, where they were made
   // (journaled, so deleting that message still undoes them), never folded into an earlier reply.
   const rows = Array.isArray(chat) ? chat : [];
-  if ((spatialTimeline || operatorTimeline) && rows.length && (lastWindowMessageId === null || lastWindowMessageId < rows.length - 1)) {
+  // Only when a change was made there: a no-op commit would still add a checkpoint and evict an older one.
+  if (historyTimeline && rows.length && (lastWindowMessageId === null || lastWindowMessageId < rows.length - 1)
+    && historyTimeline.changesAfter(lastWindowMessageId)) {
     const lastMessageId = rows.length - 1;
     candidate = commitMutationBoundary(
       candidate,

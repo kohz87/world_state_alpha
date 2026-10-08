@@ -72,6 +72,10 @@ test('71: a function-word anchor ("Will") matches only the name, never the modal
   assert.deepEqual(pick('Will you come with us?'), []);
   assert.deepEqual(pick('I go down to the docks and ask Will about the crossing.'), ['will']);
   assert.deepEqual(pick('"Ask Will," she says.'), ['will']);
+  assert.deepEqual(pick('Will nods and pushes off from the bank.'), ['will']);
+  assert.deepEqual(pick('Will, the ferryman, waves.'), ['will']);
+  assert.deepEqual(pick('She asked, "Will you take us across?"'), []);
+  assert.deepEqual(pick('Will the bridge hold?'), []);
 });
 
 async function rebuildPrompts(chat, mutationsByCall) {
@@ -95,23 +99,37 @@ const visibleOf = prompt => {
   return match ? JSON.parse(match[1]) : [];
 };
 
-test('71: rebuild lifecycle candidates ignore function words, and a recent change is no antecedent for another topic', async () => {
+test('71: rebuild never makes a development the exchange does not touch the antecedent of another topic', async () => {
   const chat = [
     { role: 'user', content: 'We arrive in town.' },
-    { role: 'assistant', content: 'Bandits now raid the north road every night. The miller owes the guild a heavy debt.' },
-    { role: 'user', content: 'I visit the miller.' },
-    { role: 'assistant', content: 'The miller pays the guild at last.' },
+    { role: 'assistant', content: 'The miller owes the guild a heavy debt.' },
+  ];
+  for (let i = 0; i < 7; i += 1) chat.push({ role: 'user', content: 'We wait.' }, { role: 'assistant', content: 'Rain falls on day ' + (i + 1) + '.' });
+  chat.push({ role: 'user', content: 'We take the road.' }, { role: 'assistant', content: 'Bandits now raid the north road every night.' });
+  chat.push({ role: 'user', content: 'I visit him.' }, { role: 'assistant', content: 'Miller smiles warmly.' });
+  const calls = chat.filter(item => item.role === 'assistant').length;
+  const mutations = Array.from({ length: calls }, () => []);
+  mutations[0] = [{ action: 'create', kind: 'development', summary: 'The miller owes the guild a heavy debt.', anchors: ['miller debt'], evidence: [{ sourceMessageId: 1, claim: 'The miller owes the guild a heavy debt.' }] }];
+  mutations[calls - 2] = [{ action: 'create', kind: 'development', summary: 'Bandits raid the north road every night.', anchors: ['bandits', 'north road'], evidence: [{ sourceMessageId: chat.length - 3, claim: 'Bandits now raid the north road every night.' }] }];
+  const prompts = await rebuildPrompts(chat, mutations);
+  assert.equal(prompts.length, calls);
+  // Before: the bandit raids, unrelated to the miller, were offered as the reply's interpretive antecedent.
+  assert.doesNotMatch(prompts.at(-1), /INTERPRETIVE LIFECYCLE ANTECEDENT/);
+});
+
+test('71: a recent development the exchange names by a synonym stays visible to rebuild', async () => {
+  const chat = [
+    { role: 'user', content: 'We arrive.' },
+    { role: 'assistant', content: 'Plague spreads through the lower district. Bread prices are rising in the market.' },
+    { role: 'user', content: 'We wait a week.' },
+    { role: 'assistant', content: 'In the market bread is cheap again. The sickness finally breaks.' },
   ];
   const created = [
-    { action: 'create', kind: 'development', summary: 'Bandits raid the north road every night.', anchors: ['bandits', 'north road'], evidence: [{ sourceMessageId: 1, claim: 'Bandits now raid the north road every night.' }] },
-    { action: 'create', kind: 'development', summary: 'The miller owes the guild a heavy debt.', anchors: ['miller debt'], evidence: [{ sourceMessageId: 1, claim: 'The miller owes the guild a heavy debt.' }] },
+    { action: 'create', kind: 'development', summary: 'Plague spreads through the lower district.', anchors: ['plague'], evidence: [{ sourceMessageId: 1, claim: 'Plague spreads through the lower district.' }] },
+    { action: 'create', kind: 'development', summary: 'Bread prices are rising in the market.', anchors: ['bread prices'], evidence: [{ sourceMessageId: 1, claim: 'Bread prices are rising in the market.' }] },
   ];
   const prompts = await rebuildPrompts(chat, [created]);
-  assert.equal(prompts.length, 2);
-  const visible = visibleOf(prompts[1]).map(item => item.summary);
-  assert.ok(visible.some(summary => /miller/.test(summary)), JSON.stringify(visible));
-  // Before: the bandit raids took a lifecycle slot only because they changed recently.
-  assert.ok(!visible.some(summary => /Bandits/.test(summary)), JSON.stringify(visible));
+  assert.ok(visibleOf(prompts[1]).some(item => /Plague/.test(item.summary)));
 });
 
 test('71: an ending that names nothing still sees the recent development as its antecedent', async () => {
@@ -267,6 +285,9 @@ test('84: World_State checklists read every bullet style and "Offscreen"', () =>
   const mes = '<World_State>\n**Offscreen:**\n• Bandits hold the north pass\n1. The mill burned down last week\n+ The guild raised its tolls again\n2) Ferry service suspended indefinitely\n**Arc Phase:** setup\n- not this one at all\n</World_State>';
   const hints = capture.extractWorldStateCompletenessHints([{ messageId: 3, is_user: false, mes }]).map(item => item.text);
   assert.deepEqual(hints, ['Bandits hold the north pass', 'The mill burned down last week', 'The guild raised its tolls again', 'Ferry service suspended indefinitely']);
+  // A numbered label ending at its colon is a heading that closes the section, not an entry.
+  const planned = '<World_State>\nOff-screen:\n- garrison marching north\n1. Scene goals for next reply:\n- Mira wants to reach the ferry\n</World_State>';
+  assert.deepEqual(capture.extractWorldStateCompletenessHints([{ messageId: 4, is_user: false, mes: planned }]).map(item => item.text), ['garrison marching north']);
 });
 
 test('84: a Reality-only rebuild takes a non-array chat, and a place added after the last reply stays at its own message', async () => {
@@ -292,4 +313,54 @@ test('84: a Reality-only rebuild takes a non-array chat, and a place added after
   assert.deepEqual(result.state.spatial.locations.map(item => item.name), ['Old Mill']);
   // Before: it was journaled at the reply (message 1), so deleting message 2 kept it.
   assert.deepEqual(result.state.rollbackJournal.filter(entry => entry.undo?.spatial).map(entry => entry.messageId), [2]);
+});
+
+test('review hardening: rebuild reads every word of a long exchange, and adds no checkpoint for an unchanged trailing message', async () => {
+  const filler = Array.from({ length: 320 }, (_, i) => 'filler' + i).join(' ');
+  const chat = [
+    { role: 'user', content: 'We watch the orchard.' },
+    { role: 'assistant', content: 'Wasps nest in the orchard wall.' },
+    { role: 'user', content: 'We smoke them out.' },
+    { role: 'assistant', content: 'The wasps are gone for good.' },
+  ];
+  for (let i = 0; i < 7; i += 1) chat.push({ role: 'user', content: 'We wait.' }, { role: 'assistant', content: 'Rain falls on day ' + (i + 1) + '.' });
+  chat.push({ role: 'user', content: 'Weeks pass.' }, { role: 'assistant', content: filler + ' Wasps return to the orchard wall.' });
+  const prompts = [];
+  await runManualRebuild({
+    ctx: {}, state: createState('long-window'), chat, chatKey: 'long-window', isCurrent: () => true,
+    dispatcher: async (_ctx, options) => {
+      prompts.push(options.prompt);
+      const visible = visibleOf(options.prompt);
+      const mutations = prompts.length === 1
+        ? [{ action: 'create', kind: 'development', summary: 'Wasps nest in the orchard wall.', anchors: ['wasps'], evidence: [{ sourceMessageId: 1, claim: 'Wasps nest in the orchard wall.' }] }]
+        : prompts.length === 2
+          ? [{ action: 'resolve', recordId: visible[0]?.id, summary: 'The wasps are gone from the orchard wall for good.', evidence: [{ sourceMessageId: 3, claim: 'The wasps are gone for good.' }] }]
+          : [];
+      return { text: JSON.stringify({ mutations }), receipt: OK };
+    },
+  });
+  // The ended episode is recurrence context for a new one named after 320 other words of the newest reply.
+  assert.ok(visibleOf(prompts.at(-1)).some(item => item.status === 'resolved' && /wasp/i.test(item.summary)), JSON.stringify(visibleOf(prompts.at(-1))));
+
+  const chatKey = 'trailing-noop';
+  const trailing = [
+    { role: 'user', content: 'We arrive at the village.' },
+    { role: 'assistant', content: 'The village is calm under grey skies.' },
+    { role: 'user', content: 'I look around.' },
+  ];
+  const result = await runManualRebuild({
+    ctx: {}, state: seedRootCheckpoint(createState(chatKey)), chat: trailing, chatKey, isCurrent: () => true, spatialEnabled: false,
+    dispatcher: async () => ({ text: '{"mutations":[]}', receipt: OK }),
+  });
+  assert.equal(result.outcome, 'completed');
+  assert.ok(!result.state.checkpoints.some(item => item.messageId === 2), JSON.stringify(result.state.checkpoints.map(item => item.messageId)));
+});
+
+test('review hardening: lineage-only reconciles compare lineage fields, the reply count keeps no chat, host text reads mes first', () => {
+  const index = fs.readFileSync('index.js', 'utf8');
+  const changed = index.slice(index.indexOf('function stateChanged('), index.indexOf('function pointerFor('));
+  assert.match(changed, /return !sameLineage\(left\?\.lineage, right\?\.lineage\);/);
+  assert.match(index, /assistantBoundaryMemo = \{ chatKey, length: chat\.length, events, at: Date\.now\(\), count \};/);
+  assert.match(index, /import \{ clone, hostMessageText as messageText \} from '\.\/common\.js';/);
+  assert.doesNotMatch(fs.readFileSync('source-firewall.js', 'utf8'), /Object\.freeze\(new Set/);
 });

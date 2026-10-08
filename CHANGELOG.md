@@ -40,7 +40,7 @@
 
 ### Validation
 
-- New `tests/audit-alpha59.test.js`: 15 tests, 14 failing on 0.9.0-alpha.58 (the bare-ending antecedent test guards existing behaviour). New host scenario `tests/host/state-copies.mjs` counts state copies in an instrumented copy of the runtime.
+- New `tests/audit-alpha59.test.js`: 18 tests, 15 failing on 0.9.0-alpha.58 (the bare-ending antecedent and synonym tests guard existing behaviour). The 2 review-hardening tests, the synonym test and the review cases added to the relevance and checklist tests fail on the pre-review code. New host scenario `tests/host/state-copies.mjs` counts state copies in an instrumented copy of the runtime.
 - Measured on alpha.58 against alpha.59:
 
 | Check | alpha.58 | alpha.59 |
@@ -54,6 +54,18 @@
 | Live: Places save with a relation | Saved, one journal entry | Saved, one journal entry |
 
 - The branch, rebuild, resume, hide and Places live scripts give the same results as on alpha.58.
+
+### Code review hardening
+
+- A name that opens a sentence is matched again ("Will nods and pushes off."), as is a name followed by a comma or "!" ("Will, the ferryman, waves"). A question opening a quotation ("She asked, \"Will you take us across?\"") and "Will the bridge hold?" are not. A lower-case "will" is never read as the name.
+- A recently changed development stays visible to rebuild even when the exchange is about another development, so an ending that names it by a synonym ("the sickness finally breaks" for a plague) can still close it. Only its marking as the interpretive antecedent is withheld while the exchange touches another development.
+- Rebuild's lifecycle and history checks read every word of the bounded exchange. They read only the first 256 distinct words, so a long reply's last paragraph was missed.
+- A numbered label that ends at its colon ("1. Scene goals for next reply:") closes a World_State checklist section instead of becoming an entry.
+- A Reality-only rebuild commits after the last reply only when a place changed there. A no-op commit added a checkpoint and evicted an older one.
+- A lineage-only reconcile compares lineage entries field by field instead of stringifying each one.
+- The panel's reply-count memo no longer holds the previous chat in memory.
+- Host messages are read `mes` first again (`hostMessageText`, also used for lineage fingerprints), so a stale `content` field is never read instead.
+- The shared support stopword set is no longer presented as frozen.
 
 ## 0.9.0-alpha.58 - Panel and accessibility (deep pass on alpha.54)
 

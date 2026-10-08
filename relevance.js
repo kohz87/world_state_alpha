@@ -20,9 +20,11 @@ function tokenSet(value) {
   return new Set(tokens(value));
 }
 
-// A function word used as a name ("Will", "May"): capitalized where no sentence or line starts. The modal
-// "will" and a sentence-initial "Will you ..." are not the name.
-const NAME_LEAD_IN = /[\s*_~"'“”‘’«»()[\]—–-]/u;
+// A function word used as a name ("Will", "May"): capitalized, and either inside a sentence ("ask Will") or
+// opening one (or a quotation) followed by a word that is not itself a function word, in a sentence that is
+// not a question ("Will nods."). The modal "will", "Will you ...?" and "May the gods ..." are not the name.
+const NAME_SPACE = /[\s*_~(\[—–-]/u;
+const NAME_QUOTE = /["'“”‘’«»「『]/u;
 export function functionWordNames(value) {
   const source = String(value ?? '');
   const out = new Set();
@@ -30,8 +32,22 @@ export function functionWordNames(value) {
     const word = match[0].toLocaleLowerCase();
     if (!RELEVANCE_STOPWORDS.has(word) || out.has(word)) continue;
     let at = match.index - 1;
-    while (at >= 0 && source[at] !== '\n' && NAME_LEAD_IN.test(source[at])) at -= 1;
-    if (at >= 0 && source[at] !== '\n' && !/[.!?…:;]/u.test(source[at])) out.add(word);
+    while (at >= 0 && source[at] !== '\n' && NAME_SPACE.test(source[at])) at -= 1;
+    const opens = at < 0 || source[at] === '\n' || NAME_QUOTE.test(source[at]) || /[.!?…:;]/u.test(source[at]);
+    if (!opens) {
+      out.add(word);
+      continue;
+    }
+    const end = match.index + match[0].length;
+    // A modal is never followed straight by a comma or "!": "Will, the ferryman, waves", "Will!".
+    if (/^[,!]/u.test(source.slice(end, end + 1))) {
+      out.add(word);
+      continue;
+    }
+    const next = /^\s*([\p{L}\p{N}]+)/u.exec(source.slice(end, end + 40))?.[1]?.toLocaleLowerCase() || '';
+    const sentenceEnd = /[.!?…\n]/u.exec(source.slice(end));
+    const question = sentenceEnd?.[0] === '?';
+    if (next && !RELEVANCE_STOPWORDS.has(next) && !question) out.add(word);
   }
   return out;
 }

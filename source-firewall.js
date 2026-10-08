@@ -2,12 +2,13 @@ import { clone, messageRole, messageText } from './common.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 import { SPACELESS_SCRIPT, canonicalText, sharedSpacelessBigrams } from './hash.js';
 
-export const SUPPORT_STOPWORDS = Object.freeze(new Set([
+// Shared with rebuild's lifecycle check; never modify it.
+export const SUPPORT_STOPWORDS = new Set([
   'the', 'and', 'that', 'this', 'with', 'from', 'into', 'onto', 'over', 'under', 'after', 'before',
   'while', 'where', 'when', 'then', 'than', 'they', 'them', 'their', 'there', 'here', 'have', 'has',
   'had', 'was', 'were', 'are', 'is', 'been', 'being', 'will', 'would', 'could', 'should', 'about',
   'among', 'through', 'around', 'still', 'current', 'currently', 'now', 'near', 'behind', 'outside',
-]));
+]);
 
 // Content words of at least three letters, plural endings folded ('bridges' -> 'bridge').
 export function significantTokens(value, stopwords = SUPPORT_STOPWORDS) {

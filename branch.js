@@ -1,4 +1,4 @@
-import { clone } from './common.js';
+import { clone, hostMessageText } from './common.js';
 import { LIMITS, ROLLBACK_JOURNAL_VERSION } from './constants.js';
 import { deterministicId, hashText, stableStringify } from './hash.js';
 import {
@@ -12,13 +12,8 @@ import {
 import { createSpatialState } from './spatial-core.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 
-function messageContent(message) {
-  if (!message || typeof message !== 'object') return '';
-  if (typeof message.mes === 'string') return message.mes;
-  if (typeof message.content === 'string') return message.content;
-  if (typeof message.text === 'string') return message.text;
-  return '';
-}
+// A host message's text (`mes` first), as lineage fingerprints have always read it.
+const messageContent = hostMessageText;
 
 export function fingerprintMessage(message) {
   return hashText(stableStringify({

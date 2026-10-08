@@ -33,6 +33,15 @@ export function messageText(message) {
   return '';
 }
 
+// The text of a SillyTavern host message: its `mes` first (a stale `content` another extension left behind is
+// never read before it), then `content` or `text`.
+export function hostMessageText(message) {
+  if (typeof message?.mes === 'string') return message.mes;
+  if (typeof message?.content === 'string') return message.content;
+  if (typeof message?.text === 'string') return message.text;
+  return '';
+}
+
 // The conversational role of a chat row. A row that is neither user nor assistant is system.
 export function messageRole(message) {
   if (message?.role === 'user' || message?.is_user === true) return 'user';

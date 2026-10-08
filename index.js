@@ -38,7 +38,7 @@ import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelev
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
 import { activeCampaignPlaceCount, normalizeSpatialProfile, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
-import { clone, messageText } from './common.js';
+import { clone, hostMessageText as messageText } from './common.js';
 import { createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
@@ -832,6 +832,23 @@ function sameHistoryEntries(leftEntries, rightEntries) {
   return true;
 }
 
+// A reconciled lineage is freshly hashed, so no entry is the cached object: its fields are compared instead of
+// stringifying every entry.
+const LINEAGE_FIELDS = ['messageId', 'fingerprint', 'lineageKey', 'parentLineageKey', 'role', 'narrationFingerprint'];
+function sameLineage(leftEntries, rightEntries) {
+  const left = Array.isArray(leftEntries) ? leftEntries : [];
+  const right = Array.isArray(rightEntries) ? rightEntries : [];
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (a === b) continue;
+    if (!a || !b || Object.keys(a).length !== Object.keys(b).length) return false;
+    if (LINEAGE_FIELDS.some(field => a[field] !== b[field])) return false;
+  }
+  return true;
+}
+
 // Both sides are normalized states (the cache, a reducer or branch result), so they are compared as they are,
 // without a copy. `domainUnchanged`: the caller knows the canonical domain was carried over unchanged (a
 // reconcile that only extended or re-proved the lineage), so only the fields that can still differ are read.
@@ -839,7 +856,7 @@ function stateChanged(left, right, { domainUnchanged = false } = {}) {
   if (left === right) return false;
   if (domainUnchanged) {
     if (stableStringify(left?.recoveryRequired ?? null) !== stableStringify(right?.recoveryRequired ?? null)) return true;
-    return !sameHistoryEntries(left?.lineage, right?.lineage);
+    return !sameLineage(left?.lineage, right?.lineage);
   }
   const rest = state => Object.fromEntries(Object.entries(state || {}).filter(([key]) => !HISTORY_FIELDS.includes(key)));
   if (stableStringify(rest(left)) !== stableStringify(rest(right))) return true;
@@ -4975,16 +4992,17 @@ export async function openWorldStatePanel() {
   return true;
 }
 
-// The panel's assistant-reply count, recounted only when the chat changes (a chat event, another length or
-// array) or a second has passed (hiding a message sends no event), not on every panel refresh.
+// The panel's assistant-reply count, recounted only when the chat changes (a chat event, another chat or
+// length) or a second has passed (hiding a message sends no event), not on every panel refresh. The memo
+// keeps no reference to the chat itself.
 let assistantBoundaryMemo = null;
 function assistantBoundaryCount(chatKey, chat) {
   const events = chatEventCounts.get(chatKey) || 0;
   const memo = assistantBoundaryMemo;
-  if (memo && memo.chat === chat && memo.chatKey === chatKey && memo.length === chat.length && memo.events === events
+  if (memo && memo.chatKey === chatKey && memo.length === chat.length && memo.events === events
     && Date.now() - memo.at < 1000) return memo.count;
   const count = chat.filter(message => messageRole(message) === 'assistant' && messageText(message).trim()).length;
-  assistantBoundaryMemo = { chat, chatKey, length: chat.length, events, at: Date.now(), count };
+  assistantBoundaryMemo = { chatKey, length: chat.length, events, at: Date.now(), count };
   return count;
 }
 
