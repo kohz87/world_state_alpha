@@ -1191,7 +1191,7 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   assert.match(source, /addEventListener\?\.\('pagehide', \(\) => flushAllOperationLogs\(\)\)/);
   assert.match(source, /return 'world-state-alpha-ops-' \+ hashText\(String\(chatKey\)\) \+ '\.json';/);
   assert.match(source, /raw\.format !== OPERATION_LOG_FORMAT[\s\S]{0,120}raw\.chatKey !== chatKey/);
-  assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.records\(chatKey\), OPERATION_LOG_LIMIT\);/);
+  assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.allRecords\(chatKey\), OPERATION_LOG_LIMIT\);/);
   assert.match(source, /return withWorldStateFileLock\(operationLogFile\(chatKey\), task\);/);
   assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return false;/);
   assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);
@@ -1224,7 +1224,7 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
   const consumeAt = body.indexOf('rebuildResumes.delete(chatKey);\n    const priorTotals');
   assert.ok(consumeAt > body.indexOf('attached Spatial base map is unavailable') && consumeAt < body.indexOf('runManualRebuild({'));
   const cacheStart = source.indexOf('function setCachedState(');
-  assert.match(source.slice(cacheStart, cacheStart + 400), /rebuildResumes\.delete\(chatKey\)/);
+  assert.match(source.slice(cacheStart, cacheStart + 700), /rebuildResumes\.delete\(chatKey\)/);
   assert.match(body, /resume: savedResume\?\.resume \|\| null,/);
 
   // Only a genuine failure that is still current leaves a resume point.

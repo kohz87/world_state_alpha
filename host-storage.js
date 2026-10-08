@@ -159,7 +159,7 @@ export function createSillyTavernWorldStateStorageAdapter({
     }
   }
 
-  async function write({ path, expectedRevision = 0, body } = {}) {
+  async function write({ path, expectedRevision = 0, body, replaceCorrupt = false } = {}) {
     const target = text(path);
     if (!target) throw new Error('World State Alpha sidecar path is required.');
 
@@ -172,16 +172,21 @@ export function createSillyTavernWorldStateStorageAdapter({
       const decoded = decodeSidecar(body);
 
       const currentText = await read(physical);
-      if (currentText === null) {
-        if (expected !== 0) return { conflict: true };
-      } else {
-        let current;
+      let current = null;
+      if (currentText !== null) {
         try {
           current = decodeSidecar(currentText);
         } catch (error) {
-          error.retryable = false;
-          throw error;
+          // A recovery baseline (revision 1) may replace a file that is not a readable sidecar.
+          if (!(replaceCorrupt && expected === 0 && error?.code === 'WORLD_STATE_CORRUPT_SIDECAR')) {
+            error.retryable = false;
+            throw error;
+          }
         }
+      }
+      if (current === null) {
+        if (expected !== 0) return { conflict: true };
+      } else {
         // A retry of a write that already landed (its response was lost) finds exactly this body.
         if (Number(current.revision || 0) === expected + 1 && current.checksum === decoded.checksum) {
           return { path: physical, revision: current.revision };

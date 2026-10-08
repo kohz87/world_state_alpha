@@ -1,3 +1,4 @@
+import { hashText, stableStringify } from './hash.js';
 import { parseBaseMap } from './spatial-base-map.js';
 
 export async function storeBaseMapSource(adapter, rawBaseMap) {
@@ -45,7 +46,16 @@ export async function loadBaseMapSource(adapter, pointer) {
     const parsed = parseBaseMap(candidate);
 
     if (pointer.digest && parsed.digest !== pointer.digest) {
-      throw new Error('World State Alpha base map digest mismatch for pointer: ' + pointer.id);
+      // A map stored by an earlier version may hold a name or version cut right after a space, which
+      // re-parsing now trims: it is still the attached map when the stored content itself has that digest.
+      const stored = hashText(stableStringify({
+        id: candidate?.id, name: candidate?.name, version: candidate?.version,
+        profile: candidate?.profile ?? null, locations: candidate?.locations, routes: candidate?.routes,
+      }));
+      if (stored !== pointer.digest) {
+        throw new Error('World State Alpha base map digest mismatch for pointer: ' + pointer.id);
+      }
+      return Object.freeze({ ...parsed, digest: pointer.digest });
     }
 
     return parsed;

@@ -121,6 +121,8 @@ export async function writeSidecar({
   appVersion = '',
   maxAttempts = LIMITS.storageAttempts,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  // An explicit recovery may replace a current file that is not a readable sidecar (never a valid one).
+  replaceCorrupt = false,
 }) {
   if (!adapter || typeof adapter.write !== 'function') throw new Error('storage adapter.write is required');
   const path = pointer?.path || makeSidecarPath(chatKey);
@@ -148,7 +150,7 @@ export async function writeSidecar({
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const result = await adapter.write({ path, expectedRevision, body });
+      const result = await adapter.write({ path, expectedRevision, body, ...(replaceCorrupt ? { replaceCorrupt: true } : {}) });
       if (result?.conflict) {
         const recovered = await recoverCommittedWrite();
         if (recovered) return recovered;

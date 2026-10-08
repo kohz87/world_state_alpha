@@ -36,6 +36,13 @@ function subjectModifiers(summary, otherTokens) {
       const word = words[index];
       const lower = word.toLocaleLowerCase();
       const noun = words[index + 1].toLocaleLowerCase();
+      // A number right after a capitalized shared noun is an identifier ("Squad 12", "Gate 3"); after a
+      // lowercase word it is a quantity ("has lasted 3 days"), and only an ordinal (1st) names a subject.
+      const following = lower;
+      if (/^\p{N}+$/u.test(noun) && /^\p{Lu}/u.test(word) && !STOP.has(following) && otherTokens.has(following) && !otherTokens.has(noun)) {
+        if (!modifiers.has(following)) modifiers.set(following, new Set());
+        modifiers.get(following).add(noun);
+      }
       if (STOP.has(noun) || !otherTokens.has(noun) || otherTokens.has(lower) || STOP.has(lower)) continue;
       // A name (capitalized, not a sentence's first word), an ordinal number (1st, 2nd), or a direction/ordinal word.
       const distinguishing = DISTINGUISHING_WORDS.has(lower) || /^\p{N}+(?:st|nd|rd|th)$/u.test(lower)
@@ -92,7 +99,7 @@ export function mergeAnchors(existing = [], incoming = [], max = 20) {
   return out;
 }
 
-function explicitNewEpisodeRelated(candidate, prior, score, threshold) {
+function explicitNewEpisodeRelated(candidate, prior, score, threshold, { beyondAnchorWords = false } = {}) {
   // The anchor fallback below must not merge different subjects (north/south gate) that the score keeps apart.
   if (distinctSubjects(candidate?.summary, prior?.summary)) return false;
   if (score >= threshold) return true;
@@ -101,10 +108,14 @@ function explicitNewEpisodeRelated(candidate, prior, score, threshold) {
   const sharedAnchors = [...candidateAnchors].filter(anchor => priorAnchors.has(anchor));
   const strongSharedAnchor = sharedAnchors.some(anchor => anchor.includes(' '));
 
+  // Before an active record absorbs the new episode (its summary is replaced), the shared summary words must
+  // go beyond the shared anchor's own words: "lower city" in both says nothing more than the anchor, so it
+  // cannot tie a plague to food riots. Linking to the episode's own earlier record keeps the looser rule.
+  const anchorWords = new Set(beyondAnchorWords ? sharedAnchors.flatMap(anchor => anchor.split(' ')) : []);
   const candidateSummary = tokenSet(candidate?.summary || '');
   const priorSummary = tokenSet(prior?.summary || '');
   let sharedSummaryTokens = 0;
-  for (const token of candidateSummary) if (priorSummary.has(token)) sharedSummaryTokens += 1;
+  for (const token of candidateSummary) if (priorSummary.has(token) && !anchorWords.has(token)) sharedSummaryTokens += 1;
 
   return strongSharedAnchor && sharedSummaryTokens >= 2;
 }
@@ -143,7 +154,7 @@ export function consolidateCreateCandidate(
     for (const record of records) {
       if (record.status !== 'active') continue;
       const activeScore = duplicateSimilarity(mutation, record);
-      if (!explicitNewEpisodeRelated(mutation, record, activeScore, threshold)) continue;
+      if (!explicitNewEpisodeRelated(mutation, record, activeScore, threshold, { beyondAnchorWords: true })) continue;
       if (!activeDuplicate || activeScore > activeDuplicate.score) {
         activeDuplicate = { record, score: activeScore };
       }

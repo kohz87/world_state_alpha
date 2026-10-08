@@ -280,14 +280,21 @@ function keyedBy(items) {
   return new Map(items.map(item => [item.id, item]));
 }
 
+// A removed entry also records where it stood (`at`), so undoing the removal puts it back in place: list
+// order is part of the state a checkpoint is compared with.
 function keyedUndo(beforeItems, afterItems) {
   const before = keyedBy(beforeItems);
   const after = keyedBy(afterItems);
+  const positions = new Map(beforeItems.map((item, index) => [item.id, index]));
   const ids = new Set([...before.keys(), ...after.keys()]);
   const out = [];
   for (const id of ids) {
     const left = before.get(id) ?? null;
     const right = after.get(id) ?? null;
+    if (left && !right) {
+      out.push({ id, before: clone(left), at: positions.get(id) });
+      continue;
+    }
     if (stableStringify(left) !== stableStringify(right)) out.push({ id, before: left ? clone(left) : null });
   }
   return out;
@@ -314,11 +321,18 @@ export function buildUndoPatch(beforeState, afterState) {
 
 function restoreKeyed(items, changes) {
   const map = keyedBy(items);
+  const reinserted = [];
   for (const change of changes || []) {
     if (change.before === null) map.delete(change.id);
+    else if (!map.has(change.id) && Number.isInteger(change.at)) reinserted.push(change);
     else map.set(change.id, clone(change.before));
   }
-  return [...map.values()];
+  const out = [...map.values()];
+  // Ascending, so each lands where it stood before the removal (older patches without `at` append).
+  for (const change of reinserted.sort((left, right) => left.at - right.at)) {
+    out.splice(Math.min(change.at, out.length), 0, clone(change.before));
+  }
+  return out;
 }
 
 export function applyUndoPatch(inputState, patch) {
