@@ -9,7 +9,7 @@ import {
 
 import { chatLineage, commitMutationBoundary, contentLineageKey, contentLineageKeys, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, relinkParkedBranches, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, boundedExchangeText, CAPTURE_LIMITS, hiddenConversationRole, isNarratorMessage, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
-import { affectsCaptureRecovery, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
+import { affectsCaptureRecovery, CAPTURE_FORFEITED, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
 import { hashText, stableStringify } from './hash.js';
@@ -44,7 +44,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.59';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.60';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -3405,8 +3405,78 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
     payload = { ...payload, file };
   }
 
+  if (actionId === 'forfeit_capture') {
+    if (rebuildRunning(chatKey)) return refuseForfeitDuringRebuild();
+    return queueChatWork(chatKey, () => forfeitMissedCapture(chatKey, payload))
+      .catch(error => actionFailed('Forfeit missed capture', error, chatKey));
+  }
+
   return queueChatWork(chatKey, () => applyMaintenanceActionNow(actionId, payload, chatKey))
     .catch(error => actionFailed('World State maintenance (' + actionId + ')', error, chatKey));
+}
+
+function rebuildRunning(chatKey) {
+  return ['running', 'cancelling', 'committing'].includes(rebuildStatuses.get(chatKey)?.phase);
+}
+
+function refuseForfeitDuringRebuild() {
+  notify('warning', 'A rebuild is running. Forfeit a missed capture after it finishes.');
+  refreshPanel();
+  return false;
+}
+
+// Another device may already have recovered or forfeited a missed capture: merge the saved Operations log
+// before acting on the failures. False when the chat changed meanwhile.
+async function mergeSavedOperationLog(chatKey) {
+  const saved = await readOperationLog(chatKey).catch(() => []);
+  if (currentChatKey() !== chatKey) return false;
+  if (saved.length) diagnosticStore.merge(chatKey, saved);
+  return true;
+}
+
+// Forfeiting a missed capture gives it up without a rebuild. It writes only an Operations-log row for that
+// exact message version, so it needs no sidecar read or write: World State is untouched and nothing is
+// recovered for it (a later Recapture or rebuild covering the message still re-reads it). A new version of
+// the message (a swipe or an edit) is captured, and a failure of it listed, as usual.
+async function forfeitMissedCapture(chatKey, payload) {
+  if (currentChatKey() !== chatKey) return false;
+  if (rebuildRunning(chatKey)) return refuseForfeitDuringRebuild();
+  if (!await mergeSavedOperationLog(chatKey)) return false;
+  const messageId = Number(payload?.messageId);
+  const chat = getContext().chat || [];
+  const cached = stateCache.get(chatKey)?.lineage || [];
+  if (!Number.isInteger(messageId) || messageId < 0 || messageId >= chat.length || !pendingCaptureFailures(chatKey).includes(messageId)) {
+    notify('error', 'That missed capture is no longer listed. Review the panel and try again.');
+    refreshPanel();
+    return false;
+  }
+  // The row names the message's current version; without a cached lineage for it, the live chat's.
+  const lineage = cached[messageId]?.lineageKey ? cached : chatLineage(chat);
+  const lineageKey = lineage[messageId]?.lineageKey || '';
+  if (!lineageKey) {
+    notify('error', 'That message cannot be identified safely. Use Recapture or a rebuild instead.');
+    return false;
+  }
+  if (!window.confirm('Forfeit the missed capture of message ' + messageId + '?\n\n'
+    + 'World State does not change: whatever that reply established stays uncaptured unless you add it by hand. '
+    + 'It is no longer listed as a missed capture, but a later Recapture or rebuild that covers this message still re-reads it.')) return false;
+  if (currentChatKey() !== chatKey || rebuildRunning(chatKey)) return false;
+  diagnosticStore.record(chatKey, {
+    operationId: 'capture:' + messageId + ':forfeited:' + Date.now(),
+    label: 'capture',
+    sourceMessageId: messageId,
+    lineageKey,
+    contentLineageKey: currentContentLineageKeys(chat, lineage, [messageId]).get(messageId) || '',
+    outcome: CAPTURE_FORFEITED,
+    code: 'WORLD_STATE_CAPTURE_FORFEITED',
+    detail: 'The operator forfeited this missed capture; World State was not changed.',
+  });
+  // Saved at once: recording it can trim away the failure it clears, which would otherwise leave it to the
+  // log's quiet period.
+  scheduleOperationLogSave(chatKey, { now: true });
+  notify('success', 'Missed capture of message ' + messageId + ' forfeited. World State is unchanged.');
+  refreshPanel();
+  return true;
 }
 
 // A panel action that throws (an unreadable import, a failed save) tells the operator instead of failing
@@ -3548,12 +3618,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     // earliest unrecovered live capture failure. The request must name that
     // exact message, so a stale panel can never start an arbitrary range.
     const recapture = rebuildRequest.recaptureFailed === true && !savedResume;
-    if (recapture) {
-      // Another device may already have recovered these; merge the saved log first.
-      const saved = await readOperationLog(chatKey).catch(() => []);
-      if (currentChatKey() !== chatKey) return;
-      if (saved.length) diagnosticStore.merge(chatKey, saved);
-    }
+    if (recapture && !await mergeSavedOperationLog(chatKey)) return;
     const recaptureFailures = recapture ? pendingCaptureFailures(chatKey) : [];
     if (recapture && (!recaptureFailures.length || recaptureFailures[0] !== rebuildRequest.fromMessageId)) {
       notify('error', 'The failed captures changed since the panel was drawn. Review the panel and try again.');

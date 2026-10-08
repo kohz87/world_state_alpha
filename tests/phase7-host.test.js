@@ -540,7 +540,8 @@ test('host Recapture failed messages is a guarded From-message rebuild at the ea
   assert.match(source, /unrecoveredCaptureFailures\(diagnosticStore\.recoveryRows\(chatKey\)\)[\s\S]{0,300}messageRole\(chat\[messageId\]\) === 'assistant'[\s\S]{0,400}lineage\[item\.messageId\]\?\.lineageKey === item\.lineageKey/);
   assert.match(source, /captureFailures: pendingCaptureFailures\(chatKey\)/);
   // The saved log is merged first, so another device's recovery is honoured.
-  assert.match(source, /if \(recapture\) \{[\s\S]{0,200}await readOperationLog\(chatKey\)[\s\S]{0,200}diagnosticStore\.merge\(chatKey, saved\)/);
+  assert.match(source, /if \(recapture && !await mergeSavedOperationLog\(chatKey\)\) return;/);
+  assert.match(source, /async function mergeSavedOperationLog\(chatKey\) \{[\s\S]{0,200}await readOperationLog\(chatKey\)[\s\S]{0,200}diagnosticStore\.merge\(chatKey, saved\)/);
   // The request must name the current earliest failure; a stale panel cannot start an arbitrary range.
   assert.match(source, /const recapture = rebuildRequest\.recaptureFailed === true && !savedResume;/);
   assert.match(source, /recaptureFailures\[0\] !== rebuildRequest\.fromMessageId\)\) \{[\s\S]{0,160}failed captures changed/);

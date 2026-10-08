@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.0-alpha.60 - Forfeit a missed capture
+
+### Added
+
+- **Forfeit a missed capture without a rebuild.** The Missed captures notice on the World view now has a Forfeit button for each listed message, next to Recapture.
+  - After a confirmation, that message is no longer listed as a missed capture. A later Recapture or rebuild that covers it still re-reads it.
+  - World State does not change: whatever that reply established stays uncaptured unless you add it by hand.
+  - Forfeit applies to that version of the message only. A new swipe or edit of it is captured as usual, and a later failure of the same version is listed again.
+  - The decision is saved to the chat's Operations log at once, so it holds after a reload and on other devices.
+  - It is not offered inside the rebuild sheet, and it is refused while a rebuild runs.
+  - Up to 40 messages get a Forfeit button; any beyond those appear once earlier ones are forfeited or recovered.
+
+### Architecture
+
+- The forfeit is a `forfeited` capture row in the non-canonical Operations log, bound to the message's lineage and hide-insensitive keys. It clears failures the way a successful capture does. No World State or durable format change (schema 2; envelopes 1).
+- Core contract C19 records the rule.
+
+### Validation
+
+- New `tests/audit-alpha60.test.js` (4 tests, each failing on 0.9.0-alpha.59; the fourth and the scenario's rebuild, full-log and unreadable-sidecar steps also fail on the pre-review code) and host scenario `tests/host/forfeit-capture.mjs`.
+- Live in SillyTavern, with a capture failure forced on message 2:
+  - the notice offered "Forfeit without recovering: Message 2";
+  - declining the confirmation kept it listed;
+  - accepting cleared the notice and showed "Missed capture of message 2 forfeited. World State is unchanged.";
+  - the record count stayed at 2, and the notice stayed cleared after a page reload.
+- The branch, resume and hide live scripts give the same results as on alpha.59.
+
+### Code review hardening
+
+- Forfeit no longer reads or refreshes the World State file. It touches only the Operations log, so an unreachable sidecar or a hydration error no longer blocks it or drops it silently.
+- It is saved at once even when the in-memory log is full. Recording it could trim away the failure it cleared, which left the save to the log's quiet period.
+- It is refused at once while a rebuild runs instead of waiting behind the rebuild.
+- A failure listed without a cached lineage for its message can be forfeited (the live chat identifies the message).
+- Forfeit buttons cover up to 40 listed messages, not just the 12 the notice names.
+- The confirmation says a later Recapture or rebuild covering the message still re-reads it.
+- One helper merges the saved Operations log before Recapture and Forfeit, and one outcome set decides which capture rows clear a failure.
+
 ## 0.9.0-alpha.59 - Performance, contract text and cleanups (deep pass on alpha.54)
 
 ### Fixed

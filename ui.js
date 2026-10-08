@@ -706,6 +706,8 @@ export function buildWorldStateUiModel(state, {
           return {
             count: ids.length,
             messageIds: ids.slice(0, 12),
+            // Forfeit is offered per message, for more of them than the notice names.
+            forfeitIds: ids.slice(0, FORFEIT_BUTTON_LIMIT),
             fromMessageId: ids[0],
             bootstrapRequired,
             // Starting at message 0 is a clean-root rebuild; later starts need their exact prefix still journaled.
@@ -1503,6 +1505,8 @@ function tabLabel(tab) {
   return 'Data';
 }
 
+const FORFEIT_BUTTON_LIMIT = 40;
+
 function captureFailuresHtml(failures, { running = false, inSheet = false } = {}) {
   if (!failures) return '';
   const count = failures.count;
@@ -1523,8 +1527,19 @@ function captureFailuresHtml(failures, { running = false, inSheet = false } = {}
     : failures.bootstrapRequired
       ? 'This chat has no durable World State baseline yet, so recovering it needs a Full chat rebuild.'
       : 'History before message ' + failures.fromMessageId + ' is no longer journaled, so recovering it needs a Full chat rebuild.';
+  // Forfeit gives a listed capture up without a rebuild (not offered inside the rebuild sheet or while one runs).
+  const forfeitIds = Array.isArray(failures.forfeitIds) ? failures.forfeitIds : failures.messageIds;
+  const unlisted = count - forfeitIds.length;
+  const forfeit = running || inSheet
+    ? ''
+    : '<div class="wsa-forfeit-captures"><span>Forfeit without recovering:</span>' +
+      forfeitIds.map(messageId => '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-forfeit-capture="' +
+        escapeHtml(String(messageId)) + '" aria-label="Forfeit the missed capture of message ' + escapeHtml(String(messageId)) +
+        '" title="Stop listing this missed capture. World State does not change.">Message ' +
+        escapeHtml(String(messageId)) + '</button>').join('') +
+      (unlisted > 0 ? '<span>and ' + unlisted + ' more (shown once these are forfeited or recovered)</span>' : '') + '</div>';
   return '<div class="wsa-rebuild-safety wsa-capture-failures" role="status"><strong>Missed captures</strong><p>' +
-    escapeHtml(lead) + ' ' + escapeHtml(body) + '</p>' + action + '</div>';
+    escapeHtml(lead) + ' ' + escapeHtml(body) + '</p>' + action + forfeit + '</div>';
 }
 
 function resumeRebuildButtonHtml(resume) {
@@ -2340,6 +2355,21 @@ export function createWorldStateUiController({
     if (closest(event.target, '[data-wsa-cancel-rebuild]')) {
       if (typeof onMaintenanceAction === 'function') await onMaintenanceAction('cancel_rebuild', {});
       refresh();
+      return;
+    }
+
+    // Forfeit names one listed message; repeat clicks are ignored while its confirmation and save run.
+    const forfeitButton = closest(event.target, '[data-wsa-forfeit-capture]');
+    if (forfeitButton) {
+      const messageId = Number.parseInt(forfeitButton.dataset?.wsaForfeitCapture ?? forfeitButton.getAttribute?.('data-wsa-forfeit-capture'), 10);
+      if (!Number.isInteger(messageId) || ui.forfeitPending) return;
+      ui.forfeitPending = true;
+      // The host re-renders the panel when a forfeit is refused or saved; a declined one changes nothing.
+      try {
+        if (typeof onMaintenanceAction === 'function') await onMaintenanceAction('forfeit_capture', { messageId });
+      } finally {
+        ui.forfeitPending = false;
+      }
       return;
     }
 
