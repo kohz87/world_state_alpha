@@ -2318,6 +2318,20 @@
 
 /* Single-pane tablet and mobile */
 
+/* A short window (a landscape phone): the 420px minimum would overflow the fixed shell and push the header
+   and close button above the screen, so the panel fills the height instead. */
+@media (max-height: 500px) {
+  .wsa-shell {
+    padding: 0;
+  }
+
+  .wsa-panel {
+    height: 100dvh;
+    min-height: 0;
+    border-radius: 0;
+  }
+}
+
 @media (max-width: 767px) {
   .wsa-shell {
     padding: 0;

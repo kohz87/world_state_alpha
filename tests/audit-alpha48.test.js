@@ -277,8 +277,8 @@ test('A20/A29 for Places: a specific name and the newest Chinese name reach the 
 });
 
 test('review hardening: a profile draft ends on save or reset', async () => {
-  const profileResult = false;
-  const { ctl, dom, click } = await placesPanel({ onSpatialAction: async () => profileResult });
+  // The save is rejected; the reset is applied (a declined reset keeps the draft, see alpha.53 item 17).
+  const { ctl, dom, click } = await placesPanel({ onSpatialAction: async action => action === 'reset_profile' });
   await click('[data-wsa-map-settings]');
   const unit = () => dom.field('data-wsa-profile-field', 'unitKm');
   unit().value = '5';

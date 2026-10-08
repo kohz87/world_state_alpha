@@ -1002,7 +1002,7 @@ test('panel re-render restores remembered scroll from scroll events, keyed by li
   assert.match(source, /root\.removeEventListener\('scroll', scrolled, true\)/);
   assert.match(source, /root\.innerHTML = renderWorldStatePanel[\s\S]{0,600}restoreScroll\(\);/);
   // The list identity covers chat, tab and filters; detail panes also cover the selection.
-  assert.match(source, /getChatKey\(\),[\s\S]{0,200}ui\.activeTab,[\s\S]{0,60}ui\.query,[\s\S]{0,60}ui\.spatialSearch/);
+  assert.match(source, /getChatKey\(\),[\s\S]{0,200}ui\.activeTab,[\s\S]{0,60}ui\.query(?:\.trim\(\))?,[\s\S]{0,60}ui\.spatialSearch/);
   assert.match(source, /ui\.selectedRecordId, ui\.selectedSpatialKey/);
   for (const selector of ['.wsa-view', '.wsa-place-list', '.wsa-detail-pane', '.wsa-map-settings-body', '.wsa-rebuild-sheet']) {
     assert.ok(source.includes("'" + selector + "'"), selector);

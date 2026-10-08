@@ -519,6 +519,12 @@ export function buildWorldStateUiModel(state, {
   const resolved = resolvedAll.slice(0, WORLD_STATE_UI_LIMITS.resolvedRecords);
   const requestedSelection = uiKeyByRecordId.get(clean(selectedRecordId, 120)) || clean(selectedRecordId, 120);
   const recordViews = { current, recent, resolved, search: searched };
+  // A record opened by link may lie beyond the bounded list: it is shown at the end of its own view.
+  const requestedRow = requestedSelection ? projected.find(row => row.key === requestedSelection) : null;
+  if (requestedRow && !(recordViews[activeView] || current).some(row => row.key === requestedSelection)
+    && ((activeView === 'current' && requestedRow.status === 'active') || (activeView === 'resolved' && requestedRow.status !== 'active'))) {
+    recordViews[activeView] = [...recordViews[activeView], requestedRow];
+  }
   const preferredView = recordViews[activeView] || current;
   const key = requestedSelection && preferredView.some(row => row.key === requestedSelection)
     ? requestedSelection
@@ -630,7 +636,7 @@ export function buildWorldStateUiModel(state, {
       spatialCampaign: normalized.spatial.locations.filter(loc => loc.status !== 'archived').length,
       spatialBase: baseMap ? (baseMap.locations?.length || 0) : 0,
     },
-    views: { current, recent, resolved, search: searched },
+    views: recordViews,
     latestMessage: latestMessage >= 0 ? latestMessage : null,
     spatial: {
       locations: boundedSpatial,
@@ -664,6 +670,8 @@ export function buildWorldStateUiModel(state, {
     },
     search: {
       query: searchQuery,
+      // What the search box shows: the text as typed, trailing space included.
+      text: String(query ?? '').slice(0, 500),
       totalMatched: searchResult.totalMatched,
     },
     selectedRecordId: key,
@@ -1327,7 +1335,7 @@ function recordsViewHtml(model, tab, { detailOpen = false, bulk = null } = {}) {
   const toolbar = tab === 'search'
     ? '<div class="wsa-view-toolbar wsa-search-toolbar">' +
       '<label class="wsa-input-icon wsa-search-inline">' + icon('search') + '<input type="search" data-wsa-search value="' +
-      escapeHtml(model.search.query) + '" autocomplete="off" spellcheck="false" placeholder="Search records…" aria-label="Search world state records"></label>' +
+      escapeHtml(model.search.text ?? model.search.query) + '" autocomplete="off" spellcheck="false" placeholder="Search records…" aria-label="Search world state records"></label>' +
       (model.search.query
         ? '<p class="wsa-search-summary">' + model.search.totalMatched + ' result' + (model.search.totalMatched === 1 ? '' : 's') +
           ' for “' + escapeHtml(model.search.query) + '”</p>' +
@@ -1365,11 +1373,10 @@ function operationTime(value) {
   }
 }
 
-function jsonInspector(title, textValue, index, kind) {
+function jsonInspector(title, textValue, kind) {
   if (!textValue) return '';
   return '<section class="wsa-operation-json"><div class="wsa-operation-json-head"><h4>' + escapeHtml(title) + '</h4>' +
-    '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-copy-json="' + escapeHtml(kind) +
-    '" data-wsa-diagnostic-index="' + index + '">Copy</button></div>' +
+    '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-copy-json="' + escapeHtml(kind) + '">Copy</button></div>' +
     '<pre tabindex="0">' + escapeHtml(textValue) + '</pre></section>';
 }
 
@@ -1414,8 +1421,8 @@ function diagnosticsHtml(model) {
         '<div><dt>Response chars</dt><dd>' + item.responseChars + '</dd></div>' +
         '<div><dt>Duration</dt><dd>' + item.durationMs + ' ms</dd></div>' +
         '</dl>' +
-        jsonInspector('Model response JSON', item.responseJson, index, 'response') +
-        jsonInspector('Rejected mutations / reasons', item.rejectionsJson, index, 'rejections') +
+        jsonInspector('Model response JSON', item.responseJson, 'response') +
+        jsonInspector('Rejected mutations / reasons', item.rejectionsJson, 'rejections') +
         '</div></details>';
     }).join('')
     : emptyState('No operations yet', 'Capture, rebuild, evolution, and maintenance telemetry will appear here.');
@@ -1735,7 +1742,7 @@ export function renderWorldStatePanel(model, {
     bootstrapRecoveryBannerHtml(model) +
     '<nav class="wsa-tabs" role="tablist" aria-label="World State views">' + tabs +
     '<label class="wsa-input-icon wsa-nav-search">' + icon('search') + '<input type="search" data-wsa-search value="' +
-    escapeHtml(model.search.query) + '" autocomplete="off" spellcheck="false" placeholder="Search records…" aria-label="Search world state records"></label>' +
+    escapeHtml(model.search.text ?? model.search.query) + '" autocomplete="off" spellcheck="false" placeholder="Search records…" aria-label="Search world state records"></label>' +
     '</nav>' +
     '<main class="wsa-body">' + body + '</main>' +
     (tab === 'spatial' ? '' : statusBarHtml(model)) +
@@ -1823,6 +1830,12 @@ export function createWorldStateUiController({
     destroyed: false,
   };
 
+  // A record's status from its row key ('row-' + its index among the normalized records), read only on click.
+  function recordStatusOfKey(key) {
+    const index = Number(/^row-(\d+)$/.exec(key)?.[1]);
+    return Number.isInteger(index) ? normalizeState(cloneState(getState())).records[index]?.status || '' : '';
+  }
+
   function model() {
     return buildWorldStateUiModel(getState(), {
       diagnostics: getDiagnostics(),
@@ -1842,8 +1855,8 @@ export function createWorldStateUiController({
     const list = [
       getChatKey(),
       ui.activeTab,
-      ui.query,
-      ui.spatialSearch,
+      clean(ui.query, 500),
+      clean(ui.spatialSearch, 120),
       ui.spatialDuplicatesOnly ? 1 : 0,
       // Records expand inline, so only the Places layout swaps list and detail panes.
       ui.activeTab === 'spatial' && ui.spatialDetailOpen ? 1 : 0,
@@ -1923,6 +1936,51 @@ export function createWorldStateUiController({
     return false;
   }
 
+  // The field being typed in, so a re-render (a background refresh, a rebuild's progress) can put focus and
+  // the caret back into its replacement instead of dropping them.
+  const FOCUS_ATTRIBUTES = [
+    'data-wsa-field', 'data-wsa-profile-field', 'data-wsa-search', 'data-wsa-spatial-search',
+    'data-wsa-rebuild-start', 'data-wsa-rebuild-max', 'data-wsa-rebuild-last', 'data-wsa-rebuild-hidden',
+    'data-wsa-rebuild-mode',
+  ];
+
+  function focusedField() {
+    const active = globalThis.document?.activeElement;
+    if (!active || typeof active.getAttribute !== 'function') return null;
+    if (typeof root.contains === 'function' && !root.contains(active)) return null;
+    for (const attribute of FOCUS_ATTRIBUTES) {
+      const value = active.getAttribute(attribute);
+      if (value === null) continue;
+      let selection = null;
+      try {
+        if (Number.isInteger(active.selectionStart)) selection = [active.selectionStart, active.selectionEnd];
+      } catch {
+        selection = null;
+      }
+      const radio = active.type === 'radio' ? active.value : null;
+      return { selector: '[' + attribute + (value ? '="' + value + '"' : '') + ']', selection, radio };
+    }
+    return null;
+  }
+
+  function restoreFocusedField(focus) {
+    if (!focus) return false;
+    const candidates = [...(root.querySelectorAll?.(focus.selector) || [])]
+      .filter(item => focus.radio === null || item.value === focus.radio);
+    const element = candidates.find(item => typeof item.getClientRects !== 'function' || item.getClientRects().length > 0) || candidates[0];
+    if (!element || typeof element.focus !== 'function') return false;
+    element.focus({ preventScroll: true });
+    if (focus.selection && typeof element.setSelectionRange === 'function') {
+      try {
+        element.setSelectionRange(focus.selection[0], focus.selection[1]);
+      } catch {
+        // Not a text field.
+      }
+    }
+    // A field re-rendered disabled cannot take focus: the search fallbacks still run.
+    return !globalThis.document || globalThis.document.activeElement === element;
+  }
+
   function refresh({ restoreSearchFocus = false, restoreSpatialFocus = false } = {}) {
     if (ui.destroyed) return null;
     if (composing()) {
@@ -1938,7 +1996,7 @@ export function createWorldStateUiController({
     ui.selectedRecordId = next.selectedRecordId;
     // Bulk mode belongs to one list: changing tab or search text ends it, so a selection can never
     // include rows the operator can no longer see.
-    const bulkScope = ui.activeTab + '|' + ui.query;
+    const bulkScope = ui.activeTab + '|' + clean(ui.query, 500);
     if (bulkScope !== ui.bulkScope) {
       ui.bulkScope = bulkScope;
       ui.bulk.active = false;
@@ -1963,6 +2021,7 @@ export function createWorldStateUiController({
         Math.max(1, next.maintenance.rebuild.chatMessages),
       ),
     );
+    const focus = focusedField();
     root.innerHTML = renderWorldStatePanel(next, {
       activeTab: ui.activeTab,
       detailOpen: ui.detailOpen,
@@ -1978,6 +2037,7 @@ export function createWorldStateUiController({
     });
     restoreDrafts();
     restoreScroll();
+    if (restoreFocusedField(focus)) return next;
 
     if (restoreSearchFocus) {
       const inputs = [...(root.querySelectorAll?.('[data-wsa-search]') || [])];
@@ -2034,11 +2094,8 @@ export function createWorldStateUiController({
   }
 
   async function copyOperationJson(button) {
-    const index = Number(button?.dataset?.wsaDiagnosticIndex);
-    const kind = clean(button?.dataset?.wsaCopyJson, 20);
-    const currentModel = model();
-    const row = Number.isInteger(index) && index >= 0 ? currentModel.diagnostics[index] : null;
-    const value = kind === 'rejections' ? row?.rejectionsJson : row?.responseJson;
+    // The JSON shown beside the button: a row recorded since the last render cannot shift it.
+    const value = String(button?.closest?.('.wsa-operation-json')?.querySelector?.('pre')?.textContent || '');
     if (!value) return;
     if (globalThis.navigator?.clipboard?.writeText) {
       await globalThis.navigator.clipboard.writeText(value);
@@ -2145,9 +2202,8 @@ export function createWorldStateUiController({
     const openRecord = closest(event.target, '[data-wsa-open-record]');
     if (openRecord) {
       const key = clean(openRecord.dataset?.wsaOpenRecord, 120);
-      const currentModel = model();
-      const inCurrent = currentModel.views.current.some(row => row.key === key);
-      ui.activeTab = inCurrent ? 'current' : 'resolved';
+      // Its own status decides the tab, not whether it is among the first rows of Current.
+      ui.activeTab = recordStatusOfKey(key) === 'active' ? 'current' : 'resolved';
       ui.selectedRecordId = key;
       ui.detailOpen = true;
       refresh();
@@ -2404,7 +2460,8 @@ export function createWorldStateUiController({
           spatialModel: currentModel.spatial,
         });
         // A saved or reset profile is the new canonical value; a rejected save keeps what was typed.
-        if (action === 'reset_profile' || result === true) ui.drafts.delete(draftScope('profile'));
+        // (A declined or failed reset changed nothing, so the typed values stay.)
+        if (result === true) ui.drafts.delete(draftScope('profile'));
         refresh();
         return;
       }
@@ -2465,11 +2522,13 @@ export function createWorldStateUiController({
 
     const search = closest(event.target, '[data-wsa-search]');
     if (search) {
-      ui.query = clean(search.value, 500);
-      if (ui.query && ui.activeTab !== 'search') {
+      // The typed text is kept as typed (a trailing space is the start of the next word); matching trims it.
+      ui.query = String(search.value ?? '').slice(0, 500);
+      const typed = ui.query.trim();
+      if (typed && ui.activeTab !== 'search') {
         ui.activeTab = 'search';
         ui.detailOpen = false;
-      } else if (!ui.query && ui.activeTab === 'search') {
+      } else if (!typed && ui.activeTab === 'search') {
         ui.activeTab = 'current';
         ui.detailOpen = false;
       }
@@ -2479,7 +2538,7 @@ export function createWorldStateUiController({
 
     const spatialSearch = closest(event.target, '[data-wsa-spatial-search]');
     if (spatialSearch) {
-      ui.spatialSearch = clean(spatialSearch.value, 120);
+      ui.spatialSearch = String(spatialSearch.value ?? '').slice(0, 120);
       refresh({ restoreSpatialFocus: true });
       return;
     }

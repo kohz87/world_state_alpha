@@ -236,7 +236,9 @@ export function nonAsciiBigrams(value, max = 64, { newestFirst = false } = {}) {
   for (let step = 0; step < chars.length - 1 && out.length < max; step += 1) {
     const index = newestFirst ? chars.length - 2 - step : step;
     const gram = chars[index] + chars[index + 1];
-    if (seen.has(gram)) continue;
+    // Only pairs with a non-ASCII letter (the CJK case this path exists for): plain-ASCII pairs of an
+    // accented Latin text ('de', 'on') are already words, and would spend the whole lookup budget.
+    if (seen.has(gram) || !/[^\x00-\x7F]/u.test(gram)) continue;
     seen.add(gram);
     out.push(gram);
   }
@@ -263,7 +265,13 @@ function indexRecordTerms(record, index) {
       owned.anchorPhrases.push(norm);
       addPosting(index.anchorPhrases, norm, record.id);
     }
-    for (const token of tokens(norm)) {
+    // A multi-word anchor is posted under its content words only ('the shrine 4' under 'shrine' and '4'):
+    // a function word in the scene must not hit every record whose anchor contains it. A one-word anchor
+    // (or one made only of function words) keeps every token, since a name may be one ('Will', 'May').
+    const anchorWords = tokens(norm);
+    // (A multi-word anchor scores only when all its words are in the scene, so its content words find it.)
+    const contentWords = anchorWords.filter(token => !RELEVANCE_STOPWORDS.has(token));
+    for (const token of contentWords.length && anchorWords.length > 1 ? contentWords : anchorWords) {
       if (seenAnchorToken.has(token)) continue;
       seenAnchorToken.add(token);
       owned.anchorTokens.push(token);
@@ -469,6 +477,20 @@ export function updateRelevanceIndex(index, delta = {}) {
   }
 
   for (const link of appendedLinks) addExplicitLink(index, link?.from, link?.to);
+
+  // Developments that left the pool (resolved, superseded, removed) leave the background scan list too, so
+  // they never use a slot of its bounded scan. The cursor keeps its place on the next id still listed.
+  if (index.backgroundDevelopmentIds.length > backgroundSet.size) {
+    const ids = index.backgroundDevelopmentIds;
+    const cursor = ids.length ? index.backgroundCursor % ids.length : 0;
+    // Each id once (a delta may retire and re-add the same development), so the list matches the set again.
+    const seen = new Set();
+    const keep = id => backgroundSet.has(id) && !seen.has(id) && seen.add(id);
+    const kept = ids.filter(keep);
+    seen.clear();
+    index.backgroundCursor = ids.slice(0, cursor).filter(keep).length % Math.max(1, kept.length);
+    index.backgroundDevelopmentIds = kept;
+  }
 
   index.activeCount = index.byId.size;
   if (typeof delta.corpusRecords === 'number') index.corpusRecords = delta.corpusRecords;

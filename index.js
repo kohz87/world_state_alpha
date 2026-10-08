@@ -43,7 +43,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.52';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.53';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -4347,8 +4347,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       decimalStep: 0.1,
       trueNorthLocked: true,
     }, { strict: true });
-    await applyManualProfile(reset, 'Reset manual Coordinate Profile');
-    return;
+    // true only once the reset is saved: a declined or failed reset keeps the operator's typed values.
+    return await applyManualProfile(reset, 'Reset manual Coordinate Profile');
   }
 
   if (actionId === 'add_location_modal') {
