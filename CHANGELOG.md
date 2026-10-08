@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.9.0-alpha.56 - Hearsay, plans and time passing (deep pass on alpha.54)
+
+### Fixed
+
+- **Narration read as hearsay:**
+  - "Without warning", "All told", "Bram swore", "the Free States", "land claims" and "Holy Orders" are narration again. Before, they blocked creates and resolutions, so stale conditions stayed active.
+  - Reporting words count only in their reporting use: "claims" and "states" followed by what is reported, and "swore" with an object.
+  - A reporting verb in a relative or temporal clause ("The guard, who reported the theft, now patrols …") no longer reports the main clause.
+  - A narrated act after "and" ("threatened the villagers and burned the granary") is no longer read as only threatened.
+  - A quoted name ("the "Black Gull" anchors …") is not dialogue.
+  - Dialogue ending in a number ("The toll is now 20") closes, so the rest of the paragraph is narration.
+- **Hearsay read as narration:**
+  - "Lt. Varro reported that the fort has fallen" stays reported: a title or initial no longer ends the sentence.
+  - Single quotes, curly single quotes and 「」『』«» are dialogue. A single quote counts only when it closes in the same paragraph, so apostrophes are not dialogue.
+  - A summary that merely contains "States", "orders" or "claims" as a noun no longer counts as keeping a claim reported.
+  - A rumour can no longer end an arrangement worded as a speech act ("men demanding a levy").
+- **Plans and conditions:**
+  - "If the dam breaks tonight, the valley will flood" no longer becomes "the valley has flooded".
+  - "Tomorrow the duke plans to march" no longer becomes a done deed.
+  - A planned or conditional claim may only establish a summary that keeps it a plan. It never ends a record.
+- **Evidence:**
+  - The planning sections of a `World_State` block (Planted Seeds, timers, phases and similar) and `<think>`/`<reasoning>` blocks are no longer evidence.
+  - A closing tag with a space (`</writer_state >`) no longer strips the whole reply.
+  - An excerpt over 500 characters is cut at a word boundary, so it still grounds.
+  - Anchors must be whole words ("rat" is not in "pirate").
+- **Chinese and Japanese:**
+  - a summary may paraphrase its excerpt;
+  - updates with two-character anchors are accepted;
+  - near-duplicates merge.
+  
+  All three compare adjacent character pairs.
+- **Narrator messages:** a visible `/sys` narrator message no longer ends the exchange, so the user's action before it is captured with the reply that follows. This applies to live capture and rebuild alike.
+- **Time passing:**
+  - "Two weeks had passed", "Weeks later", "Months passed", "Twenty years later", "A fortnight later" and "The next month, …" are recognised.
+  - A modal or "if" counts only in the time phrase's own clause. Modals count in lower case only, so a character named Will no longer cancels a skip.
+  - A later "An hour later" no longer cancels an earlier "Three weeks later".
+  - A planned first mention no longer hides a real day step later in the same message.
+  - "Several" and "many" stay unknown amounts instead of 3 and 5.
+  - Background catch-up fills all three slots when relevant developments were already evaluated at that skip.
+
+These are wording heuristics. Where they conflict, this release keeps plans and rumours out of current state rather than risk admitting them as fact.
+
+### Architecture
+
+- Core contract C06 (capture boundary), C08, C13 (time and background slots) and C20 (planning and reasoning material) record these rules. No durable format change (schema 2; envelopes 1).
+- The sanitizer now strips more, so the stored narration fingerprint of a reply containing reasoning or `World_State` planning lines changes. This matters only when such a reply is rewritten: it is then rolled back instead of rebased. The same was true in alpha.55, where the rewrite itself changed the fingerprint.
+
+### Validation
+
+- New `tests/audit-alpha56.test.js` (17 tests).
+- One alpha.45 assertion now expects the older meaningful skip to win over a later short span.
+- Live in SillyTavern (stub provider), alpha.55 against alpha.56: after "I sneak into the Vault of Kings" and `/sys The alarm Bell rings across the Vault.`, the next reply's capture request now holds both. On alpha.55 it held neither.
+- The branch, hide, partial rebuild, Resume and Places scripts give the same results as on alpha.55.
+
 ## 0.9.0-alpha.55 - Data loss and wrong state (deep pass on alpha.54)
 
 Each fix has a regression test that fails on 0.9.0-alpha.54.
