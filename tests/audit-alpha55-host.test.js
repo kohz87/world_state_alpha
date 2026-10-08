@@ -67,3 +67,29 @@ test('3 and 8: Add place never overwrites a punctuation variant; typed coordinat
   // Before: saved as an unlocked 'unknown' coordinate that derivation could overwrite.
   assert.equal(result.millbrook.authority, 'manual');
 });
+
+// Code review hardening: each fails on the pre-review alpha.55 code.
+
+test('review: a readable sidecar of a newer World State fails closed and a reset never replaces it', () => {
+  const result = scenario('newer-sidecar');
+  // Before: it was taken for a corrupt file, and the reset overwrote the other device's continuity.
+  assert.deepEqual(result, { blocked: true, corruptMarked: false, kept: true });
+});
+
+test('review: after a write conflict, a read older than the revision the conflict found is ignored', () => {
+  const result = scenario('conflict-stale-read');
+  assert.equal(result.armed, 2);
+  // Before: the lagging revision 5 replaced the working copy.
+  assert.notEqual(result.hydratedRevision, 5);
+  assert.ok(result.rows.includes('WORLD_STATE_SERVER_REVISION_REGRESSION_IGNORED'), JSON.stringify(result));
+});
+
+test('review: a damaged sidecar found by a refresh is logged, and a readable restarted one is adopted', () => {
+  const result = scenario('corrupt-refresh');
+  assert.equal(result.corrupt, 'corrupt');
+  assert.equal(result.loggedCorrupt, true);
+  assert.equal(result.markedAfterCorrupt, true);
+  // Before: the restarted revision 1 was ignored as an older read and the damage mark stayed.
+  assert.equal(result.after, 'refreshed');
+  assert.equal(result.markedAfterRecovery, false);
+});

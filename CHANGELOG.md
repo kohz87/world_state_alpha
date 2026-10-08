@@ -43,6 +43,16 @@ Each fix has a regression test that fails on 0.9.0-alpha.54.
   - a Full chat rebuild with Places on: alpha.54 left 0 places; alpha.55 keeps Kings-Rest unchanged.
 - The branch, hide, partial rebuild, Resume, parked-branch, Places and batch scripts give the same results as on alpha.54.
 
+### Code review hardening
+
+- Only a damaged sidecar (not valid JSON, or a checksum that no longer matches) counts as corrupt. A readable file this version cannot use, such as one written by a newer World State on another device, fails closed as before and is never replaced. A recovery replaces only the file recorded as damaged.
+- A refresh that finds the file damaged is logged, and drops the cached revision so a readable file found later (another device's recovery, restarted at revision 1) is adopted. A later readable file clears the damage mark.
+- After a write conflict, a lower server revision is adopted only if it is not older than the revision the conflicting write found. A lagging read is still ignored.
+- A number that counts something ("raid Harrow 3 times a week", "5 silver per wagon", "3,000 soldiers") is a quantity, so a changed count is still one subject; "Squad 12" / "Squad 14" stay two.
+- A rebuild with Places on keeps the far end of an operator relation or route: the model place the rebuild re-created under that name (it can get a new id), or the original place.
+- That rebuild warns and bounds its journal when operator places predate an earlier story change, like the Places-off rebuild. With no operator entities in the history, the overlay is skipped.
+- An adopted server state fingerprints the open chat once for both branch checks.
+
 ## 0.9.0-alpha.54 - Performance and cleanups (deep pass on alpha.49)
 
 Each change has a regression test that fails on 0.9.0-alpha.53. Costs are tested as counts (copies, reads, model builds), never as timings.

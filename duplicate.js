@@ -27,6 +27,18 @@ const DISTINGUISHING_WORDS = new Set([
   'main', 'side', 'central', 'middle',
 ]);
 
+// A number followed by one of these counts something ("3 times a week", "5 silver", "4 days"): it is a
+// quantity that changes, never an identifier, even right after a name ("raid Harrow 3 times").
+const QUANTITY_WORDS = new Set([
+  'time', 'times', 'per', 'percent', 'more', 'less', 'fewer', 'x',
+  'second', 'seconds', 'minute', 'minutes', 'hour', 'hours', 'day', 'days', 'night', 'nights',
+  'week', 'weeks', 'month', 'months', 'season', 'seasons', 'year', 'years',
+  'mile', 'miles', 'league', 'leagues', 'km', 'kilometers', 'kilometres', 'meter', 'meters', 'metre', 'metres',
+  'foot', 'feet', 'yard', 'yards', 'pace', 'paces',
+  'coin', 'coins', 'gold', 'silver', 'copper', 'crown', 'crowns', 'mark', 'marks',
+  'man', 'men', 'people', 'person', 'persons',
+]);
+
 function subjectModifiers(summary, otherTokens) {
   const modifiers = new Map();
   // Per sentence, so a sentence's capitalized first word is never taken for a name.
@@ -37,11 +49,14 @@ function subjectModifiers(summary, otherTokens) {
       const lower = word.toLocaleLowerCase();
       const noun = words[index + 1].toLocaleLowerCase();
       // A number right after a capitalized shared noun is an identifier ("Squad 12", "Gate 3"); after a
-      // lowercase word it is a quantity ("has lasted 3 days"), and only an ordinal (1st) names a subject.
-      const following = lower;
-      if (/^\p{N}+$/u.test(noun) && /^\p{Lu}/u.test(word) && !STOP.has(following) && otherTokens.has(following) && !otherTokens.has(noun)) {
-        if (!modifiers.has(following)) modifiers.set(following, new Set());
-        modifiers.get(following).add(noun);
+      // lowercase word it is a quantity ("has lasted 3 days"), and only an ordinal (1st) names a subject. A
+      // number that counts the next word ("Harrow 3 times", "Tolls 5 silver") or is followed by more digits
+      // ("3,000", "2.5") is a quantity too. Here the number is `noun` and the shared word before it `lower`.
+      const counted = (words[index + 2] || '').toLocaleLowerCase();
+      if (/^\p{N}+$/u.test(noun) && /^\p{Lu}/u.test(word) && !STOP.has(lower) && otherTokens.has(lower) && !otherTokens.has(noun)
+        && !QUANTITY_WORDS.has(counted) && !/^\p{N}/u.test(counted)) {
+        if (!modifiers.has(lower)) modifiers.set(lower, new Set());
+        modifiers.get(lower).add(noun);
       }
       if (STOP.has(noun) || !otherTokens.has(noun) || otherTokens.has(lower) || STOP.has(lower)) continue;
       // A name (capitalized, not a sentence's first word), an ordinal number (1st, 2nd), or a direction/ordinal word.

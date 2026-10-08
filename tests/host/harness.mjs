@@ -11,7 +11,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 
 // Internals a scenario inspects; appended to the temporary copy of index.js only, never to the repository.
 const TEST_EXPORT = `
-export const __test = { applyMaintenanceActionNow, applyMaintenanceAction, applySpatialAction, queueChatWork, reconcileCurrentBranch, refreshChatStateFromServer, branchDirtyChats, stateCache, hydratedPointers, bootstrapRequiredChats, rebuildStatuses, hydrationErrors, diagnosticStore };
+export const __test = { applyMaintenanceActionNow, applyMaintenanceAction, applySpatialAction, queueChatWork, reconcileCurrentBranch, refreshChatStateFromServer, branchDirtyChats, stateCache, hydratedPointers, bootstrapRequiredChats, rebuildStatuses, hydrationErrors, diagnosticStore, corruptSidecars };
 `;
 
 export function prepareHost() {

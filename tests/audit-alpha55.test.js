@@ -7,12 +7,15 @@ import fs from 'node:fs';
 import { chatLineage, commitMutationBoundary, reconcileBranch, seedRootCheckpoint } from '../branch.js';
 import { createDiagnosticStore } from '../diagnostics.js';
 import { consolidateCreateCandidate, distinctSubjects } from '../duplicate.js';
+import { hashText, stableStringify } from '../hash.js';
 import { loadBaseMapSource, storeBaseMapSource } from '../host-base-map.js';
+import { createSillyTavernWorldStateStorageAdapter, worldStateHostDeterministicPath } from '../host-storage.js';
 import { runManualRebuild } from '../rebuild.js';
 import { parseBaseMap } from '../spatial-base-map.js';
 import { normalizeSpatialState, reduceSpatialMutations, resolveEffectiveLocations } from '../spatial-core.js';
 import { applySpatialManualMutation } from '../spatial-manual.js';
-import { createState } from '../state-core.js';
+import { createState, normalizeState } from '../state-core.js';
+import { encodeSidecar } from '../storage.js';
 
 const source = fs.readFileSync('index.js', 'utf8');
 const record = (id, summary, anchors, extra = {}) => ({ id, kind: 'development', status: 'active', summary, anchors, trend: null, evidenceIds: [], ...extra });
@@ -125,4 +128,100 @@ test('54: the Operations log saves every kept row, pinned old failures included'
     assert.ok(source.includes(call), call);
   }
   assert.doesNotMatch(source.slice(0, source.indexOf('function scheduleServerFreshnessRefresh')), /OPERATION_LOG_LIMIT\), diagnosticStore\.records\(chatKey\)/);
+});
+
+// Code review hardening: each fails on the pre-review alpha.55 code.
+
+test('review: a readable sidecar of a newer World State is never replaceable as corrupt', async () => {
+  const physical = worldStateHostDeterministicPath('world_state_alpha/newer.json');
+  const valid = JSON.parse(encodeSidecar({ chatKey: 'chat:n', state: createState('chat:n'), revision: 4 }));
+  // A newer release's schema, with a checksum that matches its content.
+  const { checksum: _checksum, ...payload } = { ...valid, state: { ...valid.state, schemaVersion: 99 } };
+  const newer = JSON.stringify({ ...payload, checksum: hashText(stableStringify(payload)) });
+  const damaged = valid && encodeSidecar({ chatKey: 'chat:n', state: createState('chat:n'), revision: 4 }).slice(0, 80);
+  let serverText = newer;
+  const adapter = createSillyTavernWorldStateStorageAdapter({
+    fetchFn: async (url, options = {}) => {
+      if (url === physical && (options.method || 'GET') === 'GET') return { ok: true, status: 200, text: async () => serverText };
+      if (url === '/api/files/upload') { serverText = 'uploaded'; return { ok: true, status: 200, json: async () => ({ path: physical }) }; }
+      throw new Error('unexpected ' + url);
+    },
+  });
+  const body = encodeSidecar({ chatKey: 'chat:n', state: createState('chat:n'), revision: 1 });
+  // Before: any decode failure counted as corrupt, so a recovery replaced the newer device's continuity.
+  await assert.rejects(adapter.write({ path: physical, expectedRevision: 0, body, replaceCorrupt: physical }), error => error.damaged !== true);
+  assert.equal(serverText, newer);
+  // A damaged file is replaced only at the path recorded as damaged.
+  serverText = damaged;
+  await assert.rejects(adapter.write({ path: physical, expectedRevision: 0, body, replaceCorrupt: physical + '.other' }), /not valid JSON/);
+  assert.equal(serverText, damaged);
+  await adapter.write({ path: physical, expectedRevision: 0, body, replaceCorrupt: physical });
+  assert.equal(serverText, 'uploaded');
+  assert.match(source, /reportCorrupt && error\?\.damaged === true/);
+});
+
+test('review: a count after a name is a quantity, not an identifier', () => {
+  // Before: read as two subjects, so a changed frequency or toll created a second record.
+  assert.equal(distinctSubjects('Bandits raid Harrow 3 times a week', 'Bandits raid Harrow 5 times a week'), false);
+  assert.equal(distinctSubjects('Tolls 5 silver per wagon at the bridge', 'Tolls 3 silver per wagon at the bridge'), false);
+  assert.equal(distinctSubjects('Squad 12 guards the river ford', 'Squad 14 guards the river ford'), true);
+  assert.equal(distinctSubjects('Squad 12 of the Guard holds the ford', 'Squad 14 of the Guard holds the ford'), true);
+});
+
+const millChat = () => [
+  { name: 'You', is_user: true, is_system: false, mes: 'I walk north.' },
+  { name: 'Narrator', is_user: false, is_system: false, mes: 'The road bends past the Old Mill and the Hill Fort.' },
+  { name: 'You', is_user: true, is_system: false, mes: 'I climb the hill.' },
+  { name: 'Narrator', is_user: false, is_system: false, mes: 'The hill is windy.' },
+];
+const millPlace = (name, claim) => ({ action: 'upsert_location', name, type: 'landmark', admissionReason: 'named', evidence: [{ sourceMessageId: 1, claim }] });
+
+test('review: an operator relation to a model place still points at that place after a Places-on rebuild', async () => {
+  const chat = millChat();
+  let state = seedRootCheckpoint(createState('a55r'));
+  state = reconcileBranch(state, chat.slice(0, 2)).state;
+  const claim = 'The road bends past the Old Mill and the Hill Fort.';
+  const lineage = chatLineage(chat.slice(0, 2));
+  const captured = reduceSpatialMutations(state.spatial, { chatKey: 'a55r', messageId: 1, lineageKey: lineage[1].lineageKey, operation: 'capture', mutations: [millPlace('Old Mill', claim)] }, null, { allowBaseScan: true });
+  state = commitMutationBoundary(state, { ...state, spatial: captured.spatial }, chat.slice(0, 2), 1, 'capture');
+  state = reconcileBranch(state, chat).state;
+  const mill = state.spatial.locations.find(loc => loc.name === 'Old Mill');
+  let added = applySpatialManualMutation({ state, chat, chatKey: 'a55r', messageId: 3, note: 'Added', mutation: { action: 'upsert_location', name: 'Greywatch Keep', type: 'keep' } });
+  const keep = added.state.spatial.locations.find(loc => loc.name === 'Greywatch Keep');
+  added = applySpatialManualMutation({ state: added.state, chat, chatKey: 'a55r', messageId: 3, note: 'Keep is north of the mill', mutation: { action: 'upsert_relation', fromId: mill.id, toId: keep.id, direction: 'north', distanceMode: 'unknown' } });
+  assert.equal(added.outcome, 'applied', JSON.stringify(added.rejected || added.reason));
+  // The rebuild meets the Hill Fort first, so the Old Mill gets a new id.
+  const dispatcher = async () => ({ text: JSON.stringify({ mutations: [], spatialMutations: [millPlace('Hill Fort', claim), millPlace('Old Mill', claim)] }), receipt: { route: 'test', dispatched: true } });
+  const full = await runManualRebuild({ ctx: {}, state: added.state, chat, chatKey: 'a55r', isCurrent: () => true, dispatcher, spatialEnabled: true });
+  assert.equal(full.outcome, 'completed');
+  const ids = new Set(full.state.spatial.locations.map(loc => loc.id));
+  const relation = full.state.spatial.relations.find(rel => rel.operatorOwned === true);
+  assert.ok(relation);
+  // Before: the relation kept the old Old Mill id, which no place has any more.
+  assert.ok(ids.has(relation.fromId) && ids.has(relation.toId), JSON.stringify({ relation, ids: [...ids] }));
+  assert.equal(full.state.spatial.locations.find(loc => loc.id === relation.fromId).name, 'Old Mill');
+  assert.equal(full.state.spatial.locations.filter(loc => loc.name === 'Old Mill').length, 1);
+});
+
+test('review: a Places-on rebuild warns when operator places predate an earlier story change', async () => {
+  const chat = millChat();
+  let state = seedRootCheckpoint(createState('a55w'));
+  state = reconcileBranch(state, chat).state;
+  state = applySpatialManualMutation({ state, chat, chatKey: 'a55w', messageId: 3, note: 'Added', mutation: { action: 'upsert_location', name: 'Greywatch Keep', type: 'keep' } }).state;
+  // The journal was trimmed past the place: nothing proves when it appeared.
+  state = normalizeState({ ...state, rollbackJournal: [], rollbackHead: null, rollbackJournalFloorMessageId: 3, checkpoints: [] }, { chatKey: 'a55w' });
+  const edited = chat.map((message, index) => (index === 1 ? { ...message, mes: 'The road bends past fields of rye.' } : message));
+  const dispatcher = async () => ({ text: '{"mutations":[],"spatialMutations":[]}', receipt: { route: 'test', dispatched: true } });
+  const full = await runManualRebuild({ ctx: {}, state, chat: edited, chatKey: 'a55w', isCurrent: () => true, dispatcher, spatialEnabled: true });
+  assert.equal(full.outcome, 'completed');
+  // Before: no warning (only the Places-off rebuild raised it).
+  assert.ok((full.warnings || []).some(item => item.code === 'WORLD_STATE_REBUILD_SPATIAL_HISTORY_UNVERIFIED'), JSON.stringify(full.warnings));
+  assert.ok(full.state.spatial.locations.some(loc => loc.name === 'Greywatch Keep'));
+});
+
+test('review: a rebuild with no operator places skips the overlay; the adopted chat is fingerprinted once', () => {
+  const rebuildSource = fs.readFileSync('rebuild.js', 'utf8');
+  assert.match(rebuildSource, /const operatorTimeline = operatorHistory\?\.hasOperator \? operatorHistory : null;/);
+  const refresh = source.slice(source.indexOf('async function refreshChatStateFromServer('), source.indexOf('async function handleServerRevisionConflict('));
+  assert.equal(refresh.split('chatLineage(').length - 1, 1);
 });

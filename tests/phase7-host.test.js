@@ -185,7 +185,7 @@ test('SillyTavern host storage detects revision conflict before upload', async (
     expectedRevision: 2,
     body: next,
   });
-  assert.deepEqual(result, { conflict: true });
+  assert.deepEqual(result, { conflict: true, currentRevision: 4 });
   assert.equal(uploads, 0);
 });
 
@@ -1170,7 +1170,7 @@ test('a local tail delete or regenerate rolls back instead of being mistaken for
   const fastBody = source.slice(fastStart, source.indexOf('async function reconcileCurrentBranch(', fastStart));
   assert.match(fastBody, /if \(appended === null\) return null;[\s\S]*locallyProvenTails\.set\(chatKey, lineageTailKey\(state\.lineage\)\);/);
 
-  assert.match(source, /localChatIsBehindState\(recoveredState\)\s*&& locallyProvenTails\.get\(chatKey\) !== lineageTailKey\(recoveredState\.lineage\);/);
+  assert.match(source, /localChatIsBehindState\(recoveredState, localLineage\)\s*&& locallyProvenTails\.get\(chatKey\) !== lineageTailKey\(recoveredState\.lineage\);/);
 
   const forgetStart = source.indexOf('function forgetBranchContinuations(');
   assert.match(source.slice(forgetStart, forgetStart + 300), /locallyProvenTails\.delete\(chatKey\)/);
@@ -1256,7 +1256,7 @@ test('a first write to a logical sidecar path is revision-checked against the de
   const firstBody = encodeSidecar({ chatKey: 'chat:a:first', state: createState('chat:a:first'), revision: 1 });
 
   // Another device already saved revision 3: a blind first write would replace it with revision 1.
-  assert.deepEqual(await adapter.write({ path: logical, expectedRevision: 0, body: firstBody }), { conflict: true });
+  assert.deepEqual(await adapter.write({ path: logical, expectedRevision: 0, body: firstBody }), { conflict: true, currentRevision: 3 });
   assert.deepEqual(calls, [[physical, 'GET']]);
 
   // With no sidecar on the server the first write goes through.

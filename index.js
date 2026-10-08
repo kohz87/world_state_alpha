@@ -891,9 +891,10 @@ async function recoverExistingSidecarPointer(chatKey, preferredPointer = null, {
           expectedChatKey: chatKey,
         });
       } catch (error) {
-        // Load and refresh treat an unreadable (corrupt) file like a missing one: the chat waits for an
-        // explicit recovery that may replace it. Every other caller still fails closed on it.
-        if (reportCorrupt && error?.code === 'WORLD_STATE_CORRUPT_SIDECAR') return { corrupt: true, path: candidate.path, error };
+        // Load and refresh treat a damaged file (not JSON, or a checksum that no longer matches) like a
+        // missing one: the chat waits for an explicit recovery that may replace it. A readable file this
+        // version cannot use (a newer World State's) and every other caller still fail closed.
+        if (reportCorrupt && error?.damaged === true) return { corrupt: true, path: candidate.path, error };
         throw error;
       }
       if (payload?.state) {
@@ -990,8 +991,9 @@ async function persistState(chatKey, state = stateCache.get(chatKey), {
     state,
     pointer,
     appVersion: WORLD_STATE_ALPHA_VERSION,
-    // Only an explicit recovery (Full rebuild, import, reset) may replace a sidecar that cannot be read.
-    replaceCorrupt: baselineRecoveryWrite && corruptSidecars.has(chatKey),
+    // Only an explicit recovery (Full rebuild, import, reset) may replace a damaged sidecar, and only the
+    // file recorded as damaged.
+    replaceCorrupt: baselineRecoveryWrite ? corruptSidecars.get(chatKey) || '' : '',
   });
   assertOwnershipEpoch(chatKey, ownerEpoch);
   corruptSidecars.delete(chatKey);
@@ -1790,16 +1792,14 @@ function lineageIsPrefix(prefix = [], full = []) {
   return left.every((entry, index) => entry?.lineageKey === right[index]?.lineageKey);
 }
 
-// The adopted state's lineage is not a prefix of (or equal to) this chat: it was captured on another branch.
-function localChatDivergesFromState(state, chat = getContext().chat || []) {
+// The adopted state's lineage is not a prefix of this chat, nor this chat of it: it was captured on another branch.
+function localChatDivergesFromState(state, localLineage) {
   const storedLineage = Array.isArray(state?.lineage) ? state.lineage : [];
   if (!storedLineage.length) return false;
-  const localLineage = chatLineage(chat.slice(0, storedLineage.length));
   return !lineageIsPrefix(storedLineage, localLineage) && !lineageIsPrefix(localLineage, storedLineage);
 }
 
-function localChatIsBehindState(state, chat = getContext().chat || []) {
-  const localLineage = chatLineage(chat);
+function localChatIsBehindState(state, localLineage) {
   const storedLineage = Array.isArray(state?.lineage) ? state.lineage : [];
   return storedLineage.length > localLineage.length && lineageIsPrefix(localLineage, storedLineage);
 }
@@ -1810,6 +1810,8 @@ function localChatIsBehindState(state, chat = getContext().chat || []) {
 async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   reason = 'boundary',
   retryDeterministicMiss = null,
+  // After a write conflict: the revision that write found on the server, when known.
+  conflictRevision = null,
 } = {}) {
   if (!chatKey || chatKey === 'no-chat' || !hostHydrationReady) {
     return { outcome: 'skipped', changed: false };
@@ -1840,11 +1842,25 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
 
   if (recovered?.corrupt) {
     // Same as a missing sidecar: keep what is cached, write nothing until an explicit recovery replaces it.
+    // The cache no longer stands for a server revision: a damaged file is replaced only by a baseline that
+    // restarts at revision 1, so a later readable file is adopted rather than ignored as an older read.
     corruptSidecars.set(chatKey, recovered.path);
     observedServerPointers.delete(chatKey);
+    hydratedPointers.delete(chatKey);
     bootstrapRequiredChats.add(chatKey);
     branchDirtyChats.add(chatKey);
     hydrationSources.set(chatKey, 'server-corrupt:' + reason);
+    diagnosticStore.record(chatKey, {
+      operationId: 'freshness:corrupt:' + reason + ':' + Date.now(),
+      label: 'hydration',
+      sourceMessageId: null,
+      outcome: 'corrupt-sidecar',
+      code: 'WORLD_STATE_CORRUPT_SIDECAR',
+      detail: 'The saved World State file could not be read during a ' + reason + ' freshness check ('
+        + String(recovered.error?.message || 'unreadable sidecar').slice(0, 160)
+        + '). Cached state was kept; nothing is written until a Full chat rebuild, an import or a reset replaces it.',
+      providerCalls: 0,
+    });
     if (currentChatKey() === chatKey) {
       clearPrivatePrompt();
       notifyBootstrapRequiredOnce(chatKey);
@@ -1878,12 +1894,18 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
 
   const remotePointer = recovered.pointer;
   observedServerPointers.set(chatKey, structuredClone(remotePointer));
+  // The file read back is a readable sidecar again.
+  corruptSidecars.delete(chatKey);
   const hydratedPointer = hydratedPointerFor(chatKey);
 
   // A read older than the working copy is ignored as a stale read, except right after this session's write
-  // conflicted: then the remembered revision is gone, and a lower one is a baseline restarted at revision 1.
+  // conflicted on the revision now read (or a newer one): the remembered revision is gone, and the file was
+  // started over (a baseline restarted at revision 1). A read older than what the conflict saw stays stale.
+  const conflictConfirmsRead = reason === 'write-conflict'
+    && Number.isInteger(conflictRevision)
+    && Number(remotePointer?.revision || 0) >= conflictRevision;
   if (hydratedPointer?.path
-    && reason !== 'write-conflict'
+    && !conflictConfirmsRead
     && remotePointer?.path === hydratedPointer.path
     && Number(remotePointer.revision || 0) < Number(hydratedPointer.revision || 0)) {
     diagnosticStore.record(chatKey, {
@@ -1933,11 +1955,13 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
 
   // Our own last proven branch coming back from the server is not "ahead":
   // the shorter local chat was truncated here and reconciliation rolls it back.
-  const hostChatBehind = currentChatKey() === chatKey && localChatIsBehindState(recoveredState)
+  // The open chat's lineage is fingerprinted once for both checks.
+  const localLineage = currentChatKey() === chatKey ? chatLineage(getContext().chat || []) : null;
+  const hostChatBehind = localLineage !== null && localChatIsBehindState(recoveredState, localLineage)
     && locallyProvenTails.get(chatKey) !== lineageTailKey(recoveredState.lineage);
   // State captured on a branch this chat does not have (another device swiped or edited) is not injected
   // until reconciliation has decided what belongs to this branch.
-  const branchDiverged = currentChatKey() === chatKey && !hostChatBehind && localChatDivergesFromState(recoveredState);
+  const branchDiverged = localLineage !== null && !hostChatBehind && localChatDivergesFromState(recoveredState, localLineage);
   if (hostChatBehind || branchDiverged) {
     branchDirtyChats.add(chatKey);
     clearPrivatePrompt();
@@ -1977,6 +2001,7 @@ async function handleServerRevisionConflict(chatKey, error, {
     const refreshed = await refreshChatStateFromServer(chatKey, {
       reason: 'write-conflict',
       retryDeterministicMiss: true,
+      conflictRevision: Number.isInteger(error?.currentRevision) ? error.currentRevision : null,
     });
     refreshOutcome = refreshed?.outcome || 'unknown';
   } catch (refreshError) {
@@ -3585,7 +3610,6 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     // It stops for a chat switch, an explicit invalidation (settings), new canonical state (another
     // device's save), or any change inside its range; branch events after the range do not stop it.
     const startInvalidations = operationInvalidations.get(chatKey) || 0;
-    const startState = stateCache.get(chatKey);
     const startGeneration = canonicalGenerations.get(chatKey) || 0;
     // The range proof hashes the chat up to the rebuilt range. The run checks currentness several times per
     // boundary, so the proof is reused until a host chat event (edit, swipe, delete, send) or a second passes
