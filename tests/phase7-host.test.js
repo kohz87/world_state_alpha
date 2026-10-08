@@ -1193,7 +1193,7 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   assert.match(source, /return withWorldStateFileLock\(operationLogFile\(chatKey\), task\);/);
   assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return false;/);
   assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);
-  assert.match(source, /void hydrateOperationLog\(chatKey\);\s*await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation', retryDeterministicMiss: true \}\);/);
+  assert.match(source, /void hydrateOperationLog\(chatKey\);\s*if \(!hydratedNow\) await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation', retryDeterministicMiss: true \}\);/);
   assert.match(source, /await retireOperationLog\(oldKey, newKey\);\s*clearChatRuntimeState\(oldKey\);/);
   assert.match(source, /await retireOperationLog\(chatKey\);\s*clearChatRuntimeState\(chatKey\);/);
   // Operation telemetry never enters the canonical sidecar payload.

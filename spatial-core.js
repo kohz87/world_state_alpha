@@ -590,6 +590,16 @@ function baseLocationIndex(baseMap) {
   return index;
 }
 
+// The id relations and routes use for a stored place: an override answers to the base id it shadows while
+// that base place exists. Without the base map at hand, an attached map (baseMapRef) is assumed to still
+// hold it; once the map is detached, or replaced by one without that place, the override is its own place.
+export function effectiveLocationId(loc, baseMap = null, spatialState = null) {
+  if (!loc?.baseRefId) return loc?.id || '';
+  const locations = baseMap && Array.isArray(baseMap.locations) ? baseMap.locations : null;
+  if (locations) return baseLocationIndex(baseMap).has(loc.baseRefId) ? loc.baseRefId : loc.id;
+  return spatialState?.baseMapRef?.id ? loc.baseRefId : loc.id;
+}
+
 function effectiveBaseLocation(item) {
   return {
     ...clone(item),
@@ -776,13 +786,15 @@ export function applySpatialUndoPatch(inputSpatial, patch) {
   return spatial;
 }
 
-function locationIdFor(chatKey, context, ordinal, name) {
+function locationIdFor(chatKey, context, ordinal, name, salt = 0) {
   return deterministicId('wsloc', [
     chatKey || context.chatKey || '',
     context.messageId,
     context.lineageKey,
     ordinal,
     boundedText(name, 40),
+    // Only a collision adds a salt, so ids that never collided stay as they were.
+    ...(salt ? [salt] : []),
   ]);
 }
 
@@ -1053,7 +1065,12 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         rejected.push({ proposal, reason: 'campaign spatial location limit reached' });
         continue;
       }
-      const id = targetId || locationIdFor(chatKey, context, index, name);
+      // The same name at the same chat head (re-adding an archived place, or two names sharing their first
+      // 40 characters) would reuse an id already stored, and normalization would drop the new place.
+      let id = targetId || locationIdFor(chatKey, context, index, name);
+      for (let salt = 1; !targetId && spatial.locations.some(loc => loc.id === id); salt += 1) {
+        id = locationIdFor(chatKey, context, index, name, salt);
+      }
       const coord = proposal.coordinate ? normalizeCoordinate(proposal.coordinate) : { x: null, y: null, authority: 'unknown', locked: false };
 
       const newLoc = normalizeSpatialLocation({
@@ -1131,7 +1148,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         // Relations and routes point at effective ids (an override is addressed by the base id it
         // shadows): move every id the source answers to onto the id the target answers to.
         const sourceIds = new Set([sourceId, sourceLoc.baseRefId].filter(Boolean));
-        const targetEffectiveId = targetLoc.baseRefId || targetId;
+        const targetEffectiveId = effectiveLocationId(targetLoc, baseMap, spatial);
         const moveId = id => (sourceIds.has(id) || id === targetId ? targetEffectiveId : id);
         const rewritten = [];
         const relSeen = new Map();
@@ -1312,10 +1329,10 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     for (const loc of spatial.locations) {
       const prior = priorCoordinateOf(loc);
       if (!prior) continue;
-      if (prior.x !== loc.coordinate?.x || prior.y !== loc.coordinate?.y) movedLocations.set(loc.baseRefId || loc.id, loc);
+      if (prior.x !== loc.coordinate?.x || prior.y !== loc.coordinate?.y) movedLocations.set(effectiveLocationId(loc, baseMap, spatial), loc);
     }
     const coordinateOf = id => {
-      const campaign = spatial.locations.find(loc => (loc.baseRefId || loc.id) === id && loc.status !== 'archived');
+      const campaign = spatial.locations.find(loc => effectiveLocationId(loc, baseMap, spatial) === id && loc.status !== 'archived');
       return campaign?.coordinate || effectiveCoordinateFor(id, effectiveById, spatial);
     };
     const contradicted = rel => {
@@ -1379,7 +1396,8 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
   for (const storedId of changedStoredLocationIds) {
     const afterLoc = afterCampaignById.get(storedId);
     const beforeLoc = beforeCampaignById.get(storedId);
-    const effectiveId = afterLoc?.baseRefId || beforeLoc?.baseRefId || storedId;
+    const effectiveId = afterLoc ? effectiveLocationId(afterLoc, baseMap, spatial)
+      : beforeLoc ? effectiveLocationId(beforeLoc, baseMap, before) : storedId;
     if (effectiveId) changedEffectiveIds.add(effectiveId);
   }
   // Only the changed places are resolved; an empty batch touches no base entry.

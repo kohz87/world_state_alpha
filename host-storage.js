@@ -75,6 +75,21 @@ function headersValue(headers, headersFn) {
   return value && typeof value === 'object' ? value : {};
 }
 
+// A request that never got an HTTP answer (connection reset, offline) is retryable: a save retried this way
+// finds its own body already on the server when the upload landed and only the response was lost.
+async function reach(fetchFn, url, init) {
+  try {
+    return await fetchFn(url, init);
+  } catch (cause) {
+    if (cause?.name === 'AbortError') throw cause;
+    const error = new Error('World State Alpha could not reach the server: ' + String(cause?.message || cause || 'network error') + '.');
+    error.cause = cause;
+    error.code = 'WORLD_STATE_NETWORK_ERROR';
+    error.retryable = true;
+    throw error;
+  }
+}
+
 async function readResponse(response) {
   if (response?.status === 404) return null;
   if (!response?.ok) {
@@ -96,14 +111,14 @@ export function createSillyTavernWorldStateStorageAdapter({
   async function read(path) {
     const target = text(path);
     if (!target || isLogicalPath(target)) return null;
-    const response = await fetchFn(target, { method: 'GET', cache: 'no-store' });
+    const response = await reach(fetchFn, target, { method: 'GET', cache: 'no-store' });
     return readResponse(response);
   }
 
   async function uploadTextFile(filename, body) {
     const targetName = worldStateHostFileName(filename);
     const data = bytesToBase64(new TextEncoder().encode(String(body ?? '')));
-    const response = await fetchFn('/api/files/upload', {
+    const response = await reach(fetchFn, '/api/files/upload', {
       method: 'POST',
       headers: headersValue(headers, headersFn),
       body: JSON.stringify({

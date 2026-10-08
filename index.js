@@ -118,6 +118,7 @@ const BASE_MAP_CACHE_LIMIT = 8;
 const CHARACTER_RENAME_CONTEXT_LIMIT = 8;
 const DELETE_OWNERSHIP_RETRY_MS = 1000;
 const STARTUP_SIDECAR_RETRY_DELAYS_MS = Object.freeze([120, 240]);
+const BOOTSTRAP_NOTICE_DELAY_MS = 2000;
 const SERVER_FRESHNESS_RESUME_DEBOUNCE_MS = 150;
 let cacheTouchSequence = 0;
 
@@ -810,8 +811,25 @@ function getCachedState(chatKey = currentChatKey()) {
   return state ? clone(state) : null;
 }
 
+const HISTORY_FIELDS = ['lineage', 'rollbackJournal', 'checkpoints'];
+
+// History entries are frozen and shared between copies, so an unchanged entry is the same object; only an
+// entry that is not is stringified. Stringifying every checkpoint snapshot and undo patch of both states
+// took most of a second per turn at a few hundred records.
+function sameHistoryEntries(left = [], right = []) {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index] && stableStringify(left[index]) !== stableStringify(right[index])) return false;
+  }
+  return true;
+}
+
 function stateChanged(left, right) {
-  return stableStringify(normalizeState(left)) !== stableStringify(normalizeState(right));
+  const a = normalizeState(left);
+  const b = normalizeState(right);
+  const rest = state => Object.fromEntries(Object.entries(state).filter(([key]) => !HISTORY_FIELDS.includes(key)));
+  if (stableStringify(rest(a)) !== stableStringify(rest(b))) return true;
+  return !HISTORY_FIELDS.every(key => sameHistoryEntries(a[key], b[key]));
 }
 
 function pointerFor(chatKey) {
@@ -1364,6 +1382,7 @@ async function handleChatRenamed(eventData = {}) {
 
   const oldKey = buildWorldStateChatKey(kind, ownerId, oldChatId);
   const newKey = buildWorldStateChatKey(kind, ownerId, newChatId);
+  renameTargets.add(newKey);
   try {
     const migrated = await migrateWorldStateChatKey(oldKey, newKey);
     if (!migrated) {
@@ -1374,6 +1393,8 @@ async function handleChatRenamed(eventData = {}) {
   } catch (error) {
     console.error('[World State Alpha] chat rename migration failed safely', error);
     notify('error', 'World State Alpha could not migrate renamed chat continuity safely.');
+  } finally {
+    renameTargets.delete(newKey);
   }
 }
 
@@ -1942,6 +1963,17 @@ function scheduleServerFreshnessRefresh(reason = 'resume') {
   }, SERVER_FRESHNESS_RESUME_DEBOUNCE_MS);
 }
 
+// SillyTavern reloads a renamed chat (and activation finds no sidecar under the new name) before it
+// announces the rename. The warning waits a moment, and a rename that has started for this chat cancels it.
+const renameTargets = new Set();
+function scheduleBootstrapNotice(chatKey) {
+  if (!globalThis.setTimeout) return notifyBootstrapRequiredOnce(chatKey);
+  setTimeout(() => {
+    if (currentChatKey() !== chatKey || renameTargets.has(chatKey) || !bootstrapRequiredChats.has(chatKey)) return;
+    notifyBootstrapRequiredOnce(chatKey);
+  }, BOOTSTRAP_NOTICE_DELAY_MS);
+}
+
 function notifyBootstrapRequiredOnce(chatKey = currentChatKey()) {
   if (!chatKey || chatKey === 'no-chat' || !bootstrapRequiredChats.has(chatKey) || bootstrapWarnings.has(chatKey)) return;
   bootstrapWarnings.add(chatKey);
@@ -2368,7 +2400,39 @@ async function handleAssistantMessage(messageId) {
   const chatKey = currentChatKey();
   if (chatKey === 'no-chat') return;
 
+  // Until capture itself starts, a thrown step (a failed server read, a failed branch restore) would drop
+  // the reply with only a console message; it is recorded as a missed capture instead.
+  let captureStarted = false;
   await queueChatWork(chatKey, async () => {
+    try {
+      await captureAssistantBoundary(chatKey, messageId, () => { captureStarted = true; });
+    } catch (error) {
+      if (!captureStarted) recordCaptureStartFailure(chatKey, messageId, error);
+      throw error;
+    }
+  });
+}
+
+function recordCaptureStartFailure(chatKey, messageId, error) {
+  const settings = getWorldStateSettings();
+  if (currentChatKey() !== chatKey || !settings.enabled || !settings.autoCapture) return;
+  const chat = getContext().chat || [];
+  if (messageId >= chat.length || messageRole(chat[messageId]) !== 'assistant') return;
+  const prefix = chat.slice(0, messageId + 1);
+  diagnosticStore.record(chatKey, {
+    operationId: 'capture:' + messageId + ':not-started:' + Date.now(),
+    label: 'capture',
+    sourceMessageId: messageId,
+    lineageKey: chatLineage(prefix)[messageId]?.lineageKey || '',
+    contentLineageKey: contentLineageKey(prefix, messageId),
+    outcome: 'not-started',
+    code: error?.code || 'WORLD_STATE_CAPTURE_NOT_STARTED',
+    detail: 'Capture could not start: ' + String(error?.message || error || 'unexpected error').slice(0, 240),
+  });
+}
+
+async function captureAssistantBoundary(chatKey, messageId, markStarted) {
+  {
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey || hydrationErrors.has(chatKey)) return;
     await refreshChatStateFromServer(chatKey, { reason: 'assistant-boundary' });
@@ -2488,6 +2552,7 @@ async function handleAssistantMessage(messageId) {
     }
 
     const isCurrent = operationGuard(chatKey, messageId);
+    markStarted();
     const result = await runCaptureOperation({
       ctx: getContext(),
       state: before,
@@ -2586,7 +2651,7 @@ async function handleAssistantMessage(messageId) {
     passiveCaptureRebaseCandidates.set(chatKey, messageId);
     updatePrivateInjection();
     refreshPanel();
-  });
+  }
 }
 
 async function handleUserMessage(messageId) {
@@ -2738,7 +2803,7 @@ async function handleBranchChange(reason = 'branch') {
   stateEpochs.set(chatKey, epoch(chatKey) + 1);
   // A running manual rebuild judges a branch change itself: one outside its range leaves it valid.
   cancelWorldStateRequests({ chatKey, exceptOperationIdPrefix: 'rebuild:' });
-  await queueChatWork(chatKey, async () => {
+  const work = queueChatWork(chatKey, async () => {
     try {
       await ensureChatStateLoaded(chatKey);
       if (currentChatKey() !== chatKey) return;
@@ -2765,6 +2830,15 @@ async function handleBranchChange(reason = 'branch') {
       console.error('[World State Alpha] branch reconciliation failed safely (' + reason + ')', error);
     }
   });
+  // SillyTavern waits for this event before it swipes, regenerates or saves an edit. Behind a running
+  // rebuild the reconcile would hold that for the whole rebuild: the branch is already marked dirty, so
+  // the prompt carries no World State until the queued reconcile runs after the rebuild.
+  if (rebuildAbortControllers.has(chatKey)) {
+    updatePrivateInjection();
+    void work.catch(error => console.error('[World State Alpha] branch reconciliation failed safely (' + reason + ')', error));
+    return;
+  }
+  await work;
 }
 
 // A swipe to an already generated reply, a swipe deletion, or an edit of the
@@ -2816,14 +2890,17 @@ async function activateCurrentChat() {
       await recheckProvisionalFreshHydration(chatKey);
       if (currentChatKey() !== chatKey) return;
     }
+    // A chat hydrated by this activation was just read from the server (with retries): reading it again
+    // at once only repeated the download, or the retry waits of a chat with no sidecar.
+    const hydratedNow = !loadedChats.has(chatKey);
     await ensureChatStateLoaded(chatKey);
     if (currentChatKey() !== chatKey) return;
     retiredOperationLogs.delete(chatKey);
     void hydrateOperationLog(chatKey);
-    await refreshChatStateFromServer(chatKey, { reason: 'chat-activation', retryDeterministicMiss: true });
+    if (!hydratedNow) await refreshChatStateFromServer(chatKey, { reason: 'chat-activation', retryDeterministicMiss: true });
     if (currentChatKey() !== chatKey) return;
     if (bootstrapRequiredChats.has(chatKey)) {
-      notifyBootstrapRequiredOnce(chatKey);
+      scheduleBootstrapNotice(chatKey);
       clearPrivatePrompt();
       refreshPanel();
       evictDormantChatStates(chatKey);
@@ -4328,6 +4405,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     });
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state, 'Created campaign override for ' + payload.location.name);
+    } else {
+      notify('error', 'Campaign override was not created: ' + (res.rejected?.[0]?.reason || 'rejected'));
     }
     return;
   }
@@ -4605,6 +4684,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     const res = applySequence(state, steps);
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state, 'Base map attached: ' + stored.baseMap.name);
+    } else {
+      notify('error', 'Base map was not attached: ' + (res.rejected?.[0]?.reason || 'rejected'));
     }
     return;
   }
@@ -4626,6 +4707,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     if (res.outcome === 'applied') {
       await persistSpatialState(res.state);
       notify('info', 'Base map detached. Coordinate Profile is now manual.');
+    } else {
+      notify('error', 'Base map was not detached: ' + (res.rejected?.[0]?.reason || 'rejected'));
     }
   }
 }
@@ -4712,6 +4795,12 @@ function registerEvents() {
   if (!source?.on || !events.MESSAGE_RECEIVED || !events.CHAT_CHANGED) return false;
   eventsRegistered = true;
 
+  // Counted first: SillyTavern runs listeners in order and waits on each, and a later handler can wait
+  // behind a running rebuild whose cached range proof this count invalidates.
+  for (const name of ['MESSAGE_SENT', 'MESSAGE_RECEIVED', 'MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
+    if (events[name]) source.on(events[name], () => noteChatEvent());
+  }
+
   if (events.MESSAGE_RECEIVED) {
     source.on(events.MESSAGE_RECEIVED, messageId => {
       // Capture is serialized in Alpha's per-chat queue, but it must not hold
@@ -4736,10 +4825,6 @@ function registerEvents() {
 
   for (const name of ['MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
     if (events[name]) source.on(events[name], () => handleBranchChange(name));
-  }
-  // Counted first (registered last, but every handler above reads the count only later, asynchronously).
-  for (const name of ['MESSAGE_SENT', 'MESSAGE_RECEIVED', 'MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
-    if (events[name]) source.on(events[name], () => noteChatEvent());
   }
   return true;
 }
