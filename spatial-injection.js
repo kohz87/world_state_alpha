@@ -44,6 +44,19 @@ function relationLine(rel, locMap) {
   return `- ${to} is${dir}${from}${dist}`;
 }
 
+function routeLine(route, locMap) {
+  const name = singleLine(route?.name);
+  if (!name) return '';
+  const type = singleLine(route.type) || 'route';
+  // Endpoints are named only when they are places shown in this injection.
+  const ends = (Array.isArray(route.endpoints) ? route.endpoints : [])
+    .map(id => singleLine(locMap.get(id)?.name))
+    .filter(Boolean);
+  const between = ends.length >= 2 ? ` between ${ends.join(' and ')}` : ends.length ? ` from ${ends[0]}` : '';
+  const context = singleLine(route.context);
+  return `- Route: ${name} (${type})${between}${context ? ` - ${context}` : ''}`;
+}
+
 function fitLine(line, currentText, budgetTokens) {
   if (!line) return '';
   const proposed = `${currentText}\n${line}`;
@@ -121,6 +134,12 @@ export function renderSpatialInjection(selectedLocations = [], relations = [], r
   for (const rel of Array.isArray(relations) ? relations : []) {
     if (!rel || (!locMap.has(rel.fromId) && !locMap.has(rel.toId))) continue;
     const line = fitLine(relationLine(rel, locMap), text, budget);
+    if (line) text += `\n${line}`;
+  }
+
+  // Routes of the selected places, if space permits.
+  for (const route of Array.isArray(routes) ? routes : []) {
+    const line = fitLine(routeLine(route, locMap), text, budget);
     if (line) text += `\n${line}`;
   }
 

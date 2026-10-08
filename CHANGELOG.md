@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.9.0-alpha.52 - Places accuracy (deep pass on alpha.49)
+
+Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.51.
+
+### Fixed
+
+- **A locked place rejected every header that repeated its position.** "Loc: Applecross Culvert | ... | [31.4, 163.6]" for a locked culvert was rejected each turn ("cannot overwrite locked coordinate"), so its evidence and routes never updated. A confirmation of the same position now updates the place and keeps the lock.
+- **A campaign override without a position could never get one.** Its override authority outranked any narrated coordinate, even though it had none to protect.
+- **A coordinate beside the header name became part of the name.** "Loc: Old Mill [12, 4]" created a place called "Old Mill [12, 4]", and a new one for every new position.
+- **A ride distance became an exact coordinate.** "A 12 km ride north" derived Millbrook at exactly (0, 12) when the model labelled the distance straight-line. A distance is now straight-line only with straight-line wording ("as the crow flies"); rides, walks and marches are route travel.
+- **A near-match coordinate kept the model's numbers.** With a precision step of 5, "The Old Mill sits at [10, 20]" stored the model's (14.6, 15.2). The narrated pair is stored.
+- **Short invented names grounded inside other words.** "Oak" was created from "cloak".
+- **A relation was dropped silently** when its new place matched an existing place outside the visible set by name. It is now linked to that place; a relation whose place could not be saved is reported.
+- **Lock then Unlock made an override movable.** Manual edits turned its override authority into an unlocked manual coordinate that narration could move.
+- **A base-map place outside the visible set was duplicated** as a campaign place when the narration named it.
+- **A relation stated in reverse was added a second time.** "Oakvale lies west of Millbrook" next to "Millbrook is east of Oakvale" now updates the one relation.
+- **Archived neighbours crowded out active ones in Places** (the A19 fix, applied to records only until now).
+- **Base-map import:** `[null, null]` coordinates became a locked point at the origin; two places with the same name and no ids failed the whole import; places without coordinates were shown locked.
+- **Routes never reached the prompt**, although retrieval found them. The top place's routes are now shown with their type, connected places and context.
+- **Spatial rejections pointed at the wrong row** in the Operations log after an invalid row or a header supplement.
+
+### Architecture
+
+- Core contract updated in C24.1-C24.4 and C24.7. No durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha52.test.js`; each case fails on the previous release.
+- Live in SillyTavern with a stub model. On alpha.51:
+  - the header "Old Mill [12, 4]" named the place with its coordinate;
+  - "Oak" was created from "cloak";
+  - a reverse relation was stored beside the original;
+  - the injection had no route line.
+
+  On alpha.52 none of these happen, and a header confirming a locked place adds its evidence without a rejection.
+- Not verified: a real model, and base maps larger than the test fixtures. Names in languages that attach suffixes to Latin-script words (Hungarian, Finnish, Turkish) must still appear in their bare form to ground.
+
+### Code review hardening
+
+- A base-map place found by name never sends narration to an archived or merged override of it, and a name that several base places share is rejected as ambiguous instead of picking the first.
+- Whole-word name matching applies to Latin, Greek, Cyrillic, Armenian and Georgian words and to numbers, so Korean names with particles ("서울에") and Arabic or Hebrew names with prefixes still ground.
+- A reverse relation with "north-east" is read as northeast; a free-text direction ("upriver") has no opposite and is kept as its own relation instead of being dropped.
+- Distance wording is read from the sentence that states the distance ("The winds howled" elsewhere is not a route), and a restatement without wording keeps the relation's established straight-line or route mode.
+- Repeated base-map names without ids are numbered by their order among places of that name, so inserting or removing other rows does not re-key them; the check is linear.
+- Capture and the reducer match place names the same way (case and punctuation folded), so "Kings-Rest" finds "Kings Rest".
+- One distance-mode rule and one list of coordinate patterns are shared by every caller; the direction aliases come from the core.
+
 ## 0.9.0-alpha.51 - Capture accuracy (deep pass on alpha.49)
 
 Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.50.

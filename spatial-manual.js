@@ -120,9 +120,12 @@ export function applySpatialManualMutation({
     const requestedAuthority = SPATIAL_AUTHORITIES.includes(proposal.coordinate.authority)
       ? proposal.coordinate.authority
       : 'manual';
-    const authority = ['base_canonical', 'campaign_override'].includes(requestedAuthority)
-      ? 'manual'
-      : requestedAuthority;
+    // A campaign override keeps its override authority through manual edits (Lock then Unlock must not
+    // leave it a releasable 'manual' coordinate that narration may move).
+    const target = before.spatial.locations.find(loc => loc.id === proposal.locationId);
+    const authority = target?.baseRefId && ['manual', 'campaign_override'].includes(requestedAuthority)
+      ? 'campaign_override'
+      : ['base_canonical', 'campaign_override'].includes(requestedAuthority) ? 'manual' : requestedAuthority;
     const hasCoordinate = Number.isFinite(normalized.x) && Number.isFinite(normalized.y);
     proposal.coordinate = {
       ...normalized,

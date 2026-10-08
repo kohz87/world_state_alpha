@@ -1,9 +1,13 @@
-import { captureExchangeIndex, evidenceClaimGrounded, evidenceClaimQuotedOnly } from './source-firewall.js';
+import { captureExchangeIndex, containsOnWordBoundaries, evidenceClaimGrounded, evidenceClaimQuotedOnly } from './source-firewall.js';
 import {
+  baseLocationByName,
+  canonicalSpatialDirection,
   deriveCoordinate,
   directionFromDelta,
+  effectiveLocationId,
   normalizeCoordinate,
   reduceSpatialMutations,
+  resolveEffectiveLocations,
   resolveSpatialProfile,
   validateBounds,
 } from './spatial-core.js';
@@ -57,8 +61,8 @@ function locationNameGrounded(name, evidence, exchangeById) {
   for (const item of evidence || []) {
     const source = exchangeById.get(item.sourceMessageId);
     if (!source) continue;
-    const haystack = norm(source.text);
-    if (needle.length >= 2 && haystack.includes(needle)) return true;
+    // Whole words only: "Oak" is not in "cloak" (scripts written without spaces match inside runs of letters).
+    if (needle.length >= 2 && containsOnWordBoundaries(norm(source.text), needle)) return true;
 
     // Conservative compositional grounding for provider-normalized names such
     // as "Applecross Culvert" when one accepted quote says
@@ -97,38 +101,23 @@ function coordKnown(coord) {
 }
 
 function directionsCompatible(stated, actual) {
-  const a = String(stated || '').trim().toLowerCase();
-  const b = String(actual || '').trim().toLowerCase();
-  const aliases = {
-    n: 'north', s: 'south', e: 'east', w: 'west',
-    ne: 'northeast', nw: 'northwest', se: 'southeast', sw: 'southwest',
-  };
-  return (aliases[a] || a) === (aliases[b] || b);
+  return canonicalSpatialDirection(stated) === canonicalSpatialDirection(actual);
 }
+
+// The written coordinate forms: [x, y]; (x, y); and x=12.4, y=45.0 (signed values, Markdown axis labels,
+// JSON-quoted keys, and comma/pipe/whitespace separators).
+const COORDINATE_FORMS = Object.freeze([
+  /\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g,
+  /\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)/g,
+  /(?:\*\*)?["']?x["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)\s*(?:,|\||\s+)\s*(?:\*\*)?["']?y["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)/gi,
+]);
 
 function extractExplicitCoordinatesFromText(text) {
   const coords = [];
   if (typeof text !== 'string') return coords;
-
-  // Form 1: [x, y]
-  const bracketMatches = text.matchAll(/\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g);
-  for (const match of bracketMatches) {
-    coords.push({ x: Number(match[1]), y: Number(match[2]) });
+  for (const form of COORDINATE_FORMS) {
+    for (const match of text.matchAll(form)) coords.push({ x: Number(match[1]), y: Number(match[2]) });
   }
-
-  // Form 2: (x, y)
-  const parenMatches = text.matchAll(/\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)/g);
-  for (const match of parenMatches) {
-    coords.push({ x: Number(match[1]), y: Number(match[2]) });
-  }
-
-  // Form 3: x=12.4, y=45.0; also accepts signed values, Markdown
-  // axis labels, JSON-quoted keys, and comma/pipe/whitespace separators.
-  const namedMatches = text.matchAll(/(?:\*\*)?["']?x["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)\s*(?:,|\||\s+)\s*(?:\*\*)?["']?y["']?(?:\*\*)?\s*[:=](?:\*\*)?\s*([+-]?\d+(?:\.\d+)?)/gi);
-  for (const match of namedMatches) {
-    coords.push({ x: Number(match[1]), y: Number(match[2]) });
-  }
-
   return coords;
 }
 
@@ -152,11 +141,17 @@ function sentenceNamesPlace(sentence, name) {
 // place: in a cited sentence that both names the place and carries the pair.
 // A pair given for another place elsewhere in the message is never borrowed,
 // and a pair known only from quoted dialogue is hearsay, not narrative authority.
-function isCoordinateGroundedInNarration(coord, evidence, exchangeById, decimalStep = 0.1, name = '') {
-  if (!coordKnown(coord)) return false;
+// Returns the narrated pair itself (the nearest within the profile's precision step), never the model's numbers.
+function narratedCoordinateFor(coord, evidence, exchangeById, decimalStep = 0.1, name = '') {
+  if (!coordKnown(coord)) return null;
   const tolerance = Math.max(0.1, decimalStep || 0.1);
-  const matches = text => extractExplicitCoordinatesFromText(text)
-    .some(exp => Math.abs(exp.x - coord.x) <= tolerance && Math.abs(exp.y - coord.y) <= tolerance);
+  const found = [];
+  const matches = text => {
+    const near = extractExplicitCoordinatesFromText(text)
+      .filter(exp => Math.abs(exp.x - coord.x) <= tolerance && Math.abs(exp.y - coord.y) <= tolerance);
+    found.push(...near);
+    return near.length > 0;
+  };
 
   for (const item of evidence || []) {
     const source = exchangeById.get(item.sourceMessageId);
@@ -164,11 +159,16 @@ function isCoordinateGroundedInNarration(coord, evidence, exchangeById, decimalS
     if (evidenceClaimQuotedOnly(item.claim, source.text)) continue;
     // Narration only: a pair spoken in dialogue is hearsay wherever the cited claim sits.
     const sentences = sentencesOf(withoutSpokenDialogue(source.text));
-    if (sentences.some((sentence, at) => matches(sentence) && (!name || sentenceNamesPlace(sentence, name)
-      // "The Old Mill stands by the river. It sits at [12, 4]."
-      || (at > 0 && REFERS_BACK.test(sentence) && sentenceNamesPlace(sentences[at - 1], name))))) return true;
+    sentences.forEach((sentence, at) => {
+      if (name && !sentenceNamesPlace(sentence, name)
+        // "The Old Mill stands by the river. It sits at [12, 4]."
+        && !(at > 0 && REFERS_BACK.test(sentence) && sentenceNamesPlace(sentences[at - 1], name))) return;
+      matches(sentence);
+    });
   }
-  return false;
+  if (!found.length) return null;
+  const distance = item => Math.hypot(item.x - coord.x, item.y - coord.y);
+  return found.reduce((best, item) => (distance(item) < distance(best) ? item : best));
 }
 
 // Quoted dialogue (a quoted span with more than one word); a quoted axis label such as "X": 12 is kept.
@@ -211,14 +211,7 @@ const DIRECTION_TEXT_FORMS = Object.freeze({
   southwest: ['southwest', 'south west'],
 });
 
-function canonicalDirection(value) {
-  const raw = String(value || '').trim().toLowerCase();
-  const aliases = {
-    n: 'north', s: 'south', e: 'east', w: 'west',
-    ne: 'northeast', nw: 'northwest', se: 'southeast', sw: 'southwest',
-  };
-  return aliases[raw] || raw;
-}
+const canonicalDirection = canonicalSpatialDirection;
 
 function evidenceSourceTexts(evidence, exchangeById) {
   const out = [];
@@ -255,24 +248,28 @@ function distanceGroundedInNarration(distanceKm, evidence, exchangeById) {
   return false;
 }
 
-function routeTravelLanguageGrounded(evidence, exchangeById) {
-  for (const text of evidenceSourceTexts(evidence, exchangeById)) {
-    const normalized = norm(text);
-    if (/\b(?:road|route|trail|path|river|sea|sail|sailing|travel|travelled|traveled|journey|along)\b/u.test(normalized)) {
-      return true;
-    }
-  }
-  return false;
+// The sentences that state this distance: what qualifies a distance is read there, not anywhere in the
+// message ("The winds howled. Millbrook lies 12 km north" is no route).
+function distanceSentences(distanceKm, evidence, exchangeById) {
+  if (!Number.isFinite(distanceKm)) return [];
+  const tolerance = Math.max(0.01, Math.abs(distanceKm) * 1e-6);
+  return evidenceSourceTexts(evidence, exchangeById).flatMap(sentencesOf).filter(sentence => [...sentence.matchAll(/(-?\d+(?:\.\d+)?)\s*(?:km\b|kilomet(?:er|re)s?\b)/gi)]
+    .some(match => Math.abs(Number(match[1]) - distanceKm) <= tolerance));
 }
 
-function straightDistanceLanguageGrounded(evidence, exchangeById) {
-  for (const text of evidenceSourceTexts(evidence, exchangeById)) {
-    const normalized = norm(text);
-    if (/\b(?:straight line|straightline|direct distance|as the crow flies)\b/u.test(normalized)) {
-      return true;
-    }
-  }
-  return false;
+const ROUTE_TRAVEL = /\b(?:road|route|trail|path|river|sea|sail|sailing|travel|travelled|traveled|journey|along|ride|riding|rode|walk|walking|march|marching|hike|hiking|trek|trekking|voyage|winding)\b/u;
+const STRAIGHT_DISTANCE = /\b(?:straight line|straightline|direct distance|as the crow flies)\b/u;
+
+// A distance is straight-line only where its sentence says so; a ride, walk or road length is route context,
+// never Cartesian displacement. The model's label decides only when the sentence carries both kinds of
+// wording, and it can never promote an unqualified distance (a 'route' label may still mark one as route).
+function distanceModeFor(proposedMode, distanceKm, evidence, exchangeById) {
+  const sentences = distanceSentences(distanceKm, evidence, exchangeById).map(norm);
+  const route = sentences.some(sentence => ROUTE_TRAVEL.test(sentence));
+  const straight = sentences.some(sentence => STRAIGHT_DISTANCE.test(sentence));
+  if (straight && !route) return 'straight_line';
+  if (straight) return proposedMode === 'route' || proposedMode === 'straight_line' ? proposedMode : 'unspecified';
+  return route || proposedMode === 'route' ? 'route' : 'unspecified';
 }
 
 function groundDirectRelationProposal(proposal, from, to, evidence, exchangeById) {
@@ -287,15 +284,8 @@ function groundDirectRelationProposal(proposal, from, to, evidence, exchangeById
     : null;
   const distanceGrounded = Number.isFinite(proposal.distanceKm)
     && distanceGroundedInNarration(proposal.distanceKm, evidence, exchangeById);
-  const routeGrounded = routeTravelLanguageGrounded(evidence, exchangeById);
-  const straightGrounded = straightDistanceLanguageGrounded(evidence, exchangeById);
-
-  let distanceKm = distanceGrounded ? proposal.distanceKm : null;
-  let distanceMode = 'unspecified';
-  if (distanceGrounded) {
-    if (routeGrounded && !straightGrounded) distanceMode = 'route';
-    else if (straightGrounded) distanceMode = 'straight_line';
-  }
+  const distanceKm = distanceGrounded ? proposal.distanceKm : null;
+  const distanceMode = distanceGrounded ? distanceModeFor(proposal.distanceMode, distanceKm, evidence, exchangeById) : 'unspecified';
 
   if (!direction && distanceKm === null) {
     return { ok: false, reason: 'relation has no grounded direction or numeric distance' };
@@ -323,19 +313,8 @@ function groundRelativeProposal(relative, anchor, evidence, exchangeById) {
 
   const hasDistance = Number.isFinite(relative.distanceKm);
   const distanceGrounded = hasDistance && distanceGroundedInNarration(relative.distanceKm, evidence, exchangeById);
-  const routeTravel = routeTravelLanguageGrounded(evidence, exchangeById);
-  const straightExplicit = straightDistanceLanguageGrounded(evidence, exchangeById);
-
-  let distanceKm = distanceGrounded ? relative.distanceKm : null;
-  let distanceMode = relative.distanceMode;
-
-  if (!distanceGrounded) {
-    distanceMode = 'unspecified';
-  } else if (routeTravel && !straightExplicit) {
-    // A route/road/river/sea travel length is useful relational context, but
-    // it is not Cartesian displacement.
-    distanceMode = 'route';
-  }
+  const distanceKm = distanceGrounded ? relative.distanceKm : null;
+  const distanceMode = distanceGrounded ? distanceModeFor(relative.distanceMode, distanceKm, evidence, exchangeById) : 'unspecified';
 
   return {
     ok: true,
@@ -345,12 +324,7 @@ function groundRelativeProposal(relative, anchor, evidence, exchangeById) {
       distanceKm,
       distanceMode,
     },
-    mayDeriveStraight: Boolean(
-      distanceGrounded
-      && distanceKm > 0
-      && distanceMode === 'straight_line'
-      && (!routeTravel || straightExplicit)
-    ),
+    mayDeriveStraight: Boolean(distanceGrounded && distanceKm > 0 && distanceMode === 'straight_line'),
   };
 }
 
@@ -360,6 +334,13 @@ function cleanHeaderText(value, max = 240) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max);
+}
+
+// A coordinate written beside the name ("Old Mill [12, 4]", "Old Mill — x=12, y=4") is not part of it.
+function headerPlaceName(value) {
+  let name = String(value || '');
+  for (const form of COORDINATE_FORMS) name = name.replace(form, ' ');
+  return cleanHeaderText(name).replace(/(?:\s*(?:[@—–,;:|-]|\bat\b))+\s*$/iu, '').trim();
 }
 
 function uniqueCoordinates(coords, tolerance = 1e-9) {
@@ -388,7 +369,7 @@ function explicitWorldStateLocationHeaders(exchangeById) {
         if (locIndex < 0) continue;
         const locPart = parts[locIndex];
         const locMatch = locPart.match(/\bLoc(?:ation)?\s*:\s*(?:\*\*)?\s*(.+)$/i);
-        const name = cleanHeaderText(locMatch?.[1] || '');
+        const name = headerPlaceName(locMatch?.[1] || '');
         if (!name || isGenericScenery(name)) continue;
 
         const contextParts = [];
@@ -418,6 +399,11 @@ function explicitWorldStateLocationHeaders(exchangeById) {
   return headers.slice(0, 4);
 }
 
+// The model's row number of a proposal (none for a row the header supplement added).
+function rowOf(proposal) {
+  return Number.isInteger(proposal?.__row) ? { index: proposal.__row } : {};
+}
+
 function supplementExplicitWorldStateHeaders(modelMutations, exchangeById) {
   const mutations = (modelMutations || []).map(item => structuredClone(item));
   const rejected = [];
@@ -435,6 +421,7 @@ function supplementExplicitWorldStateHeaders(modelMutations, exchangeById) {
       for (const index of matches) suppressed.add(index);
       rejected.push({
         stage: 'spatial-deterministic-header',
+        ...rowOf(matches.length === 1 ? mutations[matches[0]] : null),
         reason: header.ambiguousCoordinate
           ? 'explicit current-location header contains conflicting coordinate pairs'
           : 'explicit current-location header matches multiple model location proposals',
@@ -452,6 +439,7 @@ function supplementExplicitWorldStateHeaders(modelMutations, exchangeById) {
           suppressed.add(index);
           rejected.push({
             stage: 'spatial-deterministic-header',
+            ...rowOf(proposal),
             reason: 'model coordinate conflicts with explicit current-location header',
             sourceMessageId: header.sourceMessageId,
           });
@@ -498,20 +486,27 @@ export function processSpatialCapture({
 } = {}) {
   const wire = validateSpatialEnvelope(rawSpatialMutations);
   const exchangeById = captureExchangeIndex(exchange);
-  const supplemented = supplementExplicitWorldStateHeaders(wire.mutations, exchangeById);
+  const supplemented = supplementExplicitWorldStateHeaders(
+    wire.mutations.map((item, at) => ({ ...item, __row: wire.rowIndexes[at] })),
+    exchangeById,
+  );
   const rejected = [
     ...wire.rejected.map(item => ({ stage: 'spatial-wire', ...item })),
     ...supplemented.rejected,
   ];
   const accepted = [];
   const visibleById = new Map((Array.isArray(visibleLocations) ? visibleLocations : []).map(item => [item.id, item]));
+  // Base-map places named by the narration but outside the visible set (looked up by name, never scanned).
+  const namedBase = [];
   const activeProfile = baseMap ? resolveSpatialProfile(spatial, baseMap) : (profile || resolveSpatialProfile(spatial));
 
   for (let index = 0; index < supplemented.mutations.length; index += 1) {
     const proposal = structuredClone(supplemented.mutations[index]);
+    const rowIndex = Number.isInteger(proposal.__row) ? proposal.__row : undefined;
+    delete proposal.__row;
     const grounded = groundEvidence(proposal.evidence, exchangeById, evidenceSourceClass);
     if (!grounded.ok) {
-      rejected.push({ stage: 'spatial-source-firewall', index, reason: grounded.reason });
+      rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: grounded.reason });
       continue;
     }
     proposal.evidence = grounded.evidence;
@@ -519,7 +514,7 @@ export function processSpatialCapture({
     if (proposal.action === 'upsert_location') {
       const isUpdate = Boolean(proposal.locationId);
       if (isUpdate && !visibleById.has(proposal.locationId)) {
-        rejected.push({ stage: 'spatial-source-firewall', index, reason: 'spatial update target was not in bounded visible context' });
+        rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'spatial update target was not in bounded visible context' });
         continue;
       }
 
@@ -533,16 +528,16 @@ export function processSpatialCapture({
       ]).has(String(proposal.admissionReason || ''));
 
       if (isGenericScenery(proposal.name) && !durableAdmission) {
-        rejected.push({ stage: 'spatial-admission', index, reason: 'generic scenery requires independent persistence/position evidence' });
+        rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'generic scenery requires independent persistence/position evidence' });
         continue;
       }
 
       if (!isUpdate && !locationNameGrounded(proposal.name, proposal.evidence, exchangeById)) {
-        rejected.push({ stage: 'spatial-admission', index, reason: 'generated location name is not grounded in accepted narration' });
+        rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'generated location name is not grounded in accepted narration' });
         continue;
       }
       if (!isUpdate && placeEvidenceHypothetical(proposal.evidence, exchangeById)) {
-        rejected.push({ stage: 'spatial-admission', index, reason: 'a hypothetical or proposed place is not current geography' });
+        rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'a hypothetical or proposed place is not current geography' });
         continue;
       }
       // An update may rename a place only to a name the narration actually uses; otherwise it keeps its name.
@@ -558,6 +553,22 @@ export function processSpatialCapture({
         const nameKey = norm(proposal.name);
         const visibleMatch = [...visibleById.values()].find(item => norm(item?.name) === nameKey);
         if (visibleMatch?.id) proposal.locationId = visibleMatch.id;
+        // A base-map place outside the visible set is that place, not a new campaign one (a campaign place
+        // of the same name is matched by the reducer).
+        const base = !visibleMatch && baseMap && !(spatial?.locations || []).some(item => item.status === 'active' && norm(item.name) === nameKey)
+          ? baseLocationByName(baseMap, proposal.name)
+          : null;
+        if (base?.ambiguous) {
+          rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'place name matches more than one base-map place' });
+          continue;
+        }
+        const effective = base ? resolveEffectiveLocations(spatial, baseMap, { onlyIds: new Set([base.id]) })[0] : null;
+        // An archived or merged override is a place the operator retired: narration never updates it.
+        if (effective?.id && (effective.status || 'active') === 'active') {
+          visibleById.set(effective.id, effective);
+          namedBase.push(effective);
+          proposal.locationId = effective.id;
+        }
       }
 
       const targetIsUpdate = Boolean(proposal.locationId);
@@ -571,16 +582,18 @@ export function processSpatialCapture({
         // Automatic coordinate firewall: narrative_explicit only if accepted source text explicitly contains matching x/y.
         // Grounding is checked first: an invented coordinate is simply dropped and never costs the place itself;
         // only a narrated coordinate outside the profile bounds rejects the proposal.
-        coordGrounded = !placeEvidenceHypothetical(proposal.evidence, exchangeById)
-          && isCoordinateGroundedInNarration(normCoord, proposal.evidence, exchangeById, activeProfile?.decimalStep, proposal.name);
-        if (coordGrounded && activeProfile?.bounds && !validateBounds(normCoord.x, normCoord.y, activeProfile.bounds)) {
-          rejected.push({ stage: 'spatial-coordinate', index, reason: 'explicit coordinate is outside profile bounds' });
+        const narrated = placeEvidenceHypothetical(proposal.evidence, exchangeById)
+          ? null
+          : narratedCoordinateFor(normCoord, proposal.evidence, exchangeById, activeProfile?.decimalStep, proposal.name);
+        coordGrounded = Boolean(narrated);
+        if (coordGrounded && activeProfile?.bounds && !validateBounds(narrated.x, narrated.y, activeProfile.bounds)) {
+          rejected.push({ stage: 'spatial-coordinate', index: rowIndex, reason: 'explicit coordinate is outside profile bounds' });
           continue;
         }
         if (coordGrounded) {
           finalCoord = {
-            x: normCoord.x,
-            y: normCoord.y,
+            x: narrated.x,
+            y: narrated.y,
             authority: 'narrative_explicit',
             locked: false,
           };
@@ -601,7 +614,7 @@ export function processSpatialCapture({
         if (!anchor) {
           rejected.push({
             stage: 'spatial-relative',
-            index,
+            index: rowIndex,
             reason: 'unsupported relative relation dropped; named location retained when admissible: anchor was not in bounded visible spatial context',
           });
         } else {
@@ -614,7 +627,7 @@ export function processSpatialCapture({
           if (!checkedRelative.ok) {
             rejected.push({
               stage: 'spatial-relative',
-              index,
+              index: rowIndex,
               reason: 'unsupported relative relation dropped; named location retained when admissible: ' + checkedRelative.reason,
             });
           } else {
@@ -658,7 +671,7 @@ export function processSpatialCapture({
             if (actual && !directionsCompatible(proposal.relative.direction, actual)) {
               rejected.push({
                 stage: 'spatial-true-north',
-                index,
+                index: rowIndex,
                 reason: 'relative direction conflicts with coordinate delta under locked True North',
               });
               continue;
@@ -696,14 +709,14 @@ export function processSpatialCapture({
 
     if (proposal.action === 'upsert_relation') {
       if (!visibleById.has(proposal.fromId) || !visibleById.has(proposal.toId)) {
-        rejected.push({ stage: 'spatial-source-firewall', index, reason: 'relation endpoints must be visible established locations' });
+        rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'relation endpoints must be visible established locations' });
         continue;
       }
       const from = visibleById.get(proposal.fromId);
       const to = visibleById.get(proposal.toId);
       const groundedRelation = groundDirectRelationProposal(proposal, from, to, proposal.evidence, exchangeById);
       if (!groundedRelation.ok) {
-        rejected.push({ stage: 'spatial-relation-grounding', index, reason: groundedRelation.reason });
+        rejected.push({ stage: 'spatial-relation-grounding', index: rowIndex, reason: groundedRelation.reason });
         continue;
       }
       const groundedProposal = groundedRelation.proposal;
@@ -714,7 +727,7 @@ export function processSpatialCapture({
           activeProfile,
         );
         if (actual && !directionsCompatible(groundedProposal.direction, actual)) {
-          rejected.push({ stage: 'spatial-true-north', index, reason: 'relation direction conflicts with authoritative coordinate delta' });
+          rejected.push({ stage: 'spatial-true-north', index: rowIndex, reason: 'relation direction conflicts with authoritative coordinate delta' });
           continue;
         }
       }
@@ -724,15 +737,15 @@ export function processSpatialCapture({
 
     if (proposal.action === 'upsert_route') {
       if (isGenericScenery(proposal.name)) {
-        rejected.push({ stage: 'spatial-admission', index, reason: 'cannot capture generic unnamed route' });
+        rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'cannot capture generic unnamed route' });
         continue;
       }
       if (!locationNameGrounded(proposal.name, proposal.evidence, exchangeById)) {
-        rejected.push({ stage: 'spatial-source-firewall', index, reason: 'route name is not grounded in accepted narration' });
+        rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'route name is not grounded in accepted narration' });
         continue;
       }
       if ((proposal.endpoints || []).some(id => !visibleById.has(id))) {
-        rejected.push({ stage: 'spatial-source-firewall', index, reason: 'route endpoints must be visible established locations' });
+        rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'route endpoints must be visible established locations' });
         continue;
       }
       accepted.push(proposal);
@@ -748,19 +761,21 @@ export function processSpatialCapture({
     lineageKey: sourceLineageKey,
     operation,
     mutations: locationMutations,
-  }, baseMap, { visibleLocations });
+  }, baseMap, { visibleLocations: [...visibleLocations, ...namedBase] });
 
-  const createdNameToId = new Map();
+  // A relative relation names its new place: link it to the place that name was saved as, whether it was
+  // created now or matched an existing same-name place outside the visible set.
+  const savedNameToId = new Map();
   for (const item of reducedLocations.applied || []) {
-    if (item.action === 'create_location') {
-      const loc = reducedLocations.spatial.locations.find(candidate => candidate.id === item.locationId);
-      if (loc) createdNameToId.set(norm(loc.name), loc.id);
-    }
+    if (item.action !== 'create_location' && item.action !== 'update_location') continue;
+    const loc = reducedLocations.spatial.locations.find(candidate => candidate.id === item.locationId);
+    if (loc) savedNameToId.set(norm(loc.name), effectiveLocationId(loc, baseMap, reducedLocations.spatial));
   }
 
   for (const deferred of accepted.filter(item => item.__deferredTargetName)) {
-    const targetId = createdNameToId.get(norm(deferred.__deferredTargetName));
+    const targetId = savedNameToId.get(norm(deferred.__deferredTargetName));
     if (targetId) otherMutations.push({ ...deferred, toId: targetId, __deferredTargetName: undefined });
+    else rejected.push({ stage: 'spatial-relative', reason: 'relative relation dropped: its place was not saved' });
   }
 
   const reducedOther = reduceSpatialMutations(reducedLocations.spatial, {
@@ -772,6 +787,7 @@ export function processSpatialCapture({
   }, baseMap, {
     visibleLocations: [
       ...visibleLocations,
+      ...namedBase,
       ...(reducedLocations.spatial.locations || []),
     ],
   });
