@@ -92,7 +92,11 @@ export function normalizeElapsedHint(input, defaults = {}) {
   }
   if (typeof input !== 'object') return null;
   const unit = UNIT_ALIASES[String(input.unit || '').toLocaleLowerCase()] || text(input.unit, 40);
-  const amount = Number.isFinite(Number(input.amount)) ? Math.max(0, Number(input.amount)) : null;
+  // Number(null) and Number('') are 0: an unknown amount must stay unknown.
+  const rawAmount = input.amount;
+  const amount = rawAmount !== null && rawAmount !== undefined && rawAmount !== '' && Number.isFinite(Number(rawAmount))
+    ? Math.max(0, Number(rawAmount))
+    : null;
   const meaningful = input.meaningful === undefined
     ? (unit ? meaningfulAmount(amount, unit) : true)
     : input.meaningful === true;
@@ -109,9 +113,12 @@ export function normalizeElapsedHint(input, defaults = {}) {
 
 const AMOUNT_WORD = '(\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|couple|few|several|many)(?:\\s+of)?';
 const UNIT_WORD = '(minutes?|hours?|days?|weeks?|months?|years?|terms?|semesters?|seasons?|cycles?)';
+const AFTER_PATTERN = new RegExp(`\\bafter\\s+${AMOUNT_WORD}\\s+${UNIT_WORD}\\b`, 'iu');
+const CLAUSE_OPENING = /(?:^|[.!?;:,\n—–(]|\b(?:and|then|but|so))\s*["'“”‘’]?\s*$/iu;
 const ELAPSED_PATTERNS = Object.freeze([
-  new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:later|afterwards?|on)\\b`, 'iu'),
-  new RegExp(`\\bafter\\s+${AMOUNT_WORD}\\s+${UNIT_WORD}\\b`, 'iu'),
+  // "Two days on, ..." ends the phrase; "a week on foot" is a travel time.
+  new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:later|afterwards?|on(?=\\s*(?:[,.;:!?—–]|$)))`, 'iu'),
+  AFTER_PATTERN,
   new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:have\\s+)?passed\\b`, 'iu'),
 ]);
 
@@ -210,6 +217,9 @@ function elapsedCandidates(source, defaults = {}) {
   };
   for (const pattern of ELAPSED_PATTERNS) {
     for (const match of source.matchAll(new RegExp(pattern.source, 'giu'))) {
+      // "After three days, ..." opens its sentence or clause; "kills after three days" or "leaves after two
+      // weeks of waiting" is a duration or schedule, not time passing in the story.
+      if (pattern === AFTER_PATTERN && !CLAUSE_OPENING.test(source.slice(Math.max(0, match.index - 16), match.index))) continue;
       add(match, item => {
         const amount = amountValue(item[1]);
         const unit = UNIT_ALIASES[String(item[2] || '').toLocaleLowerCase()] || '';

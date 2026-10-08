@@ -492,6 +492,12 @@ export function processCaptureResponse({
     // create in the same response would otherwise become a separate record for one condition.
     // One condition proposed twice in the same response is merged into the first create (anchors and
     // evidence), using the duplicate gate's own threshold.
+    if (evidenceSourceClass) {
+      admittedMutation.evidence = (admittedMutation.evidence || []).map(item => ({
+        ...item,
+        sourceClass: evidenceSourceClass,
+      }));
+    }
     const sameResponseDuplicate = admittedMutation.action === 'create'
       ? accepted.find(item => item.action === 'create' && duplicateSimilarity(admittedMutation, item) >= DUPLICATE_THRESHOLD)
       : null;
@@ -500,13 +506,6 @@ export function processCaptureResponse({
       sameResponseDuplicate.evidence = [...(sameResponseDuplicate.evidence || []), ...(admittedMutation.evidence || [])].slice(0, 4);
       rejected.push(rejectedEntry('duplicate-gate', 'merged into another create in this response', { index }));
       continue;
-    }
-
-    if (evidenceSourceClass) {
-      admittedMutation.evidence = (admittedMutation.evidence || []).map(item => ({
-        ...item,
-        sourceClass: evidenceSourceClass,
-      }));
     }
     accepted.push(admittedMutation);
   }

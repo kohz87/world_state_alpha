@@ -1,7 +1,7 @@
 import { duplicateSimilarity, mergeAnchors } from './duplicate.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange, normalizeElapsedHint } from './elapsed.js';
-import { EvolutionWireError, parseEvolutionJson, validateEvolutionEnvelope } from './evolution-wire.js';
+import { EVOLUTION_WIRE_LIMITS, EvolutionWireError, parseEvolutionJson, validateEvolutionEnvelope } from './evolution-wire.js';
 import { hashText, stableStringify } from './hash.js';
 import { buildWorldStateInjection } from './injection.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
@@ -152,7 +152,8 @@ export function planLazyEvolution(state, {
       },
       directEvidence,
     });
-    if (targets.length >= Math.max(1, Math.min(8, Number(maxTargets) || EVOLUTION_LIMITS.targets))) break;
+    // Never more targets than the wire accepts evaluations for: the reply must answer every target.
+    if (targets.length >= Math.max(1, Math.min(EVOLUTION_WIRE_LIMITS.evaluations, Number(maxTargets) || EVOLUTION_LIMITS.targets))) break;
   }
 
   return {

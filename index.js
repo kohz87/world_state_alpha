@@ -2789,6 +2789,10 @@ async function handleUserMessage(messageId) {
       setCachedState(chatKey, committed, indexDelta
         ? { indexMode: 'delta', indexDelta, spatialIndexDelta: {} }
         : { indexMode: 'rebuild' });
+    } else if (prepared.evolution?.outcome !== 'skipped') {
+      // Evolution ran but changed nothing (it failed, or was answered without a usable result): the
+      // background boundary it advanced on the shared index is put back, so a later turn retries it.
+      resetIndexesFromCache(chatKey);
     }
     updatePrivateInjection();
     refreshPanel();

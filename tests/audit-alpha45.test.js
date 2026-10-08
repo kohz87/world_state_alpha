@@ -45,7 +45,7 @@ test('A01/A02: the past-chat rename writes the server state with its own revisio
   assert.match(capture, /if \(persisted\.stale\) return;/);
   // Evolution's background cursor moved: any unsaved outcome rebuilds the index from the cached state.
   const continuity = source.slice(source.indexOf('async function handleUserMessage('), source.indexOf('async function handleBranchChange('));
-  assert.equal((continuity.match(/resetIndexesFromCache\(chatKey\);/g) || []).length, 4);
+  assert.equal((continuity.match(/resetIndexesFromCache\(chatKey\);/g) || []).length, 5);
 });
 
 test('A05: evolution leaves the shared index alone until the host has saved its state', async () => {

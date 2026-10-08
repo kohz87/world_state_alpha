@@ -91,32 +91,93 @@ function targetAffinity(record, text) {
   return anchors.length === 1 && matched.length === 1 && matched[0].length >= 5;
 }
 
+// Scripts written without spaces between words: there a match may start or end inside a run of letters.
+const SPACELESS_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+// The excerpt occurs verbatim on word boundaries: "active volcano" is not in "inactive volcano".
+function containsOnWordBoundaries(haystack, needle) {
+  const first = SPACELESS_SCRIPT.test(needle[0]);
+  const last = SPACELESS_SCRIPT.test(needle[needle.length - 1]);
+  for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+    const before = haystack[at - 1];
+    const after = haystack[at + needle.length];
+    if ((first || before === undefined || before === ' ') && (last || after === undefined || after === ' ')) return true;
+  }
+  return false;
+}
+
 export function evidenceClaimGrounded(claim, sourceText) {
   const needle = canonicalText(claim);
   const haystack = canonicalText(sourceText);
   const tokens = needle.split(' ').filter(token => token.length > 1);
-  return needle.length >= 8 && tokens.length >= 2 && haystack.includes(needle);
+  if (needle.length < 8) return false;
+  // A run of spaceless script is one token but holds many words.
+  if (tokens.length < 2 && !SPACELESS_SCRIPT.test(needle)) return false;
+  return containsOnWordBoundaries(haystack, needle);
 }
 
 const REPORTED_INFORMATION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|orders?|ordered|demands?|demanded|threatens?|threatened|promises?|promised|offers?|offered|refuses?|refused|asks?|asked|requests?|requested|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay)\b/iu;
 const ATTRIBUTION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay|insists?|insisted|tells?|told|explains?|explained|mentions?|mentioned|whispers?|whispered|informs?|informed)\b/iu;
+// A demand, order, threat or promise is itself a narrated act ("Orson demands an unloading fee" shows the
+// extortion); only what is demanded, ordered, threatened or promised (the text after the verb) is not
+// established by it.
+const SPEECH_ACT_RE = /\b(?:demands?|demanded|demanding|orders|ordered|ordering|threatens?|threatened|threatening|promises?|promised|promising|offers|offered|offering|asks?|asked|asking|requests|requested|requesting|insists?|insisted)\b/giu;
+
+// Quoted spans paired line by line: a quotation left open at the end of a paragraph (the usual way to
+// continue speech into the next paragraph) runs to the end of that paragraph, and a straight double quote
+// right after a digit or an apostrophe (6'2") is an inch mark, not a quotation mark.
+function quotedSpans(sourceText) {
+  const source = String(sourceText ?? '');
+  const spans = [];
+  let lineStart = 0;
+  for (const line of source.split('\n')) {
+    let open = -1;
+    let curly = -1;
+    let low = -1;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      if (char === '"') {
+        if (open < 0 && /[\d']/u.test(line[index - 1] || '')) continue;
+        if (open < 0) open = index;
+        else {
+          spans.push([lineStart + open + 1, lineStart + index]);
+          open = -1;
+        }
+      } else if (char === '“') {
+        if (curly < 0 && low < 0) curly = index;
+        else if (low >= 0) {
+          spans.push([lineStart + low + 1, lineStart + index]);
+          low = -1;
+        }
+      } else if (char === '”' && curly >= 0) {
+        spans.push([lineStart + curly + 1, lineStart + index]);
+        curly = -1;
+      } else if (char === '„' && low < 0) {
+        low = index;
+      }
+    }
+    for (const start of [open, curly, low]) if (start >= 0) spans.push([lineStart + start + 1, lineStart + line.length]);
+    lineStart += line.length + 1;
+  }
+  return spans.filter(([from, to]) => to > from);
+}
 
 function quotedDialogueSegments(sourceText) {
   const source = String(sourceText ?? '');
-  const segments = [];
-  for (const pattern of [/"([^"]+)"/gu, /“([^”]+)”/gu, /„([^“]+)“/gu]) {
-    for (const match of source.matchAll(pattern)) {
-      if (match[1]) segments.push(match[1]);
-    }
-  }
-  return segments;
+  return quotedSpans(source).map(([from, to]) => source.slice(from, to)).filter(segment => segment.trim());
 }
 
 export function sourceWithoutQuotedDialogue(sourceText) {
-  return String(sourceText ?? '')
-    .replace(/"[^"]+"/gu, ' ')
-    .replace(/“[^”]+”/gu, ' ')
-    .replace(/„[^“]+“/gu, ' ');
+  const source = String(sourceText ?? '');
+  const spans = quotedSpans(source).sort((a, b) => a[0] - b[0]);
+  let out = '';
+  let at = 0;
+  for (const [from, to] of spans) {
+    if (from < at) continue;
+    out += source.slice(at, Math.max(at, from - 1)) + ' ';
+    at = Math.min(source.length, to + 1);
+  }
+  return out + source.slice(at);
 }
 
 export function evidenceClaimQuotedOnly(claim, sourceText) {
@@ -199,14 +260,44 @@ function claimInsideReportedComplement(claim, sentence) {
   return at >= match.index + match[0].length - 4;
 }
 
-function evidenceClaimAttributed(claim, sourceText) {
+const SENTENCE_SPLIT = /(?<=[.!?])\s+|\r?\n+/u;
+
+// The claim is the content of a demand, order, threat or promise made earlier in its sentence, and does
+// not itself include the verb (that would be the narrated act).
+function claimInsideSpeechActComplement(claim, sentence) {
+  const text = canonicalText(sentence);
+  const needle = canonicalText(claim);
+  if (!needle || new RegExp(SPEECH_ACT_RE.source, 'iu').test(needle)) return false;
+  const at = ` ${text} `.indexOf(` ${needle} `);
+  if (at < 0) return false;
+  for (const match of text.matchAll(SPEECH_ACT_RE)) {
+    if (match.index + match[0].length <= at) return true;
+  }
+  return false;
+}
+
+function sentenceAttributed(claim, sourceText) {
   if (evidenceClaimQuotedOnly(claim, sourceText)) return true;
   if (claimSubstanceQuoted(claim, sourceText)) return true;
   const source = String(sourceText ?? '');
   const claimTokens = new Set(significantTokens(claim));
-  const segments = source.split(/(?<=[.!?])\s+|\r?\n+/u).filter(Boolean);
-  return segments.some(segment => evidenceClaimGrounded(claim, segment) && ATTRIBUTION_RE.test(segment)
-    && (claimInsideReportedComplement(claim, segment) || clauseAttributes(segment, claimTokens)));
+  const segments = source.split(SENTENCE_SPLIT).filter(Boolean);
+  return segments.some(segment => evidenceClaimGrounded(claim, segment) && (
+    claimInsideSpeechActComplement(claim, segment)
+    || (ATTRIBUTION_RE.test(segment) && (claimInsideReportedComplement(claim, segment) || clauseAttributes(segment, claimTokens)))
+  ));
+}
+
+// An excerpt spanning several sentences is judged by the sentences that carry the change it supports (all
+// of them when none does): it is reported only when every such sentence is, so a cited rumour stays a rumour
+// beside unrelated narration, while narration of the change itself still establishes it.
+function evidenceClaimAttributed(claim, sourceText, focusText = '') {
+  const parts = String(claim ?? '').split(SENTENCE_SPLIT).map(part => part.trim())
+    .filter(part => canonicalText(part).length >= 8);
+  if (parts.length < 2) return sentenceAttributed(claim, sourceText);
+  const focus = new Set(significantTokens(focusText));
+  const bearing = parts.filter(part => significantTokens(part).some(token => focus.has(token)));
+  return (bearing.length ? bearing : parts).every(part => sentenceAttributed(part, sourceText));
 }
 
 function anchorSupported(anchor, evidence, existingRecord = null, assertionText = '') {
@@ -309,7 +400,7 @@ export function applyCaptureSourceFirewall(mutation, {
     evidence.push(normalizedEvidence);
     evidenceSupport.push({
       ...normalizedEvidence,
-      attributed: evidenceClaimAttributed(item.claim, source.text),
+      attributed: evidenceClaimAttributed(item.claim, source.text, candidate.summary || stateRecords.get(candidate.recordId)?.summary || ''),
     });
   }
 
