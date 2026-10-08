@@ -636,7 +636,7 @@ export function buildWorldStateUiModel(state, {
       spatialCampaign: normalized.spatial.locations.filter(loc => loc.status !== 'archived').length,
       spatialBase: baseMap ? (baseMap.locations?.length || 0) : 0,
     },
-    views: { current, recent, resolved, search: searched },
+    views: recordViews,
     latestMessage: latestMessage >= 0 ? latestMessage : null,
     spatial: {
       locations: boundedSpatial,
@@ -668,8 +668,6 @@ export function buildWorldStateUiModel(state, {
       search: Math.max(0, searchResult.totalMatched - searched.length),
       spatial: Math.max(0, filteredSpatial.length - boundedSpatial.length),
     },
-    // Every record's status by its row key (bounded views may not show it).
-    recordStatusByKey: new Map(projected.map(row => [row.key, row.status])),
     search: {
       query: searchQuery,
       // What the search box shows: the text as typed, trailing space included.
@@ -1375,11 +1373,10 @@ function operationTime(value) {
   }
 }
 
-function jsonInspector(title, textValue, index, kind) {
+function jsonInspector(title, textValue, kind) {
   if (!textValue) return '';
   return '<section class="wsa-operation-json"><div class="wsa-operation-json-head"><h4>' + escapeHtml(title) + '</h4>' +
-    '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-copy-json="' + escapeHtml(kind) +
-    '" data-wsa-diagnostic-index="' + index + '">Copy</button></div>' +
+    '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-copy-json="' + escapeHtml(kind) + '">Copy</button></div>' +
     '<pre tabindex="0">' + escapeHtml(textValue) + '</pre></section>';
 }
 
@@ -1424,8 +1421,8 @@ function diagnosticsHtml(model) {
         '<div><dt>Response chars</dt><dd>' + item.responseChars + '</dd></div>' +
         '<div><dt>Duration</dt><dd>' + item.durationMs + ' ms</dd></div>' +
         '</dl>' +
-        jsonInspector('Model response JSON', item.responseJson, index, 'response') +
-        jsonInspector('Rejected mutations / reasons', item.rejectionsJson, index, 'rejections') +
+        jsonInspector('Model response JSON', item.responseJson, 'response') +
+        jsonInspector('Rejected mutations / reasons', item.rejectionsJson, 'rejections') +
         '</div></details>';
     }).join('')
     : emptyState('No operations yet', 'Capture, rebuild, evolution, and maintenance telemetry will appear here.');
@@ -1833,8 +1830,10 @@ export function createWorldStateUiController({
     destroyed: false,
   };
 
+  // A record's status from its row key ('row-' + its index among the normalized records), read only on click.
   function recordStatusOfKey(key) {
-    return model().recordStatusByKey?.get(key) || '';
+    const index = Number(/^row-(\d+)$/.exec(key)?.[1]);
+    return Number.isInteger(index) ? normalizeState(cloneState(getState())).records[index]?.status || '' : '';
   }
 
   function model() {
@@ -1856,8 +1855,8 @@ export function createWorldStateUiController({
     const list = [
       getChatKey(),
       ui.activeTab,
-      ui.query.trim(),
-      ui.spatialSearch.trim(),
+      clean(ui.query, 500),
+      clean(ui.spatialSearch, 120),
       ui.spatialDuplicatesOnly ? 1 : 0,
       // Records expand inline, so only the Places layout swaps list and detail panes.
       ui.activeTab === 'spatial' && ui.spatialDetailOpen ? 1 : 0,
@@ -1978,7 +1977,8 @@ export function createWorldStateUiController({
         // Not a text field.
       }
     }
-    return true;
+    // A field re-rendered disabled cannot take focus: the search fallbacks still run.
+    return !globalThis.document || globalThis.document.activeElement === element;
   }
 
   function refresh({ restoreSearchFocus = false, restoreSpatialFocus = false } = {}) {
@@ -1996,7 +1996,7 @@ export function createWorldStateUiController({
     ui.selectedRecordId = next.selectedRecordId;
     // Bulk mode belongs to one list: changing tab or search text ends it, so a selection can never
     // include rows the operator can no longer see.
-    const bulkScope = ui.activeTab + '|' + ui.query.trim();
+    const bulkScope = ui.activeTab + '|' + clean(ui.query, 500);
     if (bulkScope !== ui.bulkScope) {
       ui.bulkScope = bulkScope;
       ui.bulk.active = false;

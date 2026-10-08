@@ -269,6 +269,7 @@ function indexRecordTerms(record, index) {
     // a function word in the scene must not hit every record whose anchor contains it. A one-word anchor
     // (or one made only of function words) keeps every token, since a name may be one ('Will', 'May').
     const anchorWords = tokens(norm);
+    // (A multi-word anchor scores only when all its words are in the scene, so its content words find it.)
     const contentWords = anchorWords.filter(token => !RELEVANCE_STOPWORDS.has(token));
     for (const token of contentWords.length && anchorWords.length > 1 ? contentWords : anchorWords) {
       if (seenAnchorToken.has(token)) continue;
@@ -482,8 +483,12 @@ export function updateRelevanceIndex(index, delta = {}) {
   if (index.backgroundDevelopmentIds.length > backgroundSet.size) {
     const ids = index.backgroundDevelopmentIds;
     const cursor = ids.length ? index.backgroundCursor % ids.length : 0;
-    const kept = ids.filter(id => backgroundSet.has(id));
-    index.backgroundCursor = ids.slice(0, cursor).filter(id => backgroundSet.has(id)).length % Math.max(1, kept.length);
+    // Each id once (a delta may retire and re-add the same development), so the list matches the set again.
+    const seen = new Set();
+    const keep = id => backgroundSet.has(id) && !seen.has(id) && seen.add(id);
+    const kept = ids.filter(keep);
+    seen.clear();
+    index.backgroundCursor = ids.slice(0, cursor).filter(keep).length % Math.max(1, kept.length);
     index.backgroundDevelopmentIds = kept;
   }
 

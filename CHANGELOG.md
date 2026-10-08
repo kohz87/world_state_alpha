@@ -31,6 +31,16 @@ Each fix was reproduced first and has a regression test that fails on 0.9.0-alph
   On alpha.53 the search reads "iron gate", typing continues in the place field at the caret after the refresh, and the panel fits the screen.
 - Not verified: real mobile devices and on-screen keyboards, and screen readers.
 
+### Code review hardening
+
+- A linked record beyond the first 120 rows is now actually shown in the list and opened; before, only its detail was computed.
+- The background scan list drops a repeated id too, so it can no longer stay longer than the pool and compact on every update.
+- Typing a second space between words no longer ends bulk-select mode or resets the list's scroll position.
+- When the field being typed in is re-rendered disabled (a rebuild starts, a base map locks the profile), focus falls back to the search box instead of being lost.
+- Finding a linked record's tab reads only that record's status, instead of building the whole panel model a second time.
+- The Copy button no longer carries a row number.
+- Checked and left as is: a first name that is also a function word ("Will" in "Will Turner") is no longer indexed as an anchor word. A multi-word anchor scores only when all its words are in the scene, so "Will" alone never selected that record (on alpha.52 either), and "Will Turner" still does.
+
 ## 0.9.0-alpha.52 - Places accuracy (deep pass on alpha.49)
 
 Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.51.

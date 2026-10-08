@@ -231,3 +231,47 @@ test('42: resolved developments do not use background catch-up slots', () => {
   // Before: the 32-slot scan landed on resolved ids and reached no active development.
   assert.equal(picked.selected.length, 4);
 });
+
+// Code review hardening.
+
+test('review: a linked record beyond the bounded list is rendered and opened', async () => {
+  const state = createState('chat:a53');
+  for (let i = 0; i < 125; i += 1) {
+    state.records.push({ id: 'r' + i, kind: 'fact', status: 'active', summary: 'Fact number ' + i, anchors: ['fact' + i], trend: null, evidenceIds: [], createdAtMessage: i, lastChangedMessage: i });
+  }
+  const dom = fakePanelRoot();
+  const ctl = createWorldStateUiController({ root: dom.root, getState: () => state });
+  await clickOn(dom, '[data-wsa-open-record]', { wsaOpenRecord: 'row-0' });
+  const shown = ctl.refresh();
+  assert.ok(shown.views.current.some(row => row.key === 'row-0'));
+  assert.match(dom.root.innerHTML, /Fact number 0\b/);
+  ctl.destroy();
+});
+
+test('review: a multi-word anchor led by a function-word name is found by its content words', () => {
+  // A multi-word anchor scores only when all its words are in the scene, so 'Will' alone never selected
+  // 'Will Turner' (on alpha.52 either); the full name still does through 'turner'.
+  const records = [record('turner', 'The ferryman keeps his boat moored', ['Will Turner'])];
+  for (let i = 0; i < 300; i += 1) records.push(record('shrine' + i, 'Shrine ' + i + ' keeps its candles lit', ['the shrine ' + i]));
+  const state = { records };
+  const result = selectRelevantRecords(state, { index: buildRelevanceIndex(state), recentText: 'Will Turner waits at the docks.', currentMessageId: 5 });
+  assert.equal(result.selected[0]?.record.id, 'turner');
+});
+
+test('review: a duplicate background id is compacted once, not on every update', () => {
+  const dev = record('d1', 'Development one continues', ['d1'], { kind: 'development' });
+  const index = buildRelevanceIndex({ records: [] });
+  updateRelevanceIndex(index, { upsertedRecords: [dev] });
+  updateRelevanceIndex(index, { upsertedRecords: [{ ...dev, status: 'resolved' }, dev] });
+  updateRelevanceIndex(index, { upsertedRecords: [dev] });
+  assert.deepEqual(index.backgroundDevelopmentIds, ['d1']);
+});
+
+test('review: inner spaces do not end bulk mode; a disabled field falls back to the search focus', () => {
+  const ui = fs.readFileSync('ui.js', 'utf8');
+  assert.match(ui, /const bulkScope = ui\.activeTab \+ '\|' \+ clean\(ui\.query, 500\);/);
+  assert.match(ui, /clean\(ui\.query, 500\),\s*clean\(ui\.spatialSearch, 120\),/);
+  assert.match(ui, /element\.focus\(\{ preventScroll: true \}\);[\s\S]{0,400}return !globalThis\.document \|\| globalThis\.document\.activeElement === element;/);
+  // The Copy button no longer carries a row number that a new row could shift.
+  assert.doesNotMatch(ui, /data-wsa-diagnostic-index/);
+});
