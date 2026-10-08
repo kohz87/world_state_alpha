@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.0-alpha.60 - Forfeit a missed capture
+
+### Added
+
+- **Forfeit a missed capture without a rebuild.** The Missed captures notice on the World view now has a Forfeit button for each listed message, next to Recapture.
+  - After a confirmation, that message is no longer offered for Recapture.
+  - World State does not change: whatever that reply established stays uncaptured unless you add it by hand.
+  - Forfeit applies to that version of the message only. A new swipe or edit of it is captured as usual, and a later failure of the same version is listed again.
+  - The decision is saved to the chat's Operations log at once, so it holds after a reload and on other devices.
+  - It is not offered inside the rebuild sheet or while a rebuild runs.
+
+### Architecture
+
+- The forfeit is a `forfeited` capture row in the non-canonical Operations log, bound to the message's lineage and hide-insensitive keys. It clears failures the way a successful capture does. No World State or durable format change (schema 2; envelopes 1).
+- Core contract C19 records the rule.
+
+### Validation
+
+- New `tests/audit-alpha60.test.js` (3 tests, each failing on 0.9.0-alpha.59) and host scenario `tests/host/forfeit-capture.mjs`.
+- Live in SillyTavern, with a capture failure forced on message 2:
+  - the notice offered "Forfeit without recovering: Message 2";
+  - declining the confirmation kept it listed;
+  - accepting cleared the notice and showed "Missed capture of message 2 forfeited. World State is unchanged.";
+  - the record count stayed at 2, and the notice stayed cleared after a page reload.
+- The branch, resume and hide live scripts give the same results as on alpha.59.
+
 ## 0.9.0-alpha.59 - Performance, contract text and cleanups (deep pass on alpha.54)
 
 ### Fixed
