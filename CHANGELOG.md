@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.9.0-alpha.55 - Data loss and wrong state (deep pass on alpha.54)
+
+Each fix has a regression test that fails on 0.9.0-alpha.54.
+
+### Fixed
+
+- **Sidecars and the server:**
+  - a chat whose sidecar is missing or unreadable no longer holds a stand-in with the hydrated revision, so it can never be saved over the server file;
+  - a corrupt sidecar is now recovery-required, and a Full chat rebuild, import or reset can replace it (before, the chat stayed blocked: every replacement write failed on the undecodable file);
+  - after a revision conflict the server state is adopted even if its revision is lower than ours (another device's recovery started the file over);
+  - an adopted server state whose messages diverge from this chat keeps the branch dirty and clears the injection until a reconcile proves it.
+- **Capture and rebuild currentness:**
+  - a capture takes its currentness guard before it waits for the base map, so a swipe during that wait discards it instead of committing it to the new reply;
+  - a reply appended while a rebuild runs (the operator keeps playing) no longer cancels the rebuild as "new canonical state";
+  - after an import, reset or Full chat rebuild the branch is reconciled again, so a chat edited meanwhile is not injected from the replaced state;
+  - toggling Reality or Places injection no longer cancels a running rebuild and in-flight captures.
+- **Operations log:** every kept row is saved, pinned old failures included; before, only the newest 80 were saved, so older missed captures were lost on reload.
+- **Places:**
+  - a rebuild with Places on keeps the places, relations and routes the operator added, at the boundary where they appeared (before, they were all gone);
+  - rolling back a deleted place, record, relation or route puts it back where it was, so the state still matches its checkpoint and an older rollback no longer fails closed;
+  - Add place refuses "Kings Rest" when "Kings-Rest" exists (it overwrote that place's type and dropped its locked position), and merge suggestions and name lookups fold names the same way;
+  - a position typed in the place editor becomes manual authority rather than keeping a relative or unknown label.
+- **Duplicates:**
+  - a new episode of a resolved record is no longer absorbed by an unrelated active record that merely shares an anchor ("The plague has returned to the lower city" replaced the active food riots record);
+  - "Squad 12" and "Squad 14" are different subjects, while "has lasted 3 days" / "4 days" is still one.
+- **Base maps:**
+  - a map whose name or version was cut right after a space reloads (re-parsing trimmed it again, the digest no longer matched and the map never loaded);
+  - overrides of two base places with the same name get separate ids (the second was dropped);
+  - two routes with the same name and no id no longer fail the import.
+
+### Architecture
+
+- Core contract C08, C10, C11, C17, C22, C24.2, C24.5 and C24.6 record these rules. No durable format change (schema 2; envelopes 1). The corrupt-sidecar replacement is a revision-0 write checked against the recorded corrupt file, never a blind overwrite.
+
+### Validation
+
+- New `tests/audit-alpha55.test.js` (pure modules) and `tests/audit-alpha55-host.test.js`. The host tests run each scenario in its own process on a new harness (`tests/host/`): it copies the runtime into a temporary SillyTavern layout with stub host modules and drives the real `index.js` through mocked files, events and fetches.
+- Three older source checks were updated: the Operations log saves `allRecords`, the rebuild's range check reads the canonical generation, and the scheduled-recovery window was widened for the new hydration path.
+- Live in SillyTavern (stub provider), alpha.54 against alpha.55:
+  - adding "Kings Rest" next to a locked "Kings-Rest" inn: alpha.54 overwrote it as a landmark with no position; alpha.55 refuses with a toast and keeps the inn at 10,20, manual and locked;
+  - a Full chat rebuild with Places on: alpha.54 left 0 places; alpha.55 keeps Kings-Rest unchanged.
+- The branch, hide, partial rebuild, Resume, parked-branch, Places and batch scripts give the same results as on alpha.54.
+
 ## 0.9.0-alpha.54 - Performance and cleanups (deep pass on alpha.49)
 
 Each change has a regression test that fails on 0.9.0-alpha.53. Costs are tested as counts (copies, reads, model builds), never as timings.
