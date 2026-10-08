@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.9.0-alpha.57 - Places capture and host (deep pass on alpha.54)
+
+### Fixed
+
+- **Places grounding:**
+  - A relation's direction and distance are read only in the cited sentences that name its places. The compass word must be used as a direction, so "the north wind" elsewhere in the reply (or "the north gate") no longer grounds "north" and no longer derives an exact coordinate.
+  - "1,200 km" is read as 1200, not 200.
+  - A coordinate counts only in a cited sentence, as the contract says (or in an "It sits at …" sentence right after one).
+  - A coordinate spoken across a wrapped line or in „…“ quotes is dialogue, not narrative-explicit.
+  - Route names on a place are kept only when the narration names them.
+- **Duplicates and retired places:**
+  - Narrating a base place whose override the operator archived no longer creates a duplicate campaign place.
+  - The old name of a merged-away duplicate now means the place it was merged into, instead of re-creating it.
+  - Narrating a base-map route's name no longer replaces that route (type and endpoints lost) in injection.
+- **Places responses:**
+  - More than 8 Places rows no longer fails the whole response, Reality records included. Rows past the cap are rejected one by one, and the prompt states the cap.
+  - A place moved and related in the same reply is judged where it now is under a locked True North.
+  - Reducer-stage rejections carry the model's row number.
+  - A manual relation with the direction "constructor" no longer crashes the reducer.
+- **Host:**
+  - Toggling Spatial indexes the state as it is once the base map has loaded, so a place captured meanwhile is injected.
+  - A rebuild on the host connection is pinned to the model it started with. Switching models mid-rebuild fails that boundary (resumable) instead of mixing two models' extractions.
+  - A character rename no longer drops earlier missed captures from Recapture.
+  - A failed Connection Profile call keeps the provider's error text (429, authentication…).
+  - Start Rebuild says why it did not start if the chat changed while the base map loaded.
+  - Leaving a chat discards its failed rebuild's resume point.
+  - A declined or failed base-map import no longer changes which map other chats use.
+  - Detach reports success only once it is saved.
+
+### Architecture
+
+- Core contract C19, C22 and C24.4 record these rules.
+- Places gain an optional `mergedInto` field, written when a place is merged away. It is optional in schema 2, and envelopes stay at 1.
+
+### Validation
+
+- New `tests/audit-alpha57.test.js` (11 tests).
+- Two older source checks were updated: the rebuild route expression is now `pinnedHostRoute()`, and the base-map registry write is now inside the saved attach.
+- Live in SillyTavern (stub provider), alpha.56 against alpha.57:
+  - a "north" relation cited from "The north wind howls … Oakvale stands near Millbrook, some 1,200 km away" was stored as north/200 on alpha.56; alpha.57 stores no relation;
+  - a reply with nine Places rows kept none of them on alpha.56 and keeps the first eight on alpha.57.
+- The branch, Places, Add place, narrator and Resume scripts give the same results as on alpha.56.
+
 ## 0.9.0-alpha.56 - Hearsay, plans and time passing (deep pass on alpha.54)
 
 ### Fixed
