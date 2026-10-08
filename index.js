@@ -8,7 +8,7 @@ import {
 } from '../../../../script.js';
 
 import { chatLineage, commitMutationBoundary, contentLineageKey, contentLineageKeys, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, relinkParkedBranches, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
-import { assistantBoundaryExchange, boundedExchangeText, CAPTURE_LIMITS, hiddenConversationRole, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
+import { assistantBoundaryExchange, boundedExchangeText, CAPTURE_LIMITS, hiddenConversationRole, isNarratorMessage, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { affectsCaptureRecovery, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
@@ -43,7 +43,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.55';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.56';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -2509,7 +2509,7 @@ async function handleAssistantMessage(messageId) {
   const chat = ctx.chat || [];
   if (!Number.isInteger(messageId) || messageId < 0 || messageId >= chat.length) return;
   const message = chat[messageId];
-  if (messageRole(message) !== 'assistant' || !messageText(message).trim()) return;
+  if (messageRole(message) !== 'assistant' || isNarratorMessage(message) || !messageText(message).trim()) return;
 
   const chatKey = currentChatKey();
   if (chatKey === 'no-chat') return;
@@ -2537,7 +2537,7 @@ function recordCaptureStartFailure(chatKey, messageId, startFingerprint, error) 
   const settings = getWorldStateSettings();
   if (currentChatKey() !== chatKey || !settings.enabled || !settings.autoCapture) return;
   const chat = getContext().chat || [];
-  if (messageId >= chat.length || messageRole(chat[messageId]) !== 'assistant') return;
+  if (messageId >= chat.length || messageRole(chat[messageId]) !== 'assistant' || isNarratorMessage(chat[messageId])) return;
   // Swiped or edited while the capture waited: that version is gone, and the new one is captured on its own.
   if (storyFingerprintOf(chat[messageId]) !== startFingerprint) return;
   const prefix = chat.slice(0, messageId + 1);
@@ -2575,7 +2575,7 @@ async function captureAssistantBoundary(chatKey, messageId, markStarted) {
   }
 
   const liveChat = getContext().chat || [];
-  if (messageId >= liveChat.length || messageRole(liveChat[messageId]) !== 'assistant') return;
+  if (messageId >= liveChat.length || messageRole(liveChat[messageId]) !== 'assistant' || isNarratorMessage(liveChat[messageId])) return;
   const currentState = stateCache.get(chatKey);
   // Match rebuild's exact assistant-boundary semantics. A rolling window
   // includes the previous assistant turn and can bias capture toward stale

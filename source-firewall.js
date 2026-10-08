@@ -1,6 +1,6 @@
 import { clone } from './state-core.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
-import { canonicalText } from './hash.js';
+import { SPACELESS_SCRIPT, canonicalText, sharedSpacelessBigrams } from './hash.js';
 
 export { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 
@@ -39,21 +39,28 @@ function lexicalAffinity(left, right, anchors = []) {
   const a = canonicalText(left);
   const b = canonicalText(right);
   if (!a || !b) return false;
-  if (a.length >= 8 && b.includes(a)) return true;
-  if (b.length >= 8 && a.includes(b)) return true;
+  if (a.length >= 8 && containsOnWordBoundaries(b, a)) return true;
+  if (b.length >= 8 && containsOnWordBoundaries(a, b)) return true;
 
   const leftTokens = significantTokens(a);
   const rightTokens = new Set(significantTokens(b));
   const shared = leftTokens.filter(token => rightTokens.has(token));
   if (shared.length >= 2) return true;
+  // Spaceless scripts: a summary paraphrasing its excerpt shares character pairs, not words.
+  if (sharedSpacelessBigrams(a, b) >= 3) return true;
 
   for (const anchor of Array.isArray(anchors) ? anchors : []) {
     const normalized = canonicalText(anchor);
-    if (normalized.length >= 3 && a.includes(normalized) && b.includes(normalized)) return true;
+    if (anchorLongEnough(normalized) && containsOnWordBoundaries(a, normalized) && containsOnWordBoundaries(b, normalized)) return true;
   }
 
   return shared.length === 1
     && shared[0].length >= 6;
+}
+
+// An anchor of two characters names something in a spaceless script ("王都"); elsewhere it needs three.
+function anchorLongEnough(anchor) {
+  return anchor.length >= 3 || (anchor.length >= 2 && SPACELESS_SCRIPT.test(anchor));
 }
 
 function targetAffinity(record, text) {
@@ -70,21 +77,17 @@ function targetAffinity(record, text) {
 
   const haystack = canonicalText(text);
   if (!haystack) return false;
+  if (sharedSpacelessBigrams(record.summary || '', haystack) >= 3) return true;
   const anchors = (Array.isArray(record.anchors) ? record.anchors : [])
     .map(canonicalText)
-    .filter(anchor => anchor.length >= 3);
-  const matched = anchors.filter(anchor => {
-    const hasNonAscii = /[^\x00-\x7F]/u.test(anchor);
-    if (` ${haystack} `.includes(` ${anchor} `)) return true;
-    return hasNonAscii && anchor.length >= 2 && haystack.includes(anchor);
-  });
+    .filter(anchorLongEnough);
+  const matched = anchors.filter(anchor => containsOnWordBoundaries(haystack, anchor));
   if (matched.some(anchor => anchor.includes(' '))) return true;
   if (matched.length >= 2) return true;
-  return anchors.length === 1 && matched.length === 1 && matched[0].length >= 5;
+  // A single anchor identifies the record when it is specific: five letters, or two ideographs.
+  return anchors.length === 1 && matched.length === 1
+    && (matched[0].length >= 5 || SPACELESS_SCRIPT.test(matched[0]));
 }
-
-// Scripts written without spaces between words: there a match may start or end inside a run of letters.
-const SPACELESS_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 // Word boundaries are enforced where words are separated by spaces and carry no attached particles or
 // prefixes (Latin, Greek, Cyrillic, Armenian, Georgian letters, and digits). Korean particles ("서울에"),
@@ -113,8 +116,29 @@ export function evidenceClaimGrounded(claim, sourceText) {
   return containsOnWordBoundaries(haystack, needle);
 }
 
-const REPORTED_INFORMATION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|orders?|ordered|demands?|demanded|demanding|ordering|threatens?|threatened|threatening|promises?|promised|promising|offers?|offered|offering|refuses?|refused|asks?|asked|asking|requests?|requested|requesting|insists?|insisted|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay)\b/iu;
-const ATTRIBUTION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay|insists?|insisted|tells?|told|explains?|explained|mentions?|mentioned|whispers?|whispered|informs?|informed)\b/iu;
+// Words that report what someone said, heard or believes. Words used as often as nouns or idioms count only
+// in their reporting use: "claims" and "states" followed by what is reported ("claims that", "claims the
+// strike ended", never "land claims are disputed" or "the Free States levy"), "swore" with an object
+// ("swore the gate was sealed", never "Bram swore"), "told" outside "all told"; "warning" is no reporting
+// word ("without warning", "warning bells") while "warns" and "warned" are.
+// A reporting verb is followed by what is reported: "that", "to", or the reported clause's subject.
+const REPORTED_CLAUSE = '(?=\\s+(?:that|to|the|a|an|this|these|those|his|her|their|its|our|my|he|she|they|it|we|i|you|there|someone|everyone|no)\\b)';
+const REPORTING_WORDS = 'reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claimed|claiming|claims?' + REPORTED_CLAUSE
+  + '|alleges?|alleged|allegedly|according to|warns?|warned|believes?|believed|belief|beliefs|suspects?|suspected'
+  + '|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states' + REPORTED_CLAUSE + '|stated'
+  + '|announces?|announced|declares?|declared|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused'
+  + '|proclaims?|proclaimed|(?:swears?|swore)(?=\\s+(?:that|to|on|by|an?\\s+oath|he|she|they|it|we|i|you|the|his|her|their)\\b)'
+  + '|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay';
+// A summary keeps a reported account reported with these words.
+const REPORTED_ACCOUNT_RE = new RegExp('\\b(?:' + REPORTING_WORDS + '|warnings?(?=\\s+(?:of|that|about)\\b)|supposedly|purportedly|unconfirmed|unverified)\\b', 'iu');
+// ... or describes the speech act itself. "Orders" counts only as a verb with an object ("orders every vendor
+// to pay"), never as a noun ("Holy Orders", "under orders of").
+const SPEECH_ACT_OBJECT = '(?=\\s+(?:that|to|the|a|an|all|every|each|his|her|their|its|them|him|us|everyone|everybody|anyone|no|any|some)\\b)';
+const SPEECH_ACT_SUMMARY_RE = new RegExp('\\b(?:demands?|demanded|demanding|orders?' + SPEECH_ACT_OBJECT + '|ordered|ordering|threatens?|threatened|threatening'
+  + '|promises?|promised|promising|offers?|offered|offering|refuses?|refused|asks?|asked|asking|requests?|requested|requesting|insists?|insisted)\\b', 'iu');
+// ... or keeps a plan, expectation or condition prospective.
+const PROSPECTIVE_SUMMARY_RE = /\b(?:will|shall|might|going to|about to|plans?|planned|planning|plotting|intends?|intended|intending|intention|aims?|hopes?|expects?|expected|expecting|prepares?|preparing|if|unless|threat|threatened|tomorrow|tonight)\b/iu;
+const ATTRIBUTION_RE = new RegExp('\\b(?:' + REPORTING_WORDS + '|insists?|insisted|tells?|(?<!\\ball )told|explains?|explained|mentions?|mentioned|whispers?|whispered|informs?|informed)\\b', 'iu');
 // A demand, order, threat or promise is itself a narrated act ("Orson demands an unloading fee" shows the
 // extortion); only what is demanded, ordered, threatened or promised (the text after the verb) is not
 // established by it.
@@ -122,8 +146,35 @@ export const SPEECH_ACT_RE = /\b(?:demands?|demanded|demanding|orders|ordered|or
 
 // Quoted spans. A quotation runs across a wrapped line until its closing mark; it ends at a blank line or
 // where a new line opens with a quote mark (speech continued into the next paragraph leaves the earlier one
-// open to the end of its paragraph), so a stray quote cannot turn the rest of the reply into dialogue. A
-// straight double quote right after a digit (6'2") is an inch mark, inside dialogue or out.
+// open to the end of its paragraph), so a stray quote cannot turn the rest of the reply into dialogue.
+// Double quotes, curly quotes, 「」『』 and «» open dialogue; single quotes ('...', ‘...’) do only when they
+// close within the paragraph (otherwise they are apostrophes: 'tis, 'em). A straight double quote right after
+// a digit is an inch mark outside dialogue (6'2") and inside it only after feet ("he is 6'2" tall"), so
+// dialogue ending in a number ("The toll is now 20") closes.
+const PAIRED_QUOTES = Object.freeze({ '“': '”', '„': '“', '「': '」', '『': '』', '«': '»' });
+const NEW_QUOTED_LINE = /^[ \t]*(?:["“„「『«‘']|\r?\n)/u;
+const LETTER = /[\p{L}\p{N}]/u;
+
+function singleQuoteEnd(source, from) {
+  for (let index = from + 1; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '\n' && NEW_QUOTED_LINE.test(source.slice(index + 1, index + 4))) return -1;
+    if ((char === "'" || char === '’') && !LETTER.test(source[index + 1] || '') && /[\p{L}\p{N}.,!?;:…\-—]/u.test(source[index - 1] || '')) return index;
+  }
+  return -1;
+}
+
+// A short title-cased quotation introduced as a name ("the "Black Gull" anchors offshore", "a ship named
+// "Sea Wolf"") is a name, not speech; a shouted word ("The sentry yelled "Bandits"") stays dialogue.
+const NAME_CONNECTORS = new Set(['of', 'the', 'and', 'de', 'la', 'le', 'du', 'von', 'van', 'del', 'da']);
+const NAME_INTRODUCER = /(?:^|[^\p{L}])(?:the|a|an|aboard|named|called|dubbed|known as)\s*$/iu;
+function nameLikeQuote(text, before) {
+  if (!NAME_INTRODUCER.test(before) || /[.!?,;:…]/u.test(text)) return false;
+  const words = text.trim().split(/\s+/u).filter(Boolean);
+  if (!words.length || words.length > 4) return false;
+  return words.every(word => /^\p{Lu}/u.test(word) || NAME_CONNECTORS.has(word.toLocaleLowerCase())) && /^\p{Lu}/u.test(words[0]);
+}
+
 function quotedSpans(sourceText) {
   const source = String(sourceText ?? '');
   const spans = [];
@@ -132,32 +183,36 @@ function quotedSpans(sourceText) {
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index];
     if (char === '\n' && open >= 0) {
-      const next = source.slice(index + 1).match(/^[ \t]*(?:["“„]|\r?\n)/u);
-      if (next) {
+      if (NEW_QUOTED_LINE.test(source.slice(index + 1, index + 4))) {
         spans.push([open + 1, index]);
         open = -1;
       }
       continue;
     }
-    if (char === '"') {
-      if (/\d/u.test(source[index - 1] || '') || (source[index - 1] === "'" && /\d/u.test(source[index - 2] || ''))) continue;
-      if (open < 0) {
-        open = index;
-        closer = '"';
-      } else if (closer === '"') {
-        spans.push([open + 1, index]);
-        open = -1;
-      }
-    } else if ((char === '“' || char === '„') && open < 0) {
-      open = index;
-      closer = char === '“' ? '”' : '“';
-    } else if (open >= 0 && char === closer && closer !== '"') {
+    if (open >= 0) {
+      if (char !== closer) continue;
+      if (closer === '"' && /\d['’]\s?\d{1,2}$/u.test(source.slice(Math.max(0, index - 6), index))) continue;
       spans.push([open + 1, index]);
       open = -1;
+      continue;
+    }
+    if (char === '"') {
+      if (/\d/u.test(source[index - 1] || '')) continue;
+      open = index;
+      closer = '"';
+    } else if (PAIRED_QUOTES[char]) {
+      open = index;
+      closer = PAIRED_QUOTES[char];
+    } else if ((char === "'" || char === '‘') && !LETTER.test(source[index - 1] || '') && LETTER.test(source[index + 1] || '')) {
+      const end = singleQuoteEnd(source, index);
+      if (end > index) {
+        spans.push([index + 1, end]);
+        index = end;
+      }
     }
   }
   if (open >= 0) spans.push([open + 1, source.length]);
-  return spans.filter(([from, to]) => to > from);
+  return spans.filter(([from, to]) => to > from && !nameLikeQuote(source.slice(from, to), source.slice(Math.max(0, from - 21), from - 1)));
 }
 
 function quotedDialogueSegments(sourceText) {
@@ -205,6 +260,9 @@ function claimSubstanceQuoted(claim, sourceText) {
 const CLAUSE_SEPARATOR = /(\s*[,;:]\s*|\s+(?:while|whereas|but|although|though|meanwhile|yet)\s+)/iu;
 const CONTRASTIVE_SEPARATOR = /;|\b(?:while|whereas|but|although|though|meanwhile|yet)\b/iu;
 const ATTRIBUTION_ONLY_TOKENS = 4;
+// A relative, participial or temporal clause describes its subject or a time ("The guard, who reported the
+// theft, now patrols ..."); a reporting verb inside it does not report the main clause.
+const SUBORDINATE_CLAUSE = /^(?:who|whom|whose|which|where|having|after|before|when|once|since|until)\b/iu;
 
 function sentenceClauses(sentence) {
   const parts = String(sentence).split(CLAUSE_SEPARATOR);
@@ -239,10 +297,11 @@ function clauseAttributes(sentence, claimTokens) {
     if (ATTRIBUTION_RE.test(clause.text)) return true;
     for (let earlier = index - 1; earlier >= 0; earlier -= 1) {
       if (clauses[earlier + 1].contrastiveBefore) break;
+      if (SUBORDINATE_CLAUSE.test(clauses[earlier].text)) continue;
       if (ATTRIBUTION_RE.test(clauses[earlier].text)) return true;
     }
     const next = clauses[index + 1];
-    return Boolean(next && !next.contrastiveBefore && ATTRIBUTION_RE.test(next.text)
+    return Boolean(next && !next.contrastiveBefore && !SUBORDINATE_CLAUSE.test(next.text) && ATTRIBUTION_RE.test(next.text)
       && canonicalText(next.text).split(' ').filter(Boolean).length <= ATTRIBUTION_ONLY_TOKENS);
   });
 }
@@ -258,7 +317,22 @@ function claimInsideReportedComplement(claim, sentence) {
   return at >= match.index + match[0].length - 4;
 }
 
-const SENTENCE_SPLIT = /(?<=[.!?])\s+|\r?\n+/u;
+const SENTENCE_SEPARATOR = /((?<=[.!?])[ \t]+|\s*\r?\n\s*)/u;
+// A full stop after a title or an initial does not end the sentence ("Lt. Varro reported that ...").
+// Titles are capitalized; a lower-case word ("the scout said no.") or a unit ("10 ft.") ends its sentence.
+const ABBREVIATION_END = /(?:^|[\s(\["“'‘])(?:Mr|Mrs|Ms|Dr|St|Mt|Lt|Col|Gen|Capt|Cpt|Sgt|Cmdr|Cdr|Adm|Maj|Prof|Rev|Fr|Sr|Jr|Hon|Gov|Pres|Sen|vs|e\.g|i\.e|\p{Lu})\.$/u;
+
+export function sentencesOf(text) {
+  const parts = String(text ?? '').split(SENTENCE_SEPARATOR);
+  const out = [];
+  for (let index = 0; index < parts.length; index += 2) {
+    const part = parts[index];
+    const separator = parts[index - 1] || '';
+    if (out.length && !/\n/u.test(separator) && ABBREVIATION_END.test(out[out.length - 1])) out[out.length - 1] += separator + part;
+    else if (part) out.push(part);
+  }
+  return out.filter(part => part.trim());
+}
 
 // The claim is the content of a demand, order, threat or promise made earlier in its sentence, and does
 // not itself include the verb (that would be the narrated act).
@@ -266,6 +340,7 @@ const SENTENCE_SPLIT = /(?<=[.!?])\s+|\r?\n+/u;
 // within a few words before it ("demand that every vendor pay"), so "Under the captain's orders, the bridge
 // burned" or "The inn offers no rooms; the city is under quarantine" stays narration.
 const SPEECH_ACT_REACH = 4;
+const COORDINATING = new Set(['and', 'then', 'or', 'but', 'before', 'after', 'while', 'yet']);
 function claimInsideSpeechActComplement(claim, sentence) {
   const needle = canonicalText(claim);
   if (!needle || new RegExp(SPEECH_ACT_RE.source, 'iu').test(needle)) return false;
@@ -277,19 +352,23 @@ function claimInsideSpeechActComplement(claim, sentence) {
       const end = match.index + match[0].length;
       if (end > at) continue;
       const between = text.slice(end, at).split(' ').filter(Boolean);
+      // "threatened the villagers and burned the granary": the burning is a second narrated act.
+      if (between.some(word => COORDINATING.has(word))) continue;
       if (between.length <= SPEECH_ACT_REACH) return true;
     }
     return false;
   });
 }
 
-function sentenceAttributed(claim, sourceText) {
+function sentenceReported(claim, sourceText) {
   if (evidenceClaimQuotedOnly(claim, sourceText)) return true;
   if (claimSubstanceQuoted(claim, sourceText)) return true;
   const source = String(sourceText ?? '');
   const claimTokens = new Set(significantTokens(claim));
-  const segments = source.split(SENTENCE_SPLIT).filter(Boolean);
-  return segments.some(segment => evidenceClaimGrounded(claim, segment) && (
+  let segments = sentencesOf(source).filter(segment => evidenceClaimGrounded(claim, segment));
+  // An excerpt running across a sentence end is judged within its line.
+  if (!segments.length) segments = source.split(/\r?\n+/u).filter(segment => evidenceClaimGrounded(claim, segment));
+  return segments.some(segment => (
     claimInsideSpeechActComplement(claim, segment)
     || (ATTRIBUTION_RE.test(segment) && (claimInsideReportedComplement(claim, segment) || clauseAttributes(segment, claimTokens)))
   ));
@@ -298,16 +377,17 @@ function sentenceAttributed(claim, sourceText) {
 // An excerpt spanning several sentences is judged by the sentences that carry the change it supports (all
 // of them when none does): it is reported only when every such sentence is, so a cited rumour stays a rumour
 // beside unrelated narration, while narration of the change itself still establishes it.
-function evidenceClaimAttributed(claim, sourceText, focusText = '') {
-  const parts = String(claim ?? '').split(SENTENCE_SPLIT).map(part => part.trim())
+// `judge` decides one sentence: reported (sentenceReported) or planned/conditional (evidenceClaimProspective).
+function evidenceClaimAttributed(claim, sourceText, focusText = '', judge = sentenceReported) {
+  const parts = sentencesOf(claim).map(part => part.trim())
     .filter(part => canonicalText(part).length >= 8);
-  if (parts.length < 2) return sentenceAttributed(claim, sourceText);
+  if (parts.length < 2) return judge(claim, sourceText);
   const focus = new Set(significantTokens(focusText));
   // A sentence carries the change when it shares two of its content words (one when the change has one):
   // naming the same place is not enough.
   const needed = Math.min(2, focus.size);
   const bearing = needed ? parts.filter(part => new Set(significantTokens(part).filter(token => focus.has(token))).size >= needed) : [];
-  return (bearing.length ? bearing : parts).every(part => sentenceAttributed(part, sourceText));
+  return (bearing.length ? bearing : parts).every(part => judge(part, sourceText));
 }
 
 function anchorSupported(anchor, evidence, existingRecord = null, assertionText = '') {
@@ -316,7 +396,8 @@ function anchorSupported(anchor, evidence, existingRecord = null, assertionText 
   if ((existingRecord?.anchors || []).some(item => canonicalText(item) === normalized)) return true;
   if (evidence.some(item => {
     const claim = canonicalText(item.claim);
-    if (claim.includes(normalized)) return true;
+    // Whole words only: "rat" is not in "pirate".
+    if (containsOnWordBoundaries(claim, normalized)) return true;
     const anchorTokens = significantTokens(normalized);
     const claimTokens = new Set(significantTokens(claim));
     if (anchorTokens.length === 0) return false;
@@ -324,7 +405,7 @@ function anchorSupported(anchor, evidence, existingRecord = null, assertionText 
     return shared.length >= Math.ceil(anchorTokens.length / 2)
       && shared.some(token => token.length >= 4);
   })) return true;
-  if (!canonicalText(assertionText).includes(normalized)) return false;
+  if (!containsOnWordBoundaries(canonicalText(assertionText), normalized)) return false;
   const anchorTokens = significantTokens(normalized);
   return evidence.some(item => {
     const claimTokens = new Set(significantTokens(item.claim));
@@ -333,7 +414,36 @@ function anchorSupported(anchor, evidence, existingRecord = null, assertionText 
 }
 
 export function preservesReportedInformationStatus(summary) {
-  return REPORTED_INFORMATION_RE.test(String(summary ?? ''));
+  const text = String(summary ?? '');
+  return REPORTED_ACCOUNT_RE.test(text) || SPEECH_ACT_SUMMARY_RE.test(text);
+}
+
+// A summary that keeps a plan or condition prospective. It answers only for planned or conditional evidence,
+// never for reported evidence ("The king is dead and the court will choose a successor" is still promotion).
+function preservesProspectiveStatus(summary) {
+  return PROSPECTIVE_SUMMARY_RE.test(String(summary ?? ''));
+}
+
+// A record that is itself a reported account (a rumour, a report): another report may end it. A record of an
+// arrangement worded as a speech act ("men demanding a levy") is an established condition.
+function reportedAccountRecord(summary) {
+  return REPORTED_ACCOUNT_RE.test(String(summary ?? ''));
+}
+
+// What is planned, expected or conditional has not happened: a claim stating it ("the valley will flood",
+// "the duke plans to march") or standing in a conditional sentence ("If the dam breaks tonight, ...").
+// Modal verbs count in lower case only, so a character named Will or May does not.
+// A modal followed by its verb, never the noun ("against their will", "with all their might", "the king's
+// will"). Narrated day steps ("the next morning") and "tonight" are narration, not plans.
+const PROSPECTIVE_CLAIM_RE = /(?<!\b(?:their|his|her|its|my|our|your|the|own|free|good|ill|all)\s+)(?<!['’]s\s+)\b(?:will|shall|might)\s+(?:not\s+|never\s+|soon\s+|surely\s+|likely\s+)?\p{Ll}|\b(?:going|about)\s+to\b|\b(?:plans?|planned|planning|plotting|intends?|intended|intending|aims?|hopes?|expects?|expected|prepares?|preparing)\s+to\b|\b[Tt]omorrow\b/u;
+const CONDITIONAL_START = /^[^\p{L}\p{N}]*(?:even\s+)?(?:if|unless|lest|suppose|supposing|in case|should)\b/iu;
+
+function evidenceClaimProspective(claim, sourceText) {
+  if (PROSPECTIVE_CLAIM_RE.test(String(claim ?? ''))) return true;
+  return sentencesOf(sourceText).some(sentence => evidenceClaimGrounded(claim, sentence) && (
+    CONDITIONAL_START.test(sentence)
+    || sentenceClauses(sentence).some(clause => CONDITIONAL_START.test(clause.text) && evidenceClaimGrounded(claim, clause.text))
+  ));
 }
 
 export function captureExchangeIndex(exchange = []) {
@@ -351,6 +461,14 @@ export function captureExchangeIndex(exchange = []) {
     });
   }
   return map;
+}
+
+// Reported or prospective evidence is `attributed`: it cannot end an established condition, and it may
+// establish only a summary that keeps its status.
+function evidenceStatus(claim, sourceText, focusText) {
+  const reported = evidenceClaimAttributed(claim, sourceText, focusText, sentenceReported);
+  const prospective = !reported && evidenceClaimAttributed(claim, sourceText, focusText, evidenceClaimProspective);
+  return { attributed: reported || prospective, reported };
 }
 
 export function applyCaptureSourceFirewall(mutation, {
@@ -410,7 +528,7 @@ export function applyCaptureSourceFirewall(mutation, {
     evidence.push(normalizedEvidence);
     evidenceSupport.push({
       ...normalizedEvidence,
-      attributed: evidenceClaimAttributed(item.claim, source.text, candidate.summary || stateRecords.get(candidate.recordId)?.summary || ''),
+      ...evidenceStatus(item.claim, source.text, candidate.summary || stateRecords.get(candidate.recordId)?.summary || ''),
     });
   }
 
@@ -466,19 +584,20 @@ export function applyCaptureSourceFirewall(mutation, {
   const endsRecord = ['resolve', 'supersede'].includes(candidate.action)
     || ['resolved', 'superseded'].includes(candidate.status);
   if (existing && endsRecord && supportingEvidence.every(item => item.attributed)
-    && !preservesReportedInformationStatus(existing.summary)) {
+    && !reportedAccountRecord(existing.summary)) {
     return {
       ok: false,
-      reason: 'a reported, quoted or attributed account cannot resolve or supersede an established condition; narrated confirmation is required',
+      reason: 'a reported, quoted, attributed, planned or conditional account cannot resolve or supersede an established condition; narrated confirmation is required',
     };
   }
 
   if (supportingEvidence.every(item => item.attributed)) {
     const epistemicSummary = candidate.summary || existing?.summary || '';
-    if (!preservesReportedInformationStatus(epistemicSummary)) {
+    const plansOnly = supportingEvidence.every(item => !item.reported);
+    if (!preservesReportedInformationStatus(epistemicSummary) && !(plansOnly && preservesProspectiveStatus(epistemicSummary))) {
       return {
         ok: false,
-        reason: 'quoted dialogue alone or other attributed evidence may establish reported information or the speech act itself, but the mutation summary must preserve reporting/uncertainty or describe the speech act instead of promoting the underlying claim to fact',
+        reason: 'quoted dialogue alone, other attributed evidence, or a plan or condition may establish reported information, the speech act or the plan itself, but the mutation summary must preserve reporting/uncertainty, describe the speech act, or keep the plan or condition prospective instead of promoting the underlying claim to fact',
       };
     }
   }

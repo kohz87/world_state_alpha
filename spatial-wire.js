@@ -4,6 +4,7 @@ import {
   SPATIAL_DISTANCE_MODES,
   SPATIAL_LIMITS,
 } from './constants.js';
+import { boundedExcerpt } from './hash.js';
 
 export const SPATIAL_WIRE_LIMITS = Object.freeze({
   mutations: 8,
@@ -43,7 +44,7 @@ function evidenceItem(raw) {
   if (!Number.isInteger(raw.sourceMessageId) || raw.sourceMessageId < 0) {
     throw new SpatialWireError('spatial evidence sourceMessageId must be a non-negative integer');
   }
-  const claim = text(raw.claim, 500);
+  const claim = boundedExcerpt(raw.claim, 500);
   if (!claim) throw new SpatialWireError('spatial evidence claim is required');
   return { sourceMessageId: raw.sourceMessageId, claim };
 }

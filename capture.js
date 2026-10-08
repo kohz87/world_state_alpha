@@ -179,10 +179,18 @@ export function hiddenConversationRole(message) {
   return 'system';
 }
 
+// A visible narrator message (SillyTavern /sys) is narration the next reply continues from, not a reply: it
+// neither ends an exchange nor is a capture boundary, so the user's action before it is captured with the
+// reply that follows (live and in rebuild alike).
+export function isNarratorMessage(message) {
+  return message?.is_system !== true && message?.is_user !== true
+    && String(message?.extra?.type || '').trim().toLowerCase() === 'narrator';
+}
+
 export function assistantBoundaryExchange(chat = [], endMessageId, knownLineage = null) {
   const rows = Array.isArray(chat) ? chat : [];
   if (!Number.isInteger(endMessageId) || endMessageId < 0 || endMessageId >= rows.length) return [];
-  if (roleOf(rows[endMessageId]) !== 'assistant') return [];
+  if (roleOf(rows[endMessageId]) !== 'assistant' || isNarratorMessage(rows[endMessageId])) return [];
 
   const lineage = Array.isArray(knownLineage) && knownLineage.length > endMessageId
     ? knownLineage
@@ -192,7 +200,7 @@ export function assistantBoundaryExchange(chat = [], endMessageId, knownLineage 
     // A hidden assistant reply still ended its exchange (rebuild treats it as a boundary by default), so the
     // user turns it answered are not captured again as current evidence for this reply.
     const row = rows[index];
-    if (roleOf(row) === 'assistant' || (row?.is_system === true && hiddenConversationRole(row) === 'assistant')) {
+    if ((roleOf(row) === 'assistant' && !isNarratorMessage(row)) || (row?.is_system === true && hiddenConversationRole(row) === 'assistant')) {
       startMessageId = index + 1;
       break;
     }

@@ -13,12 +13,29 @@ const WORD_NUMBERS = Object.freeze({
   ten: 10,
   eleven: 11,
   twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+  hundred: 100,
   a: 1,
   an: 1,
   couple: 2,
-  few: 3,
-  several: 3,
-  many: 5,
+  // "A few", "several" and "many" name no amount: it stays unknown.
+  few: null,
+  several: null,
+  many: null,
 });
 
 const UNIT_ALIASES = Object.freeze({
@@ -42,7 +59,13 @@ const UNIT_ALIASES = Object.freeze({
   seasons: 'season',
   cycle: 'cycle',
   cycles: 'cycle',
+  fortnight: 'week',
+  fortnights: 'week',
+  decade: 'year',
+  decades: 'year',
 });
+// Units named through a larger one: a fortnight is two weeks, a decade ten years.
+const UNIT_FACTORS = Object.freeze({ fortnight: 2, fortnights: 2, decade: 10, decades: 10 });
 
 function text(value, max = 240) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -51,7 +74,22 @@ function text(value, max = 240) {
 function amountValue(value) {
   const raw = String(value || '').trim().toLocaleLowerCase();
   if (/^\d+$/.test(raw)) return Number(raw);
+  // "twenty-five", "twenty five"
+  const compound = raw.match(/^(\p{L}+)[\s-]+(\p{L}+)$/u);
+  if (compound && WORD_NUMBERS[compound[1]] >= 20 && WORD_NUMBERS[compound[2]] > 0 && WORD_NUMBERS[compound[2]] < 10) {
+    return WORD_NUMBERS[compound[1]] + WORD_NUMBERS[compound[2]];
+  }
   return WORD_NUMBERS[raw] ?? null;
+}
+
+// The amount and canonical unit of a matched phrase; an unknown amount stays unknown.
+function measure(amountRaw, unitRaw) {
+  const unitWord = String(unitRaw || '').toLocaleLowerCase();
+  const unit = UNIT_ALIASES[unitWord] || '';
+  const factor = UNIT_FACTORS[unitWord] || 1;
+  const counted = amountRaw === undefined ? null : amountValue(amountRaw);
+  // "A fortnight" is two weeks, "a decade" ten years.
+  return { amount: counted === null ? null : counted * factor, unit };
 }
 
 function meaningfulAmount(amount, unit) {
@@ -111,8 +149,12 @@ export function normalizeElapsedHint(input, defaults = {}) {
   });
 }
 
-const AMOUNT_WORD = '(\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|couple|few|several|many)(?:\\s+of)?';
-const UNIT_WORD = '(minutes?|hours?|days?|weeks?|months?|years?|terms?|semesters?|seasons?|cycles?)';
+const TENS = 'twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety';
+const AMOUNT_WORD = `(\\d+|(?:${TENS})(?:[\\s-](?:one|two|three|four|five|six|seven|eight|nine)\\b)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|hundred|couple|few|several|many)(?:\\s+of)?`;
+const UNIT_WORD = '(minutes?|hours?|days?|weeks?|months?|years?|terms?|semesters?|seasons?|cycles?|fortnights?|decades?)';
+// A plural unit with no amount ("Weeks later", "Months passed") is time passing of unknown amount.
+const PLURAL_UNIT_WORD = '(days|weeks|months|years|seasons|fortnights|decades)';
+const PASSED = '(?:(?:have|has|had)\\s+)?(?:passed|gone\\s+by|went\\s+by|elapsed)';
 // "After three days, ..." opens its sentence or clause (markdown emphasis and an opening quote allowed);
 // "kills after three days" or "leaves after two weeks of waiting" is a duration or schedule, not time
 // passing in the story. The rule is part of the pattern, so every caller and the day step share it.
@@ -122,8 +164,13 @@ const ELAPSED_PATTERNS = Object.freeze([
   // "Two days on, ..." ends the phrase (or its line); "a week on foot" is a travel time.
   new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:later|afterwards?|on(?=[*_~]*\\s*(?:[,.;:!?—–…]|\\n|$)))`, 'iu'),
   AFTER_PATTERN,
-  new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:have\\s+)?passed\\b`, 'iu'),
+  new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+${PASSED}\\b`, 'iu'),
+  // No amount: group 1 is empty and group 2 the unit.
+  new RegExp(`${CLAUSE_START}\\b(?:the\\s+)?()${PLURAL_UNIT_WORD}\\s+(?:later|afterwards?|${PASSED})\\b`, 'iu'),
 ]);
+
+// "The next month" / "the following week" narrate a step; a bare "next week" is usually still ahead.
+const NAMED_STEP = /\b(?:the\s+)?(?:next|following)\s+(day|week|month|year|term|semester|season|cycle)\b/iu;
 
 export function extractElapsedHint(textValue, defaults = {}) {
   const source = String(textValue ?? '');
@@ -132,8 +179,7 @@ export function extractElapsedHint(textValue, defaults = {}) {
   for (const pattern of ELAPSED_PATTERNS) {
     const match = source.match(pattern);
     if (!match) continue;
-    const amount = amountValue(match[1]);
-    const unit = UNIT_ALIASES[String(match[2] || '').toLocaleLowerCase()] || '';
+    const { amount, unit } = measure(match[1] || undefined, match[2]);
     return hint(match[0], {
       amount,
       unit,
@@ -143,7 +189,7 @@ export function extractElapsedHint(textValue, defaults = {}) {
     });
   }
 
-  const named = source.match(/\b(?:next|following)\s+(day|week|month|year|term|semester|season|cycle)\b/iu);
+  const named = source.match(NAMED_STEP);
   if (named) {
     const unit = UNIT_ALIASES[String(named[1]).toLocaleLowerCase()] || named[1].toLocaleLowerCase();
     return hint(named[0], {
@@ -172,29 +218,6 @@ function messageText(message) {
   return '';
 }
 
-function sentenceAround(textValue, phrase) {
-  const source = String(textValue || '');
-  const lower = source.toLocaleLowerCase();
-  const needle = String(phrase || '').toLocaleLowerCase();
-  const at = lower.indexOf(needle);
-  if (at < 0) return source.slice(0, 400).trim();
-  const beforeBreak = Math.max(
-    source.lastIndexOf('\n', at - 1),
-    source.lastIndexOf('.', at - 1),
-    source.lastIndexOf('!', at - 1),
-    source.lastIndexOf('?', at - 1),
-  );
-  const starts = beforeBreak < 0 ? 0 : beforeBreak + 1;
-  const endCandidates = [
-    source.indexOf('\n', at + needle.length),
-    source.indexOf('.', at + needle.length),
-    source.indexOf('!', at + needle.length),
-    source.indexOf('?', at + needle.length),
-  ].filter(value => value >= 0);
-  const ends = endCandidates.length ? Math.min(...endCandidates) + 1 : Math.min(source.length, at + needle.length + 220);
-  return source.slice(Math.max(0, starts), Math.min(source.length, ends)).trim().slice(0, 400);
-}
-
 const ELAPSED_CANDIDATES_PER_MESSAGE = 12;
 
 // Every elapsed phrase in the text with its offset, in reading order. Each is
@@ -210,13 +233,12 @@ function elapsedCandidates(source, defaults = {}) {
   for (const pattern of ELAPSED_PATTERNS) {
     for (const match of source.matchAll(new RegExp(pattern.source, 'giu'))) {
       add(match, item => {
-        const amount = amountValue(item[1]);
-        const unit = UNIT_ALIASES[String(item[2] || '').toLocaleLowerCase()] || '';
+        const { amount, unit } = measure(item[1] || undefined, item[2]);
         return hint(item[0], { amount, unit, meaningful: meaningfulAmount(amount, unit), ...defaults, source: 'detected' });
       });
     }
   }
-  for (const match of source.matchAll(/\b(?:next|following)\s+(day|week|month|year|term|semester|season|cycle)\b/giu)) {
+  for (const match of source.matchAll(new RegExp(NAMED_STEP.source, 'giu'))) {
     add(match, item => {
       const unit = UNIT_ALIASES[String(item[1]).toLocaleLowerCase()] || item[1].toLocaleLowerCase();
       return hint(item[0], { amount: 1, unit, meaningful: unit !== 'day', ...defaults, source: 'detected' });
@@ -283,8 +305,42 @@ function sentenceAt(source, at, end) {
   return source.slice(before < 0 ? 0 : before + 1, stop).trim().slice(0, 400);
 }
 
-const ELAPSED_PROSPECTIVE = /(?:\b(?:will|would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|appointment|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/u;
-const ELAPSED_CONDITIONAL = /\bif\b[^.!?\n]{0,160}\b(?:later|after|next|following|passed)\b/u;
+// Any case ("Hypothetically, ...", "Could ..."), except "will", which counts in lower case only.
+const ELAPSED_PROSPECTIVE = /(?:\b(?:would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|appointment|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/iu;
+const DAY_STEP_PROSPECTIVE = /(?:\b(?:would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|tomorrow|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/iu;
+const LOWER_CASE_WILL = /\bwill\b/u;
+const CLAUSE_BREAKS = /[,;:—–]|\s(?:and|but|while|then|so)\s/gu;
+
+// The clause of `sentence` holding the phrase at `offset`: a modal or "if" elsewhere in the sentence ("Three
+// weeks later, the bridge that would never be rebuilt ...") says nothing about the phrase itself.
+// A fronted time phrase ("Two weeks later, we'll be gone") belongs to the clause it introduces.
+function clauseAt(sentence, offset, length = 0) {
+  let start = 0;
+  let end = sentence.length;
+  let extend = false;
+  for (const match of sentence.matchAll(CLAUSE_BREAKS)) {
+    if (match.index + match[0].length <= offset) start = match.index + match[0].length;
+    else if (match.index >= offset) {
+      if (!extend && !/[\p{L}\p{N}]/u.test(sentence.slice(start, offset).replace(/\b(?:and|then|but|so)\b/giu, ''))
+        && !/[\p{L}\p{N}]/u.test(sentence.slice(offset + length, match.index))) {
+        extend = true;
+        continue;
+      }
+      end = match.index;
+      break;
+    }
+  }
+  return sentence.slice(start, end);
+}
+
+// A phrase is not established when its own clause is prospective or conditional, or its sentence opens with
+// a condition ("If the rains come, three weeks later ...").
+function prospectivePhrase(sentence, offset, length, prospective) {
+  const clause = clauseAt(sentence, offset, length);
+  if (prospective.test(clause) || LOWER_CASE_WILL.test(clause)) return true;
+  if (/(?:^|[^\p{L}])(?:if|unless)\b/iu.test(clause)) return true;
+  return /^[^\p{L}]*(?:if|unless|should|suppose|supposing|hypothetically|imagine|imagining|in theory)\b/iu.test(sentence);
+}
 
 // The candidate's own sentence, or null when it is quoted, prospective,
 // conditional, or a bare "next week" without stronger chronology.
@@ -294,8 +350,8 @@ function establishedCandidateContext(source, candidate, ranges) {
   if (/^next\s+(?:day|week|month|year|term|semester|season|cycle)\b/u.test(raw)) return null;
   const context = sentenceAt(source, candidate.at, candidate.end);
   if (!context) return null;
-  const normalized = context.toLocaleLowerCase();
-  if (ELAPSED_PROSPECTIVE.test(normalized) || ELAPSED_CONDITIONAL.test(normalized)) return null;
+  const offset = context.toLocaleLowerCase().indexOf(raw);
+  if (prospectivePhrase(context, offset < 0 ? 0 : offset, raw.length, ELAPSED_PROSPECTIVE)) return null;
   return context;
 }
 
@@ -314,6 +370,7 @@ function establishedElapsedHints(source, defaults = {}) {
 
 export function detectElapsedHintFromExchange(exchange = []) {
   const rows = Array.isArray(exchange) ? exchange : [];
+  let shortSpan = null;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const rawMessage = rows[index];
     if (!Number.isInteger(rawMessage?.messageId) || rawMessage.messageId < 0) continue;
@@ -323,11 +380,13 @@ export function detectElapsedHintFromExchange(exchange = []) {
       sourceMessageId: rawMessage.messageId,
       lineageKey: typeof rawMessage.lineageKey === 'string' ? rawMessage.lineageKey : '',
     });
-    // The newest message with an established time phrase decides; inside it a short span
-    // ("two hours later") never hides a meaningful one narrated after it.
-    if (hints.length) return hints.find(item => item.meaningful) || hints[0];
+    // The newest meaningful skip in the exchange decides: a later short span ("An hour later") adds to it
+    // rather than cancelling it. With none, the newest short span is reported.
+    const meaningful = hints.find(item => item.meaningful);
+    if (meaningful) return meaningful;
+    if (!shortSpan && hints.length) shortSpan = hints[0];
   }
-  return null;
+  return shortSpan;
 }
 
 // Accumulated day steps. Day-by-day narration ("The next morning…", "The
@@ -358,8 +417,6 @@ const DAY_STEP_PATTERNS = Object.freeze([
   /\b(?:a|one|another)\s+(?:full\s+)?day\s+(?:has\s+|had\s+)?passed\b/iu,
 ]);
 
-const DAY_STEP_PROSPECTIVE = /(?:\b(?:will|would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|tomorrow|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/u;
-
 // Dialogue is removed before matching, so a spoken plan never counts and a
 // quoted first mention cannot hide real narration later in the same message.
 function narrationOnly(source) {
@@ -375,15 +432,17 @@ function narrationOnly(source) {
   return out + text.slice(at);
 }
 
+// Every occurrence is judged in its own clause, in reading order: a prospective first mention ("we will set
+// out the next morning") does not hide a real step later in the same message.
 function narratedDayStep(source) {
   const narration = narrationOnly(source);
-  for (const pattern of DAY_STEP_PATTERNS) {
-    const match = narration.match(pattern);
-    if (!match) continue;
-    const context = sentenceAround(narration, match[0]);
-    const normalized = context.toLocaleLowerCase();
-    if (DAY_STEP_PROSPECTIVE.test(normalized)) continue;
-    if (/\bif\b/u.test(normalized)) continue;
+  const matches = DAY_STEP_PATTERNS
+    .flatMap(pattern => [...narration.matchAll(new RegExp(pattern.source, 'giu'))])
+    .sort((a, b) => a.index - b.index);
+  for (const match of matches) {
+    const context = sentenceAt(narration, match.index, match.index + match[0].length);
+    const offset = context.indexOf(match[0]);
+    if (prospectivePhrase(context, offset < 0 ? 0 : offset, match[0].length, DAY_STEP_PROSPECTIVE)) continue;
     return { phrase: match[0], context };
   }
   return null;
