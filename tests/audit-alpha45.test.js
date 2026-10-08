@@ -213,13 +213,14 @@ test('review hardening: long or contracted dialogue, newest-message precedence, 
   // Single-quoted dialogue with a contraction is still dialogue, and "we'll" is a plan.
   assert.equal(elapsed("'Two weeks later, we'll be gone,' she said."), null);
   assert.equal(elapsed("Two weeks later, we'll be gone."), null);
-  // The newest message with a time phrase decides; an older meaningful skip never re-fires over it.
+  // alpha.56: the newest meaningful skip decides; a later short span does not cancel it (a development
+  // already evaluated at that skip is not due again, so it never re-fires).
   const exchange = [
     { messageId: 10, role: 'assistant', lineageKey: 'a', content: 'Three weeks later the snow melted.' },
     { messageId: 11, role: 'user', lineageKey: 'b', content: 'I wait.' },
     { messageId: 12, role: 'assistant', lineageKey: 'c', content: 'An hour later the fire died.' },
   ];
-  assert.equal(detectElapsedHintFromExchange(exchange)?.raw, 'An hour later');
+  assert.equal(detectElapsedHintFromExchange(exchange)?.raw, 'Three weeks later');
 
   // Merging an operator-owned place keeps that authority on the surviving place.
   const owned = manualPlace();

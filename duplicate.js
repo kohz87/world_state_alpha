@@ -1,9 +1,13 @@
-import { canonicalText } from './hash.js';
+import { SPACELESS_SCRIPT, canonicalText, spacelessBigrams } from './hash.js';
 
 const STOP = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'of', 'to', 'and', 'or', 'in', 'on', 'at', 'for', 'with', 'by']);
 
+// A run of spaceless script (Chinese, Japanese, ...) is one canonical "word" holding a whole phrase; it is
+// compared by its character pairs instead, so near-duplicates in those scripts can match.
 function tokenSet(value) {
-  return new Set(canonicalText(value).split(' ').filter(token => token.length > 1 && !STOP.has(token)));
+  const tokens = new Set(canonicalText(value).split(' ').filter(token => token.length > 1 && !STOP.has(token) && !SPACELESS_SCRIPT.test(token)));
+  for (const pair of spacelessBigrams(value)) tokens.add(pair);
+  return tokens;
 }
 
 function jaccard(left, right) {

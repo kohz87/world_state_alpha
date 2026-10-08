@@ -1,4 +1,5 @@
 import { LIMITS, MUTATION_ACTIONS, RECORD_KINDS, RECORD_STATUSES, RECORD_TRENDS } from './constants.js';
+import { boundedExcerpt } from './hash.js';
 
 export const CAPTURE_WIRE_LIMITS = Object.freeze({
   mutations: 8,
@@ -38,7 +39,7 @@ function evidenceItem(raw) {
   if (!Number.isInteger(raw.sourceMessageId) || raw.sourceMessageId < 0) {
     throw new CaptureWireError('evidence sourceMessageId must be a non-negative integer');
   }
-  const claim = text(raw.claim, LIMITS.claimChars);
+  const claim = boundedExcerpt(raw.claim, LIMITS.claimChars);
   if (!claim) throw new CaptureWireError('evidence claim is required');
   return { sourceMessageId: raw.sourceMessageId, claim };
 }

@@ -885,13 +885,25 @@ export async function prepareWorldStateContinuity({
   const elapsedBoundary = Number.isInteger(resolvedElapsedHint?.sourceMessageId)
     ? resolvedElapsedHint.sourceMessageId
     : sourceMessageId;
+  // Only relevant developments that are due (evaluated before this skip, or affected by new evidence) take
+  // a slot: one evaluated since is skipped by the plan and must not leave a background slot empty.
+  const dueRelevant = resolvedElapsedHint?.meaningful && index
+    ? planLazyEvolution(state, {
+      selectedEntries: relevantEvolutionEntries,
+      exchange,
+      elapsedHint: resolvedElapsedHint,
+      affectingEvidence,
+      sourceMessageId,
+      sourceLineageKey,
+    }).targets.length
+    : relevantEvolutionEntries.length;
   const backgroundSelection = resolvedElapsedHint?.meaningful && index
     ? selectBackgroundDevelopments(index, {
         excludeIds: relevantIds,
         currentMessageId: elapsedBoundary,
         maxRecords: Math.min(
           EVOLUTION_LIMITS.backgroundTargets,
-          Math.max(0, EVOLUTION_LIMITS.targets - relevantEvolutionEntries.length),
+          Math.max(0, EVOLUTION_LIMITS.targets - dueRelevant),
         ),
         scanCap: EVOLUTION_LIMITS.backgroundScan,
       })

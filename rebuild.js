@@ -1,5 +1,5 @@
 import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, firstStoryChange, reconcileBranch, seedRootCheckpoint } from './branch.js';
-import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, normalizeCaptureExchange, roleOf, runCaptureOperation } from './capture.js';
+import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, isNarratorMessage, normalizeCaptureExchange, roleOf, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
@@ -63,7 +63,7 @@ export function planChronologicalRebuild(chat = [], {
   let hiddenAssistantBoundaries = 0;
   let previousAssistant = -1;
   for (let messageId = start - 1; messageId >= 0; messageId -= 1) {
-    if (rebuildRoleOf(rows[messageId], includeHiddenMessages) === 'assistant') {
+    if (rebuildRoleOf(rows[messageId], includeHiddenMessages) === 'assistant' && !isNarratorMessage(rows[messageId])) {
       previousAssistant = messageId;
       break;
     }
@@ -71,7 +71,8 @@ export function planChronologicalRebuild(chat = [], {
 
   for (let messageId = start; messageId < rows.length; messageId += 1) {
     const boundaryRole = rebuildRoleOf(rows[messageId], includeHiddenMessages);
-    if (boundaryRole !== 'assistant') continue;
+    // A visible narrator message is narration of the next reply's exchange, not a boundary.
+    if (boundaryRole !== 'assistant' || isNarratorMessage(rows[messageId])) continue;
     if (rows[messageId]?.is_system === true) hiddenAssistantBoundaries += 1;
 
     const raw = rows.slice(previousAssistant + 1, messageId + 1);
