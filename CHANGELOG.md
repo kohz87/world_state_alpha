@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.9.0-alpha.54 - Performance and cleanups (deep pass on alpha.49)
+
+Each change has a regression test that fails on 0.9.0-alpha.53. Costs are tested as counts (copies, reads, model builds), never as timings.
+
+### Performance
+
+Measured at 400 records, a 600-message chat and 2,000 places, before → after:
+
+| Path | alpha.53 | alpha.54 |
+|---|---|---|
+| Reality reducer (one capture) | 88 ms | 7 ms |
+| Capture response processing | 111 ms | 7 ms |
+| Commit boundary | 121 ms | 58 ms |
+| Manual edit | 311 ms | 95 ms |
+| Places capture with no proposals | 722 ms | 0.2 ms |
+| Places reducer, empty batch | 435 ms | 35 ms |
+
+- **Records:** the reducer copied the state twice and built an undo patch nobody read. Normalizing is already a private copy, and the journal's undo patch is built only when the change is committed. The canonical-domain view and the commit no longer copy twice either.
+- **Places:** the reducer copied the whole Places state twice and built an unused undo patch, and a capture ran it twice even with nothing to apply. A capture without Places proposals now copies nothing.
+- **Capture, manual edits and rebuild:**
+  - capture no longer adds another full copy after the reducer;
+  - a manual edit fingerprints the chat once instead of twice;
+  - the end of a rebuild checks its range once instead of up to four times (the fourth check could never fail and is gone);
+  - a panel click reuses the model already on screen instead of building it again.
+
+### Cleanups
+
+- One text canonicalizer (in `hash.js`) replaces seven identical copies across modules.
+- One opposite-direction table is shared by the Places core and the panel.
+- The rebuild's resume entry is looked up once.
+- Removed:
+  - two routing branches that did the same thing;
+  - an unreachable elapsed-time branch;
+  - the second pass of the record search.
+
+### Architecture
+
+- Core contract C23.1 records the copy, fingerprint and range-check bounds. No behaviour or durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha54.test.js`. Three source checks were updated for the renamed resume variable and the single exact check. The Phase 8 validator now builds its undo patch at the commit boundary, like the runtime.
+- Live in SillyTavern: the branch, hide, partial rebuild, Resume, Recapture, missed-capture, parked-branch, Places, panel and rename scripts give the same results as on alpha.53.
+
+### Code review hardening
+
+- A panel click reuses the rendered model only while canonical state is still the object it was built from. If another device's state arrived without a panel refresh, the click reads it afresh, so no stale place name or type goes back to the host.
+- A capture with no Places proposals still returns a normalized Places state when given none.
+- The Places reducer reads its input as normalization keeps it: the first entry of a repeated id, with a normalized coordinate.
+- The opposite-direction table has no prototype, so a stored direction such as "constructor" is never treated as a compass point.
+- Places edits fingerprint the chat once, like Reality edits.
+- No state is copied right before it is normalized, anywhere: the cache, the sidecar write, the panel model, branch restores and rebuild.
+- The undo patch reads both sides without copying them first.
+- A relation now shows a canonical direction from either side ("ne" reads northeast and southwest).
+- Manual edits no longer copy the chat array they don't read.
+
 ## 0.9.0-alpha.53 - UI and relevance (deep pass on alpha.49)
 
 Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.52.

@@ -6,7 +6,7 @@ import {
   SIDECAR_FORMAT_VERSION,
 } from '../constants.js';
 import { buildRelevanceIndex, selectRelevantRecords, updateRelevanceIndex } from '../relevance.js';
-import { applyUndoPatch, createState, normalizeState, reduceMutations } from '../state-core.js';
+import { applyUndoPatch, buildUndoPatch, createState, normalizeState, reduceMutations } from '../state-core.js';
 import { buildReleasePackage } from './package-design.mjs';
 
 const inventory = JSON.parse(fs.readFileSync('runtime-modules.json', 'utf8'));
@@ -165,7 +165,8 @@ for (let step = 0; step < 50; step += 1) {
       ? [{ action: 'create', kind: 'development', recordId: 'wsr_c', summary: 'Initial state', evidence: [{ claim: 'claim 0' }] }]
       : [{ action: 'update', recordId: 'wsr_c', summary: `Update ${step}`, evidence: [{ claim: `claim ${step}` }] }],
   });
-  lastUndo = res.undo;
+  // The journal's undo patch is built at the commit boundary (the reducer no longer builds an unused one).
+  lastUndo = buildUndoPatch(compactState, res.state);
   compactState = res.state;
 }
 if (Object.keys(compactState.evidence).length > 32) {

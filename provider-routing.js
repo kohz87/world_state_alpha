@@ -245,7 +245,8 @@ export async function dispatchWorldStateRequest(ctx, options = {}, scope = {}) {
       if (typeof ctx?.generateRaw !== 'function') {
         throw worldStateRoutingError('Host generateRaw() is unavailable.', 'WORLD_STATE_DEFAULT_UNAVAILABLE');
       }
-      invoke = configuredMax ? () => ctx.generateRaw(routedOptions) : () => ctx.generateRaw(options);
+      // (routedOptions is options itself when no output cap is configured.)
+      invoke = () => ctx.generateRaw(routedOptions);
     } else {
       const service = await Promise.race([profileService(ctx), stopped]);
       assertCurrent();
@@ -301,7 +302,7 @@ export async function dispatchWorldStateRequest(ctx, options = {}, scope = {}) {
     assertCurrent();
     verifyProfile();
 
-    const value = profileId ? providerText(response) : (typeof response === 'string' ? response : providerText(response));
+    const value = providerText(response);
     if (typeof value !== 'string') {
       throw worldStateRoutingError('Provider returned no text content.', 'WORLD_STATE_PROVIDER_RESPONSE');
     }

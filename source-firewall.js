@@ -1,5 +1,6 @@
 import { clone } from './state-core.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
+import { canonicalText } from './hash.js';
 
 export { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 
@@ -14,15 +15,6 @@ function messageRole(message) {
   if (message?.role === 'user' || message?.is_user === true) return 'user';
   if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
   return 'system';
-}
-
-function canonicalText(value) {
-  return String(value ?? '')
-    .normalize('NFKC')
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 const SUPPORT_STOPWORDS = new Set([

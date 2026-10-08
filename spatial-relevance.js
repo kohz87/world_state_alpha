@@ -1,15 +1,7 @@
 import { SPATIAL_LIMITS } from './constants.js';
 import { resolveEffectiveLocations, resolveEffectiveRoutes } from './spatial-core.js';
 import { nonAsciiBigrams, phraseCandidates, rarestFirst, RELEVANCE_STOPWORDS } from './relevance.js';
-
-function normalizeText(value) {
-  return String(value ?? '')
-    .normalize('NFKC')
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+import { canonicalText as normalizeText } from './hash.js';
 
 function tokens(value) {
   return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];

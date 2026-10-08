@@ -38,12 +38,12 @@ import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelev
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
 import { normalizeSpatialProfile, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
-import { clone, cloneState, createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
+import { clone, createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.53';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.54';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -780,7 +780,7 @@ function setCachedState(chatKey, state, {
 } = {}) {
   // Any new canonical state makes a failed rebuild's resume point stale.
   rebuildResumes.delete(chatKey);
-  const normalized = normalizeState(cloneState(state), { strictSchema: true, chatKey });
+  const normalized = normalizeState(state, { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
   const hydratedPointer = sourcePointer === undefined ? pointerFor(chatKey) : sourcePointer;
   if (hydratedPointer?.path) hydratedPointers.set(chatKey, structuredClone(hydratedPointer));
@@ -1125,7 +1125,7 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
     return true;
   }
 
-  const migrated = normalizeState(cloneState(sourceState), { strictSchema: true, chatKey: oldKey });
+  const migrated = normalizeState(sourceState, { strictSchema: true, chatKey: oldKey });
   migrated.chatKey = newKey;
   const committed = await writeSidecar({
     adapter: hostStorage,
@@ -3342,19 +3342,18 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const rebuildRequest = payload?.rebuild && typeof payload.rebuild === 'object' ? payload.rebuild : {};
     // The rebuild works on the chat as it is now (a resume on the exact range of the failed run):
     // messages the operator adds meanwhile are captured live after it, never pulled into it.
-    const pendingResume = rebuildRequest.resume === true ? rebuildResumes.get(chatKey) : null;
-    const liveAtStart = getContext().chat || [];
-    const chat = Number.isInteger(pendingResume?.params?.chatLength)
-      ? liveAtStart.slice(0, pendingResume.params.chatLength)
-      : liveAtStart.slice();
-    if (!payload?.rebuild
-      && !window.confirm('Rebuild World State Alpha from this chat chronology? This is an explicit provider-backed recovery operation.')) return;
-
     // Resume re-sends the failed boundary's unmodified request with the same
     // plan; it never feeds the malformed reply back to the model.
     // It must name the failure it answers, so a duplicate click can never
     // consume a newer failure's resume point without a fresh decision.
     const savedResume = rebuildRequest.resume === true ? rebuildResumes.get(chatKey) : null;
+    const liveAtStart = getContext().chat || [];
+    const chat = Number.isInteger(savedResume?.params?.chatLength)
+      ? liveAtStart.slice(0, savedResume.params.chatLength)
+      : liveAtStart.slice();
+    if (!payload?.rebuild
+      && !window.confirm('Rebuild World State Alpha from this chat chronology? This is an explicit provider-backed recovery operation.')) return;
+
     const refuseResume = message => {
       rebuildResumes.delete(chatKey);
       notify('error', message);
@@ -3653,7 +3652,10 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const cancelledOutcome = result.outcome === 'stale'
       || result.outcome === 'cancelled'
       || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED';
-    const resumable = result.outcome === 'failure' && !cancelledOutcome && result.resume && isCurrentExact();
+    // One exact range check for this synchronous stretch (each one re-fingerprints the whole range); the
+    // check after the save's await is made again.
+    const currentAtEnd = isCurrentExact();
+    const resumable = result.outcome === 'failure' && !cancelledOutcome && result.resume && currentAtEnd;
     if (resumable) {
       rebuildResumes.set(chatKey, {
         resume: result.resume,
@@ -3671,7 +3673,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         },
       });
     }
-    if (result.outcome !== 'completed' || !isCurrentExact()) {
+    if (result.outcome !== 'completed' || !currentAtEnd) {
       rebuildStatuses.set(chatKey, {
         ...(rebuildStatuses.get(chatKey) || {}),
         phase: cancelledOutcome ? 'cancelled' : 'failed',
@@ -3688,7 +3690,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         label: 'rebuild',
         sourceMessageId: Number.isInteger(result.failedBoundary) ? result.failedBoundary : sourceMessageId,
         outcome: cancelledOutcome ? 'rebuild-cancelled' : 'rebuild-failed',
-        code: result.errorCode || (isCurrentExact() ? 'WORLD_STATE_REBUILD_INCOMPLETE' : 'WORLD_STATE_REBUILD_STALE'),
+        code: result.errorCode || (currentAtEnd ? 'WORLD_STATE_REBUILD_INCOMPLETE' : 'WORLD_STATE_REBUILD_STALE'),
         detail: failureDetail,
         providerCalls: result.providerCalls || 0,
         applied,
@@ -3715,32 +3717,6 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       detail: 'Extraction completed; persisting the rebuilt candidate atomically.',
     });
     refreshPanel();
-
-    if (!isCurrentExact()) {
-      rebuildStatuses.set(chatKey, {
-        ...(rebuildStatuses.get(chatKey) || {}),
-        phase: 'cancelled',
-        detail: 'Rebuild became stale before persistence; canonical state was left unchanged.',
-        completedAt: Date.now(),
-      });
-      diagnosticStore.record(chatKey, {
-        operationId,
-        label: 'rebuild',
-        sourceMessageId,
-        outcome: 'rebuild-cancelled',
-        code: 'WORLD_STATE_REBUILD_STALE',
-        detail: 'Rebuild became stale before persistence; canonical state was left unchanged.',
-        providerCalls: result.providerCalls || 0,
-        applied,
-        rejected,
-        aliasRepairs,
-        processedBoundaries: result.processedBoundaries || 0,
-        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
-      });
-      refreshPanel();
-      notify('info', 'World State Alpha rebuild became stale before persistence. Canonical state was left unchanged.');
-      return;
-    }
 
     let rebuildCommitted = null;
     try {

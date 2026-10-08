@@ -264,13 +264,15 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
   return state;
 }
 
+// Read-only views of both sides: the patch copies only the entries that changed (and the Spatial patch
+// normalizes its own inputs), so the whole domain is not copied twice per commit.
 function domainSnapshot(state) {
   return {
-    records: clone(state.records),
-    evidence: clone(state.evidence),
-    links: clone(state.links),
+    records: state.records || [],
+    evidence: state.evidence || {},
+    links: state.links || [],
     lastCaptureMessage: state.lastCaptureMessage,
-    spatial: state.spatial ? clone(state.spatial) : createSpatialState(),
+    spatial: state.spatial || createSpatialState(),
   };
 }
 
@@ -320,7 +322,7 @@ function restoreKeyed(items, changes) {
 }
 
 export function applyUndoPatch(inputState, patch) {
-  const state = normalizeState(cloneState(inputState));
+  const state = normalizeState(inputState);
   if (!patch) return state;
   state.records = restoreKeyed(state.records, patch.records);
   const evidenceItems = restoreKeyed(Object.values(state.evidence), patch.evidence);
@@ -426,9 +428,10 @@ export function compactEvidence(state) {
   return state;
 }
 
+// Normalization builds a fresh canonical domain (only frozen history entries are shared), so it is the one
+// private copy the reducer needs. The journal's undo patch is built at the commit boundary, not here.
 export function reduceMutations(inputState, batch) {
-  const state = normalizeState(cloneState(inputState));
-  const before = normalizeState(cloneState(inputState));
+  const state = normalizeState(inputState);
   const context = {
     chatKey: String(batch?.chatKey || state.chatKey || ''),
     messageId: messageId(batch?.messageId),
@@ -448,7 +451,6 @@ export function reduceMutations(inputState, batch) {
     && (context.messageId === null || !context.lineageKey)) {
     return {
       state,
-      undo: null,
       applied,
       rejected: proposals.map(mutation => ({
         mutation,
@@ -578,7 +580,6 @@ export function reduceMutations(inputState, batch) {
   }
   return {
     state,
-    undo: buildUndoPatch(before, state),
     applied,
     rejected,
     indexDelta: {
@@ -590,13 +591,14 @@ export function reduceMutations(inputState, batch) {
   };
 }
 
+// normalizeState already returns a fresh domain, so it is not copied a second time.
 export function canonicalDomain(state) {
   const normalized = normalizeState(state);
   return {
-    records: clone(normalized.records),
-    evidence: clone(normalized.evidence),
-    links: clone(normalized.links),
+    records: normalized.records,
+    evidence: normalized.evidence,
+    links: normalized.links,
     lastCaptureMessage: normalized.lastCaptureMessage,
-    spatial: clone(normalized.spatial),
+    spatial: normalized.spatial,
   };
 }

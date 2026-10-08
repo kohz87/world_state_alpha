@@ -35,7 +35,8 @@ function exactBoundary(chat, messageId, state = null) {
       throw error;
     }
   }
-  return lineage[messageId];
+  // The chat is fingerprinted once: the commit reuses this lineage.
+  return { boundary: lineage[messageId], lineage };
 }
 
 export function querySpatialLocations(state, {
@@ -88,13 +89,14 @@ export function applySpatialManualMutation({
   note = '',
   baseMap = null,
 } = {}) {
-  const before = normalizeState(cloneState(state), { chatKey });
+  const before = normalizeState(state, { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
 
-  const boundary = Array.isArray(chat) && chat.length > 0
+  const checked = Array.isArray(chat) && chat.length > 0
     ? exactBoundary(chat, messageId, before)
     : null;
+  const boundary = checked?.boundary || null;
 
   const effectiveMsgId = boundary ? boundary.messageId : -1;
   const effectiveLineageKey = boundary ? boundary.lineageKey : 'root';
@@ -158,9 +160,10 @@ export function applySpatialManualMutation({
     const committed = commitMutationBoundary(
       before,
       nextState,
-      chat.slice(0, messageId + 1),
+      chat,
       messageId,
       'spatial-manual',
+      { lineage: checked.lineage },
     );
     return {
       outcome: 'applied',

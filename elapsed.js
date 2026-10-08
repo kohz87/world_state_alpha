@@ -155,18 +155,7 @@ export function extractElapsedHint(textValue, defaults = {}) {
     });
   }
 
-  const vague = source.match(/\b(?:several|many)\s+(days?|weeks?|months?|years?|terms?|semesters?|seasons?|cycles?)\s+later\b/iu);
-  if (vague) {
-    const unit = UNIT_ALIASES[String(vague[1]).toLocaleLowerCase()] || '';
-    return hint(vague[0], {
-      amount: null,
-      unit,
-      meaningful: true,
-      ...defaults,
-      source: 'detected',
-    });
-  }
-
+  // ("several/many <unit> later" is the first pattern above.)
   return null;
 }
 

@@ -521,11 +521,12 @@ export function processCaptureResponse({
     rejected.push(rejectedEntry('reducer', item.reason));
   }
 
-  const nextState = cloneState(reduced.state);
+  // The reducer's state is already this call's private copy.
+  const nextState = reduced.state;
   nextState.lastCaptureMessage = sourceMessageId;
 
   let spatialResult = {
-    spatial: clone(nextState.spatial),
+    spatial: nextState.spatial,
     applied: [],
     rejected: [],
     proposedCount: 0,
