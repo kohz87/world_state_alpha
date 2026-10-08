@@ -95,7 +95,7 @@ function targetAffinity(record, text) {
 const SPACELESS_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 // The excerpt occurs verbatim on word boundaries: "active volcano" is not in "inactive volcano".
-function containsOnWordBoundaries(haystack, needle) {
+export function containsOnWordBoundaries(haystack, needle) {
   const first = SPACELESS_SCRIPT.test(needle[0]);
   const last = SPACELESS_SCRIPT.test(needle[needle.length - 1]);
   for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {

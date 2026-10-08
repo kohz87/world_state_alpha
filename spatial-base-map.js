@@ -16,7 +16,9 @@ function normalizeBaseCoordinate(item) {
     return normalizeCoordinate(item.coordinate);
   }
   if (Array.isArray(item?.coord) && item.coord.length >= 2) {
-    return normalizeCoordinate({ x: Number(item.coord[0]), y: Number(item.coord[1]) });
+    // null, '' and other non-numbers mean unknown (Number(null) and Number('') would be 0, the origin).
+    const axis = value => (typeof value === 'number' || (typeof value === 'string' && value.trim()) ? Number(value) : NaN);
+    return normalizeCoordinate({ x: axis(item.coord[0]), y: axis(item.coord[1]) });
   }
   return normalizeCoordinate(null);
 }
@@ -49,7 +51,9 @@ export function parseBaseMap(rawInput) {
     const locName = boundedText(item.name, SPATIAL_LIMITS.nameChars);
     if (!locName) continue;
 
-    const locId = boundedText(item.id, 120) || deterministicId('bloc', [id, locName]);
+    // Two places may share a name: a repeated generated id gets the place's row number instead of failing.
+    let locId = boundedText(item.id, 120) || deterministicId('bloc', [id, locName]);
+    if (!boundedText(item.id, 120) && locations.some(location => location.id === locId)) locId = deterministicId('bloc', [id, locName, index]);
     const coordinate = normalizeBaseCoordinate(item);
     const hasCoordinate = Number.isFinite(coordinate.x) && Number.isFinite(coordinate.y);
     coordinate.authority = hasCoordinate ? 'base_canonical' : 'unknown';

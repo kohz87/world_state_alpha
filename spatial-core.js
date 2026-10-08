@@ -502,6 +502,11 @@ function canonicalSpatialDirection(value) {
   return aliases[raw] || raw;
 }
 
+const OPPOSITE_DIRECTION = Object.freeze({
+  north: 'south', south: 'north', east: 'west', west: 'east',
+  northeast: 'southwest', southwest: 'northeast', northwest: 'southeast', southeast: 'northwest',
+});
+
 function effectiveCoordinateFor(id, effectiveById, spatial) {
   const effective = effectiveById.get(id);
   if (effective?.coordinate) return effective.coordinate;
@@ -590,6 +595,28 @@ function baseLocationIndex(baseMap) {
   return index;
 }
 
+function placeNameKey(value) {
+  return String(value ?? '').normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+// name -> first base entry with that name, built once per (read-only) base map like the id index.
+const baseNameIndexes = new WeakMap();
+export function baseLocationByName(baseMap, name) {
+  const locations = baseMap && Array.isArray(baseMap.locations) ? baseMap.locations : null;
+  const key = placeNameKey(name);
+  if (!locations || !key) return null;
+  let index = baseNameIndexes.get(locations);
+  if (!index) {
+    index = new Map();
+    for (const item of locations) {
+      const itemKey = item?.id ? placeNameKey(item.name) : '';
+      if (itemKey && !index.has(itemKey)) index.set(itemKey, item);
+    }
+    baseNameIndexes.set(locations, index);
+  }
+  return index.get(key) || null;
+}
+
 // The id relations and routes use for a stored place: an override answers to the base id it shadows while
 // that base place exists. Without the base map at hand, an attached map (baseMapRef) is assumed to still
 // hold it; once the map is detached, or replaced by one without that place, the override is its own place.
@@ -601,16 +628,21 @@ export function effectiveLocationId(loc, baseMap = null, spatialState = null) {
 }
 
 function effectiveBaseLocation(item) {
+  const axis = at => {
+    const value = Number.isFinite(item.coordinate?.[at ? 'y' : 'x']) ? item.coordinate[at ? 'y' : 'x'] : (Array.isArray(item.coord) ? item.coord[at] : null);
+    return Number.isFinite(value) ? value : null;
+  };
+  const x = axis(0);
+  const y = axis(1);
+  const known = x !== null && y !== null;
   return {
     ...clone(item),
     baseRefId: null,
     isBase: true,
-    coordinate: {
-      x: Number.isFinite(item.coordinate?.x) ? item.coordinate.x : (Array.isArray(item.coord) ? item.coord[0] : null),
-      y: Number.isFinite(item.coordinate?.y) ? item.coordinate.y : (Array.isArray(item.coord) ? item.coord[1] : null),
-      authority: 'base_canonical',
-      locked: true,
-    },
+    // Only a stated position is base canonical and locked; a base place without one is simply unknown.
+    coordinate: known
+      ? { x, y, authority: 'base_canonical', locked: true }
+      : { x: null, y: null, authority: 'unknown', locked: false },
   };
 }
 
@@ -1000,17 +1032,20 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
             if (proposedKnown) {
               const priorRank = authorityRank(priorCoord.authority, priorCoord.locked);
               const proposedRank = authorityRank(proposedCoord.authority, proposedCoord.locked);
+              // Authority protects a position; a place with none (a position-less override included) may get one.
+              const priorKnown = Number.isFinite(priorCoord.x) && Number.isFinite(priorCoord.y);
+              const samePosition = priorKnown && priorCoord.x === proposedCoord.x && priorCoord.y === proposedCoord.y;
 
-              if (priorCoord.locked && !proposedCoord.locked) {
+              if (samePosition) {
+                // A confirmation of the same position (a locked one included) only adds evidence and metadata:
+                // the stronger authority stays.
+                if (!priorCoord.locked && proposedRank > priorRank) existingLoc.coordinate = proposedCoord;
+              } else if (priorKnown && priorCoord.locked && !proposedCoord.locked) {
                 rejected.push({ proposal, reason: 'cannot overwrite locked coordinate' });
                 continue;
-              }
-              if (priorRank > proposedRank) {
-                if (priorCoord.x !== proposedCoord.x || priorCoord.y !== proposedCoord.y) {
-                  rejected.push({ proposal, reason: `cannot overwrite coordinate with lower authority (${proposedCoord.authority} < ${priorCoord.authority})` });
-                  continue;
-                }
-                // A confirmation of the same position only adds evidence: the stronger authority stays.
+              } else if (priorKnown && priorRank > proposedRank) {
+                rejected.push({ proposal, reason: `cannot overwrite coordinate with lower authority (${proposedCoord.authority} < ${priorCoord.authority})` });
+                continue;
               } else {
                 existingLoc.coordinate = proposedCoord;
               }
@@ -1245,13 +1280,20 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
 
       const id = boundedText(proposal.relationId, 140) || relationIdFor(chatKey, fromId, toId, context);
       let existingRel = spatial.relations.find(r => r.id === id || (r.fromId === fromId && r.toId === toId));
+      let stated = direction;
+      if (!existingRel) {
+        // The same pair stated the other way round ("Oakvale lies west of Millbrook" for Millbrook east of
+        // Oakvale) is that relation, read from its own side: never a second, possibly contradictory one.
+        existingRel = spatial.relations.find(r => r.fromId === toId && r.toId === fromId) || null;
+        if (existingRel && direction) stated = OPPOSITE_DIRECTION[direction] || null;
+      }
 
       if (existingRel) {
         const hasManualEvidence = existingRel.operatorOwned === true || (existingRel.evidenceIds || [])
           .some(evidenceId => spatial.evidence?.[evidenceId]?.sourceClass === 'manual');
         const preserveManualRelation = automaticNarrative && hasManualEvidence;
         if (!preserveManualRelation) {
-          if (direction) existingRel.direction = direction;
+          if (stated) existingRel.direction = stated;
           if (Number.isFinite(proposal.distanceKm)) {
             existingRel.distanceKm = proposal.distanceKm;
             if (proposal.distanceMode) existingRel.distanceMode = proposal.distanceMode;

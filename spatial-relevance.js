@@ -341,16 +341,22 @@ export function selectRelevantLocations(spatialState, {
   const connectedRoutes = [];
 
   if (topSeed) {
+    // Up to three neighbours are linked. Only active places count (archived ones are not indexed), and a
+    // neighbour already selected is linked without using a slot, so it never crowds out a new one.
     const rels = spatialIndex.relationsByLoc.get(topSeed.id) || [];
-    for (const rel of rels.slice(0, 3)) {
-      connectedRelations.push(rel);
+    let linked = 0;
+    for (const rel of rels) {
       const otherId = rel.fromId === topSeed.id ? rel.toId : rel.fromId;
-      if (!selectedMap.has(otherId) && selectedMap.size < maxLocs) {
-        const otherLoc = spatialIndex.byId.get(otherId);
-        if (otherLoc) {
-          selectedMap.set(otherId, { location: otherLoc, score: 5, source: 'relation' });
-        }
+      const otherLoc = spatialIndex.byId.get(otherId);
+      if (!otherLoc) continue;
+      if (selectedMap.has(otherId)) {
+        connectedRelations.push(rel);
+        continue;
       }
+      if (linked >= 3) continue;
+      linked += 1;
+      connectedRelations.push(rel);
+      if (selectedMap.size < maxLocs) selectedMap.set(otherId, { location: otherLoc, score: 5, source: 'relation' });
     }
 
     for (const rtName of topSeed.routeRefs || []) {

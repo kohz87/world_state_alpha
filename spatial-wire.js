@@ -162,10 +162,13 @@ export function validateSpatialEnvelope(raw) {
     throw new SpatialWireError('spatial mutation count exceeds limit');
   }
   const mutations = [];
+  // The model's own row number for each valid mutation, so later rejections name the row the model wrote.
+  const rowIndexes = [];
   const rejected = [];
   for (let index = 0; index < source.length; index += 1) {
     try {
       mutations.push(validateSpatialMutation(source[index]));
+      rowIndexes.push(index);
     } catch (error) {
       rejected.push({
         index,
@@ -174,5 +177,5 @@ export function validateSpatialEnvelope(raw) {
       });
     }
   }
-  return { mutations, rejected };
+  return { mutations, rowIndexes, rejected };
 }
