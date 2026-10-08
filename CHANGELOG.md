@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.9.0-alpha.58 - Panel and accessibility (deep pass on alpha.54)
+
+### Fixed
+
+- **Errors:** SillyTavern's toasts now show above the open panel. Every panel error used to render underneath it.
+- **Keyboard and screen readers:**
+  - the panel takes focus when it opens;
+  - a click or key press keeps focus on its control across re-renders (focus used to drop to the page body), and focus returns to the dialog when its control is gone;
+  - Tab and Shift+Tab stay inside the panel or the rebuild sheet;
+  - Escape closes the menu, rebuild sheet, place form or Map settings, and then the panel;
+  - status changes are announced through one persistent live region instead of regions recreated on every render.
+- **Phones:** clearing the search no longer hides the only search box or closes the keyboard.
+- **Places editing:**
+  - Declining Archive, Merge or Delete inside the edit form no longer closes it or drops unsaved edits.
+  - Add place can be cancelled at any of its prompts; it no longer fills in defaults instead.
+  - A free-text relation direction ("upstream") is shown as stated from the other place, and saving the form no longer deletes it.
+- **Records:** after a state change that was not re-rendered (for example while an input method was composing), a click on a record row now acts on the record shown, not on whatever record that position now holds.
+- **Rebuild:** the "N places" count no longer includes archived or base-map places.
+
+### Architecture
+
+- Core contract C21 and C24.5 record these rules. No durable format change (schema 2; envelopes 1).
+- The panel's key handler listens on the window in the capture phase only while the panel is open, so the page's own handlers cannot swallow Escape or Tab.
+
+### Validation
+
+- New `tests/audit-alpha58.test.js` (7 tests, on a small fake DOM that re-creates every panel control on each render). Each fails on 0.9.0-alpha.57.
+- Live in SillyTavern (Chromium), alpha.57 against alpha.58:
+
+| Check | alpha.57 | alpha.58 |
+|---|---|---|
+| Focus on open | SillyTavern's chat box | Panel |
+| Focus after clicking the Places tab | Page body | That tab |
+| Tab presses out of 40 that left the panel | 27 | 0 |
+| Escape | Did nothing | Closed the panel |
+| Error toast | Hidden behind the panel | On top |
+| Phone search after clearing | 0 boxes visible | Box visible and focused |
+
+- The panel (alpha.53), Add place, branch and Places scripts give the same results as on alpha.57.
+
 ## 0.9.0-alpha.57 - Places capture and host (deep pass on alpha.54)
 
 ### Fixed
