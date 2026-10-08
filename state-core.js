@@ -21,7 +21,7 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-const HISTORY_FIELDS = ['lineage', 'rollbackJournal', 'checkpoints'];
+export const HISTORY_FIELDS = Object.freeze(['lineage', 'rollbackJournal', 'checkpoints']);
 
 // Shared history entries are frozen (with their snapshot/undo), so an in-place edit fails loudly instead of
 // silently changing every state copy that holds the entry.

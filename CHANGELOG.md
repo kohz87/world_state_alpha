@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.9.0-alpha.50 - Data loss and host lifecycle (deep pass on alpha.49)
+
+Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.49.
+
+### Fixed
+
+- **A new episode could overwrite a record about something else.** "The north gate is barricaded again" (a new episode of the resolved north-gate record) replaced the active south-gate record. The new-episode path now keeps different subjects apart, like the plain create path.
+- **A Reality-only rebuild could delete your manual places.** A rebuild whose range had no assistant reply (for example From the last user message) dropped places added in that range. They are now kept, and rolling that message back still removes them.
+- **Merging places after detaching the base map broke their relations.** Relations, the True North check and the Places search index still used the detached base id. A former override is now addressed by its own id once its base place is gone. Detaching, re-attaching or replacing a base map now moves relation and route endpoints to match, and merging never splits the target's relations across two ids.
+- **"Added location" sometimes added nothing.** Re-adding a name you archived at the same point in the chat reused the old place's id, and the new place was dropped. A new place now always gets an unused id.
+- **Some failed captures were never offered for Recapture.** If the server read failed or the branch restore threw an error before capture started, the reply was dropped with only a console message. It is now a missed capture, unless the reply was swiped or edited in the meantime. A branch that can't be proven still asks for a rebuild, as before.
+- **A dropped connection during a save was not retried.** A save that reached the server was listed as not saved; one that did not was never retried. Both are now retried, and a save that already landed is recognized.
+- **Renaming a chat showed a "rebuild, import or reset" warning.** SillyTavern reloads a renamed chat before announcing the rename. On opening a chat the warning now waits 5 seconds and is dropped while a rename is migrated. A send or capture still warns at once.
+- **The place editor could switch places under you.** If the place you were editing was archived or rolled back elsewhere, the form edited another place. It now closes.
+- **Swipe, Regenerate and edits waited for a running rebuild to finish.** SillyTavern waits for World State before it swipes, regenerates or saves an edit. During a rebuild World State now answers at once: the prompt carries no World State until the rebuild is done and the chat is reconciled.
+- **Every turn compared two whole states, history included.** Shared history is now compared by identity.
+- **Opening a chat read its sidecar twice.** A chat just loaded is not read again; a chat with no sidecar no longer waits through the retries twice.
+- **The rebuild's edit counter ran late.** It is now counted before any handler that can wait.
+- **Some Places actions still failed silently.** Import base map, Detach and Create campaign override now say why they were rejected.
+- **A plain-text provider error became a confusing TypeError.** It now keeps its text and receipt.
+
+### Architecture
+
+- Core contract updated for each rule above. No durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha50.test.js`; each case fails on the previous release.
+- Live in SillyTavern with a stub model, alpha.49 vs alpha.50:
+
+| Scenario | alpha.49 | alpha.50 |
+|---|---|---|
+| Server read fails before a capture | reply silently lost | missed capture, offered for Recapture once the chat moves on |
+| Connection drops after a save landed | listed as not saved | applied |
+| Rename a chat with history | missing-continuity warning | no warning |
+| Swipe a reply sent during a 150-reply rebuild | SillyTavern held 15.7 s | 1 ms; rebuild still completes |
+| Open a chat | 3 sidecar reads | 2 |
+
+- Not verified: a real model; the merge, place-id and editor fixes beyond unit tests; a real dropped mobile connection (simulated with a reset connection).
+
 ## 0.9.0-alpha.49 - Performance (audit A30, batch 5)
 
 Each fix was reproduced first, with an operation count or an identity check, and has a regression test that fails on 0.9.0-alpha.48.

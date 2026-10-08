@@ -722,6 +722,20 @@ export async function runManualRebuild({
 
   if (signal?.aborted) return cancelledResult(null);
 
+  // With extraction off the replayed Places are applied at each boundary. A range with no assistant
+  // boundary applies none, so commit them at the last message (journaled, so rollback still undoes them).
+  if (spatialTimeline && !plan.windows.length && chat.length) {
+    const lastMessageId = chat.length - 1;
+    candidate = commitMutationBoundary(
+      candidate,
+      { ...candidate, spatial: spatialTimeline.at(lastMessageId, true) },
+      chat,
+      lastMessageId,
+      'rebuild',
+      { lineage: plan.lineage },
+    );
+  }
+
   candidate.lineage = plan.lineage;
   candidate.recoveryRequired = null;
   if (spatialTimeline && spatialTimeline.unprovableBelow >= 0 && plan.metrics.startMessageId <= spatialTimeline.unprovableBelow) {

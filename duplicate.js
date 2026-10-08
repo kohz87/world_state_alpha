@@ -100,6 +100,8 @@ export function mergeAnchors(existing = [], incoming = [], max = 20) {
 }
 
 function explicitNewEpisodeRelated(candidate, prior, score, threshold) {
+  // The anchor fallback below must not merge different subjects (north/south gate) that the score keeps apart.
+  if (distinctSubjects(candidate?.summary, prior?.summary)) return false;
   if (score >= threshold) return true;
   const candidateAnchors = anchorSet(candidate);
   const priorAnchors = anchorSet(prior);

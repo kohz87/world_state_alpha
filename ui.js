@@ -1945,6 +1945,13 @@ export function createWorldStateUiController({
       ui.bulk.keys.clear();
     }
     pruneBulkSelection(next);
+    // The place being edited disappeared (archived, deleted or rolled back elsewhere): close the form
+    // rather than let it edit whichever place the list now selects.
+    if (ui.spatialEditing && ui.selectedSpatialKey && next.spatial.selectedKey !== ui.selectedSpatialKey) {
+      ui.spatialEditing = false;
+      ui.editRelationId = null;
+      return refresh();
+    }
     ui.selectedSpatialKey = next.spatial.selectedKey;
     if (!Number.isInteger(ui.rebuildForm.maxBoundaries)) {
       ui.rebuildForm.maxBoundaries = next.maintenance.rebuild.defaultMaxBoundaries;
