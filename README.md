@@ -11,7 +11,7 @@ It is the world-level sibling of [NPC State Delta](https://github.com/kohz87/npc
 | NPC State Delta | "What is true about *this character* right now?" |
 | **World State Alpha** | "What is true about *the wider world* right now?" |
 
-> **Status:** `0.9.0-alpha.50`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
+> **Status:** `0.9.0-alpha.51`, an alpha. Every feature below is implemented and covered by an automated test and validation suite, but automated tests use a simulated SillyTavern and mocked models. How well capture works with *your* model is only proven by playing. Requires SillyTavern **1.18.0+**. Licensed **GPL-3.0**.
 
 ---
 
