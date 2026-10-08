@@ -38,7 +38,7 @@ import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelev
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
 import { normalizeSpatialProfile, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
-import { clone, cloneState, createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
+import { clone, createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
@@ -780,7 +780,7 @@ function setCachedState(chatKey, state, {
 } = {}) {
   // Any new canonical state makes a failed rebuild's resume point stale.
   rebuildResumes.delete(chatKey);
-  const normalized = normalizeState(cloneState(state), { strictSchema: true, chatKey });
+  const normalized = normalizeState(state, { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
   const hydratedPointer = sourcePointer === undefined ? pointerFor(chatKey) : sourcePointer;
   if (hydratedPointer?.path) hydratedPointers.set(chatKey, structuredClone(hydratedPointer));
@@ -1125,7 +1125,7 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
     return true;
   }
 
-  const migrated = normalizeState(cloneState(sourceState), { strictSchema: true, chatKey: oldKey });
+  const migrated = normalizeState(sourceState, { strictSchema: true, chatKey: oldKey });
   migrated.chatKey = newKey;
   const committed = await writeSidecar({
     adapter: hostStorage,

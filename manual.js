@@ -207,7 +207,7 @@ export function applyManualMutation({
   const committed = commitMutationBoundary(
     before,
     reduced.state,
-    chat.slice(0, messageId + 1),
+    chat,
     messageId,
     'manual',
     { lineage },
@@ -283,7 +283,7 @@ export function applyManualLifecycleBatch({
 
   return {
     outcome: 'applied',
-    state: commitMutationBoundary(before, reduced.state, chat.slice(0, messageId + 1), messageId, 'manual', { lineage }),
+    state: commitMutationBoundary(before, reduced.state, chat, messageId, 'manual', { lineage }),
     applied: reduced.applied,
     rejected: [],
   };
@@ -344,7 +344,7 @@ export function applyWorldStateImport(preview, { confirmed = false } = {}) {
     error.code = 'WORLD_STATE_IMPORT_CONFIRMATION_REQUIRED';
     throw error;
   }
-  return normalizeState(cloneState(preview.candidate), { strictSchema: true });
+  return normalizeState(preview.candidate, { strictSchema: true });
 }
 
 export function previewWorldStateReset(state, { chatKey = '' } = {}) {
@@ -368,5 +368,5 @@ export function applyWorldStateReset(preview, { confirmed = false } = {}) {
     error.code = 'WORLD_STATE_RESET_CONFIRMATION_REQUIRED';
     throw error;
   }
-  return normalizeState(cloneState(preview.candidate), { strictSchema: true });
+  return normalizeState(preview.candidate, { strictSchema: true });
 }

@@ -503,10 +503,11 @@ export function canonicalSpatialDirection(value) {
   return aliases[raw] || raw;
 }
 
-export const OPPOSITE_DIRECTION = Object.freeze({
+// Null prototype: a stored direction such as 'constructor' or 'tostring' is never mistaken for a compass point.
+export const OPPOSITE_DIRECTION = Object.freeze(Object.assign(Object.create(null), {
   north: 'south', south: 'north', east: 'west', west: 'east',
   northeast: 'southwest', southwest: 'northeast', northwest: 'southeast', southeast: 'northwest',
-});
+}));
 
 function effectiveCoordinateFor(id, effectiveById, spatial) {
   const effective = effectiveById.get(id);
@@ -896,6 +897,11 @@ function addSpatialEvidence(spatial, location, proposal, context, chatKey, count
 export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, options = {}) {
   const spatial = normalizeSpatialState(inputSpatial);
   const before = inputSpatial && typeof inputSpatial === 'object' ? inputSpatial : createSpatialState();
+  // The input's places by id as normalization keeps them (the first entry of a repeated id).
+  const beforeById = new Map();
+  for (const loc of Array.isArray(before.locations) ? before.locations : []) {
+    if (loc && typeof loc === 'object' && loc.id && !beforeById.has(loc.id)) beforeById.set(loc.id, loc);
+  }
   const chatKey = String(batch?.chatKey || '');
   const context = {
     chatKey,
@@ -1394,9 +1400,8 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
   // (the operator's direction stands); any other contradicted direction is cleared, its distance kept.
   const lockedProfile = resolveSpatialProfile(spatial, baseMap);
   if (lockedProfile?.trueNorthLocked === true && spatial.relations.length) {
-    const beforeById = new Map((before.locations || []).map(loc => [loc.id, loc]));
     // A new override of a base place moves it from the base coordinate.
-    const priorCoordinateOf = loc => beforeById.get(loc.id)?.coordinate
+    const priorCoordinateOf = loc => (beforeById.has(loc.id) ? normalizeCoordinate(beforeById.get(loc.id).coordinate) : null)
       || (loc.baseRefId ? effectiveById.get(loc.baseRefId)?.coordinate : null);
     const movedLocations = new Map();
     for (const loc of spatial.locations) {
@@ -1462,7 +1467,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     if (item.routeId) changedRouteIds.add(item.routeId);
   }
 
-  const beforeCampaignById = new Map((before.locations || []).map(loc => [loc.id, loc]));
+  const beforeCampaignById = beforeById;
   const afterCampaignById = new Map((spatial.locations || []).map(loc => [loc.id, loc]));
   const changedEffectiveIds = new Set();
 

@@ -6,6 +6,7 @@ import {
   directionFromDelta,
   effectiveLocationId,
   normalizeCoordinate,
+  normalizeSpatialState,
   reduceSpatialMutations,
   resolveEffectiveLocations,
   resolveSpatialProfile,
@@ -749,7 +750,12 @@ export function processSpatialCapture({
   // returned as it is, rather than copied and diffed twice.
   const locationMutations = accepted.filter(item => item.action === 'upsert_location');
   const otherMutations = accepted.filter(item => item.action !== 'upsert_location' && !item.__deferredTargetName);
-  const unchanged = input => ({ spatial: input, applied: [], rejected: [], indexDelta: {} });
+  const unchanged = input => ({
+    spatial: input && typeof input === 'object' && Array.isArray(input.locations) ? input : normalizeSpatialState(input),
+    applied: [],
+    rejected: [],
+    indexDelta: {},
+  });
   const reducedLocations = !locationMutations.length ? unchanged(spatial) : reduceSpatialMutations(spatial, {
     chatKey,
     messageId: sourceMessageId,

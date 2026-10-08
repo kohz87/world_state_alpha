@@ -4,7 +4,7 @@ import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
 import { applySpatialUndoPatch } from './spatial-core.js';
-import { canonicalDomain, clone, cloneState, createState, normalizeState } from './state-core.js';
+import { canonicalDomain, clone, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
   maxBoundaries: 1024,
@@ -389,7 +389,7 @@ export async function runManualRebuild({
   spatialProfile = null,
   resume = null,
 } = {}) {
-  const original = normalizeState(cloneState(state), { chatKey });
+  const original = normalizeState(state, { chatKey });
   const owner = String(chatKey || original.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
   if (original.chatKey && original.chatKey !== owner) throw new Error('rebuild chatKey does not match state owner');
@@ -464,7 +464,7 @@ export async function runManualRebuild({
       };
     }
     resumeFromMessageId = resume.fromMessageId;
-    candidate = normalizeState(cloneState(resume.candidate), { strictSchema: true, chatKey: owner });
+    candidate = normalizeState(resume.candidate, { strictSchema: true, chatKey: owner });
   } else if (plan.metrics.startMessageId > 0) {
     const prefix = (Array.isArray(chat) ? chat : []).slice(0, plan.metrics.startMessageId);
     const currentLineage = chatLineage(Array.isArray(chat) ? chat : []);
@@ -506,7 +506,7 @@ export async function runManualRebuild({
             + ' cannot be proven from the saved history. Use Full chat.',
       };
     }
-    candidate = normalizeState(cloneState(restored.state), { strictSchema: true, chatKey: owner });
+    candidate = normalizeState(restored.state, { strictSchema: true, chatKey: owner });
   } else {
     // Assemble the clean root first and only then snapshot it, so the root checkpoint carries the
     // Spatial profile/base map (or the preserved disabled Spatial state) that a later rollback restores.

@@ -1,7 +1,7 @@
 import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { hashText } from './hash.js';
-import { clone, cloneState, normalizeState } from './state-core.js';
+import { clone, normalizeState } from './state-core.js';
 import { canonicalSpatialDirection, OPPOSITE_DIRECTION, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 
 export const WORLD_STATE_UI_NAMESPACE = 'world_state_alpha_ui';
@@ -296,7 +296,7 @@ function projectSpatialDetail(spatialState, loc, key, { resolvedLocations, liste
       const selectedIsTarget = rel.toId === loc.id || rel.toId === campaignId;
       const otherId = selectedIsTarget ? rel.fromId : rel.toId;
       const other = locMap.get(otherId);
-      const selectedDirection = selectedIsTarget ? rel.direction : inverseDirection(rel.direction);
+      const selectedDirection = selectedIsTarget ? canonicalSpatialDirection(rel.direction) : inverseDirection(rel.direction);
       const distText = Number.isFinite(rel.distanceKm) ? ` (${rel.distanceKm} km)` : '';
       return {
         id: clean(rel.id, 140),
@@ -485,7 +485,7 @@ export function buildWorldStateUiModel(state, {
   // re-render never swaps another relation under typed relation fields. null shows the first relation.
   editRelationId = null,
 } = {}) {
-  const normalized = normalizeState(cloneState(state));
+  const normalized = normalizeState(state);
   const reasons = latestReasonByMessage(normalized);
   const uiKeyByRecordId = new Map(normalized.records.map((record, index) => [record.id, 'row-' + index]));
   const recordIdByUiKey = new Map([...uiKeyByRecordId.entries()].map(([recordId, uiKey]) => [uiKey, recordId]));
@@ -1810,6 +1810,8 @@ export function createWorldStateUiController({
     // re-rendered: replacing the focused input would abort the composition.
     composingTarget: null,
     shownModel: null,
+    shownState: null,
+    modelState: null,
     refreshDeferred: false,
     rebuildForm: {
       mode: 'full',
@@ -1824,17 +1826,21 @@ export function createWorldStateUiController({
   // A record's status from its row key ('row-' + its index among the normalized records), read only on click.
   function recordStatusOfKey(key) {
     const index = Number(/^row-(\d+)$/.exec(key)?.[1]);
-    return Number.isInteger(index) ? normalizeState(cloneState(getState())).records[index]?.status || '' : '';
+    return Number.isInteger(index) ? normalizeState(getState()).records[index]?.status || '' : '';
   }
 
   // What the operator is looking at: click handlers read the model of the last render instead of building
   // a new one (the host re-validates every action against canonical state).
   function shownModel() {
-    return ui.shownModel || model();
+    // Only while canonical state is still the object it was built from (each new state is a new object):
+    // a state that arrived without a refresh is read afresh, so no stale place goes back to the host.
+    return ui.shownModel && ui.shownState === getState() ? ui.shownModel : model();
   }
 
   function model() {
-    return buildWorldStateUiModel(getState(), {
+    const state = getState();
+    ui.modelState = state;
+    return buildWorldStateUiModel(state, {
       diagnostics: getDiagnostics(),
       query: ui.query,
       selectedRecordId: ui.selectedRecordId,
@@ -2033,6 +2039,7 @@ export function createWorldStateUiController({
       bulk: ui.bulk,
     });
     ui.shownModel = next;
+    ui.shownState = ui.modelState;
     restoreDrafts();
     restoreScroll();
     if (restoreFocusedField(focus)) return next;
