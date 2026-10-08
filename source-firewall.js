@@ -116,49 +116,50 @@ export function evidenceClaimGrounded(claim, sourceText) {
   return containsOnWordBoundaries(haystack, needle);
 }
 
-const REPORTED_INFORMATION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|orders?|ordered|demands?|demanded|threatens?|threatened|promises?|promised|offers?|offered|refuses?|refused|asks?|asked|requests?|requested|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay)\b/iu;
+const REPORTED_INFORMATION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|orders?|ordered|demands?|demanded|demanding|ordering|threatens?|threatened|threatening|promises?|promised|promising|offers?|offered|offering|refuses?|refused|asks?|asked|asking|requests?|requested|requesting|insists?|insisted|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay)\b/iu;
 const ATTRIBUTION_RE = /\b(?:reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claims?|claimed|claiming|alleges?|alleged|allegedly|according to|warns?|warned|warning|warnings|believes?|believed|belief|beliefs|suspects?|suspected|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states|stated|announces?|announced|declares?|declared|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused|proclaims?|proclaimed|swears?|swore|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay|insists?|insisted|tells?|told|explains?|explained|mentions?|mentioned|whispers?|whispered|informs?|informed)\b/iu;
 // A demand, order, threat or promise is itself a narrated act ("Orson demands an unloading fee" shows the
 // extortion); only what is demanded, ordered, threatened or promised (the text after the verb) is not
 // established by it.
-const SPEECH_ACT_RE = /\b(?:demands?|demanded|demanding|orders|ordered|ordering|threatens?|threatened|threatening|promises?|promised|promising|offers|offered|offering|asks?|asked|asking|requests|requested|requesting|insists?|insisted)\b/giu;
+export const SPEECH_ACT_RE = /\b(?:demands?|demanded|demanding|orders|ordered|ordering|threatens?|threatened|threatening|promises?|promised|promising|offers|offered|offering|asks?|asked|asking|requests|requested|requesting|insists?|insisted)\b/giu;
 
-// Quoted spans paired line by line: a quotation left open at the end of a paragraph (the usual way to
-// continue speech into the next paragraph) runs to the end of that paragraph, and a straight double quote
-// right after a digit or an apostrophe (6'2") is an inch mark, not a quotation mark.
+// Quoted spans. A quotation runs across a wrapped line until its closing mark; it ends at a blank line or
+// where a new line opens with a quote mark (speech continued into the next paragraph leaves the earlier one
+// open to the end of its paragraph), so a stray quote cannot turn the rest of the reply into dialogue. A
+// straight double quote right after a digit (6'2") is an inch mark, inside dialogue or out.
 function quotedSpans(sourceText) {
   const source = String(sourceText ?? '');
   const spans = [];
-  let lineStart = 0;
-  for (const line of source.split('\n')) {
-    let open = -1;
-    let curly = -1;
-    let low = -1;
-    for (let index = 0; index < line.length; index += 1) {
-      const char = line[index];
-      if (char === '"') {
-        if (open < 0 && /[\d']/u.test(line[index - 1] || '')) continue;
-        if (open < 0) open = index;
-        else {
-          spans.push([lineStart + open + 1, lineStart + index]);
-          open = -1;
-        }
-      } else if (char === '“') {
-        if (curly < 0 && low < 0) curly = index;
-        else if (low >= 0) {
-          spans.push([lineStart + low + 1, lineStart + index]);
-          low = -1;
-        }
-      } else if (char === '”' && curly >= 0) {
-        spans.push([lineStart + curly + 1, lineStart + index]);
-        curly = -1;
-      } else if (char === '„' && low < 0) {
-        low = index;
+  let open = -1;
+  let closer = '';
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '\n' && open >= 0) {
+      const next = source.slice(index + 1).match(/^[ \t]*(?:["“„]|\r?\n)/u);
+      if (next) {
+        spans.push([open + 1, index]);
+        open = -1;
       }
+      continue;
     }
-    for (const start of [open, curly, low]) if (start >= 0) spans.push([lineStart + start + 1, lineStart + line.length]);
-    lineStart += line.length + 1;
+    if (char === '"') {
+      if (/\d/u.test(source[index - 1] || '') || (source[index - 1] === "'" && /\d/u.test(source[index - 2] || ''))) continue;
+      if (open < 0) {
+        open = index;
+        closer = '"';
+      } else if (closer === '"') {
+        spans.push([open + 1, index]);
+        open = -1;
+      }
+    } else if ((char === '“' || char === '„') && open < 0) {
+      open = index;
+      closer = char === '“' ? '”' : '“';
+    } else if (open >= 0 && char === closer && closer !== '"') {
+      spans.push([open + 1, index]);
+      open = -1;
+    }
   }
+  if (open >= 0) spans.push([open + 1, source.length]);
   return spans.filter(([from, to]) => to > from);
 }
 
@@ -264,16 +265,25 @@ const SENTENCE_SPLIT = /(?<=[.!?])\s+|\r?\n+/u;
 
 // The claim is the content of a demand, order, threat or promise made earlier in its sentence, and does
 // not itself include the verb (that would be the narrated act).
+// The verb must govern the claim: in the same clause (no comma, semicolon or contrastive turn between) and
+// within a few words before it ("demand that every vendor pay"), so "Under the captain's orders, the bridge
+// burned" or "The inn offers no rooms; the city is under quarantine" stays narration.
+const SPEECH_ACT_REACH = 4;
 function claimInsideSpeechActComplement(claim, sentence) {
-  const text = canonicalText(sentence);
   const needle = canonicalText(claim);
   if (!needle || new RegExp(SPEECH_ACT_RE.source, 'iu').test(needle)) return false;
-  const at = ` ${text} `.indexOf(` ${needle} `);
-  if (at < 0) return false;
-  for (const match of text.matchAll(SPEECH_ACT_RE)) {
-    if (match.index + match[0].length <= at) return true;
-  }
-  return false;
+  return sentenceClauses(sentence).some(clause => {
+    const text = canonicalText(clause.text);
+    const at = ` ${text} `.indexOf(` ${needle} `);
+    if (at < 0) return false;
+    for (const match of text.matchAll(SPEECH_ACT_RE)) {
+      const end = match.index + match[0].length;
+      if (end > at) continue;
+      const between = text.slice(end, at).split(' ').filter(Boolean);
+      if (between.length <= SPEECH_ACT_REACH) return true;
+    }
+    return false;
+  });
 }
 
 function sentenceAttributed(claim, sourceText) {
@@ -296,7 +306,10 @@ function evidenceClaimAttributed(claim, sourceText, focusText = '') {
     .filter(part => canonicalText(part).length >= 8);
   if (parts.length < 2) return sentenceAttributed(claim, sourceText);
   const focus = new Set(significantTokens(focusText));
-  const bearing = parts.filter(part => significantTokens(part).some(token => focus.has(token)));
+  // A sentence carries the change when it shares two of its content words (one when the change has one):
+  // naming the same place is not enough.
+  const needed = Math.min(2, focus.size);
+  const bearing = needed ? parts.filter(part => new Set(significantTokens(part).filter(token => focus.has(token))).size >= needed) : [];
   return (bearing.length ? bearing : parts).every(part => sentenceAttributed(part, sourceText));
 }
 

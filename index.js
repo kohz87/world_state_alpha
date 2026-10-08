@@ -2729,6 +2729,10 @@ async function handleUserMessage(messageId) {
       hasActiveDevelopments: Boolean(index?.backgroundDevelopmentSet?.size),
     });
     const isCurrent = operationGuard(chatKey, messageId);
+    // Background selection advances these two fields on the shared index before evolution answers.
+    const backgroundBefore = index
+      ? { backgroundCursor: index.backgroundCursor, backgroundElapsedBoundary: index.backgroundElapsedBoundary }
+      : null;
 
     let prepared;
     try {
@@ -2789,10 +2793,11 @@ async function handleUserMessage(messageId) {
       setCachedState(chatKey, committed, indexDelta
         ? { indexMode: 'delta', indexDelta, spatialIndexDelta: {} }
         : { indexMode: 'rebuild' });
-    } else if (prepared.evolution?.outcome !== 'skipped') {
-      // Evolution ran but changed nothing (it failed, or was answered without a usable result): the
-      // background boundary it advanced on the shared index is put back, so a later turn retries it.
-      resetIndexesFromCache(chatKey);
+    } else if (prepared.evolution?.outcome !== 'skipped' && backgroundBefore && relevanceIndices.get(chatKey) === index) {
+      // Evolution ran but changed nothing (it failed, or was answered without a usable result): only the
+      // background cursor and boundary it advanced on the shared index are put back, so a later turn
+      // retries that catch-up; the rest of the index still matches the unchanged state.
+      Object.assign(index, backgroundBefore);
     }
     updatePrivateInjection();
     refreshPanel();

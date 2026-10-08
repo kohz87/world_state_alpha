@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 import { processCaptureResponse } from '../capture.js';
-import { detectElapsedHintFromExchange, normalizeElapsedHint } from '../elapsed.js';
+import { detectAccumulatedDayStepHint, detectElapsedHintFromExchange, extractElapsedHint, normalizeElapsedHint } from '../elapsed.js';
 import { planLazyEvolution } from '../evolution.js';
 import { sanitizeAssistantNarration } from '../narrative-sanitizer.js';
-import { evidenceClaimGrounded } from '../source-firewall.js';
+import { evidenceClaimGrounded, preservesReportedInformationStatus, SPEECH_ACT_RE } from '../source-firewall.js';
 import { createState, reduceMutations } from '../state-core.js';
 
 const source = fs.readFileSync('index.js', 'utf8');
@@ -115,7 +115,10 @@ test('24: an unknown elapsed amount stays unknown', () => {
 test('25: a failed background catch-up is retried on a later turn', () => {
   const block = source.slice(source.indexOf('if (stateChanged(before, prepared.state)) {'), source.indexOf('async function handleBranchChange('));
   // Before: an evolution that failed while current left the index's advanced catch-up boundary in place.
-  assert.match(block, /\} else if \(prepared\.evolution\?\.outcome !== 'skipped'\) \{[\s\S]{0,300}?resetIndexesFromCache\(chatKey\);\s*\}/);
+  assert.match(block, /\} else if \(prepared\.evolution\?\.outcome !== 'skipped' && backgroundBefore && relevanceIndices\.get\(chatKey\) === index\) \{[\s\S]{0,400}?Object\.assign\(index, backgroundBefore\);\s*\}/);
+  // Only the two catch-up fields are put back; the index is not rebuilt for an unchanged state.
+  const handler = source.slice(source.indexOf('async function handleUserMessage('), source.indexOf('async function handleBranchChange('));
+  assert.match(handler, /const backgroundBefore = index\s*\? \{ backgroundCursor: index\.backgroundCursor, backgroundElapsedBoundary: index\.backgroundElapsedBoundary \}/);
 });
 
 test('26: evolution never plans more targets than the wire accepts; merged rebuild evidence keeps its class', () => {
@@ -137,4 +140,67 @@ test('26: evolution never plans more targets than the wire accepts; merged rebui
   // Before: the merged evidence kept its live narration class.
   assert.ok(classes.length >= 2);
   assert.deepEqual([...new Set(classes)], ['rebuild']);
+});
+
+// Code review hardening.
+
+test('review: a speech-act verb marks only the clause it governs', () => {
+  for (const [text, claim, summary] of [
+    ["Under the captain's orders, the bridge burned to the waterline.", 'the bridge burned to the waterline', 'The bridge has burned to the waterline'],
+    ['The inn offers no rooms; the city is under quarantine.', 'the city is under quarantine', 'The city is under quarantine'],
+    ['The captain asked for ale, but the bridge collapsed into the river.', 'the bridge collapsed into the river', 'The bridge has collapsed into the river'],
+  ]) {
+    const out = capture(createState('a51'), text, create(summary, claim, ['bridge', 'city']));
+    assert.equal(out.state.records.length, 1, text);
+  }
+  // Within its own clause it still marks the demand's content.
+  const demanded = capture(createState('a51'), 'The bandits threaten that the north bridge will burn at dawn.', create('The north bridge burns at dawn', 'the north bridge will burn at dawn', ['bridge']));
+  assert.equal(demanded.state.records.length, 0);
+});
+
+test('review: a quotation stays open across a line break and an inch mark inside it', () => {
+  const wrapped = capture(createState('a51'), 'The herald climbs the steps.\n"The north gate has fallen,\nthe king is dead." The crowd gasps.', create('The king is dead', 'the king is dead', ['king']));
+  assert.equal(wrapped.state.records.length, 0);
+  const inch = capture(createState('a51'), '"The wall is 6" thick and the king is dead," the guard says.', create('The king is dead', 'the king is dead', ['king']));
+  assert.equal(inch.state.records.length, 0);
+  // A quotation never closed ends at the paragraph break, so later narration is still narration.
+  const stray = capture(createState('a51'), '"Run, he shouts.\n\nThe bridge collapses into the river.', create('The bridge has collapsed into the river', 'The bridge collapses into the river', ['bridge']));
+  assert.equal(stray.state.records.length, 1);
+});
+
+test('review: a sentence sharing only a name with the summary does not decide attribution', () => {
+  const text = 'The army lays siege to Karsk. A trader says Karsk will never fall.';
+  const out = capture(createState('a51'), text, create('The army lays siege to Karsk', text, ['Karsk']));
+  assert.equal(out.state.records.length, 1);
+  // A narrated sentence that only names the place cannot make a rumour about it narration.
+  const state = seeded('The siege of Karsk continues', ['Karsk', 'siege'], 'development');
+  const rumour = 'Smoke rises above Karsk. A trader says the siege of Karsk is over.';
+  const resolved = capture(state, rumour, [{ action: 'resolve', recordId: state.records[0].id, summary: 'The siege of Karsk is over', evidence: [{ sourceMessageId: 2, claim: rumour }] }]);
+  assert.equal(resolved.state.records[0].status, 'active');
+});
+
+test('review: every speech-act verb keeps a reported summary reported', () => {
+  const words = new Set();
+  for (const alternative of SPEECH_ACT_RE.source.replace(/^\\b\(\?:|\)\\b$/g, '').split('|')) {
+    if (alternative.endsWith('s?')) {
+      words.add(alternative.slice(0, -2));
+      words.add(alternative.slice(0, -2) + 's');
+    } else words.add(alternative);
+  }
+  assert.ok(words.size >= 20, [...words].join(','));
+  for (const word of words) assert.ok(preservesReportedInformationStatus('The guards are ' + word + ' a toll'), word);
+});
+
+test('review: emphasis, line ends and every caller share the clause-opening rule', () => {
+  for (const text of ['*After three days*, the caravan arrived.', 'Two days on\nThe caravan reached the coast.', 'Two days on… the caravan reached the coast.']) {
+    assert.ok(detectElapsedHintFromExchange([{ messageId: 1, role: 'assistant', content: text }])?.meaningful, text);
+  }
+  assert.equal(extractElapsedHint('The poison kills after three days.'), null);
+  assert.equal(extractElapsedHint('The poison kills after three days. After two weeks, the snow melted.')?.raw, 'After two weeks');
+  const steps = text => detectAccumulatedDayStepHint([
+    { is_user: true, mes: 'I wait.' }, { is_user: false, mes: text },
+    { is_user: true, mes: 'I wait.' }, { is_user: false, mes: text },
+  ], 3, { lineage: [0, 1, 2, 3].map(id => ({ lineageKey: 'ln_' + id })) });
+  assert.equal(steps('The poison kills after one day.'), null);
+  assert.ok(steps('After a day, the caravan moved on.'));
 });

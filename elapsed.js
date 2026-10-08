@@ -113,11 +113,14 @@ export function normalizeElapsedHint(input, defaults = {}) {
 
 const AMOUNT_WORD = '(\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|couple|few|several|many)(?:\\s+of)?';
 const UNIT_WORD = '(minutes?|hours?|days?|weeks?|months?|years?|terms?|semesters?|seasons?|cycles?)';
-const AFTER_PATTERN = new RegExp(`\\bafter\\s+${AMOUNT_WORD}\\s+${UNIT_WORD}\\b`, 'iu');
-const CLAUSE_OPENING = /(?:^|[.!?;:,\n—–(]|\b(?:and|then|but|so))\s*["'“”‘’]?\s*$/iu;
+// "After three days, ..." opens its sentence or clause (markdown emphasis and an opening quote allowed);
+// "kills after three days" or "leaves after two weeks of waiting" is a duration or schedule, not time
+// passing in the story. The rule is part of the pattern, so every caller and the day step share it.
+const CLAUSE_START = `(?<=(?:^|[.!?;:,\\n—–(]|\\b(?:and|then|but|so))\\s*[*_~"'“”‘’]*\\s*)`;
+const AFTER_PATTERN = new RegExp(`${CLAUSE_START}\\bafter\\s+${AMOUNT_WORD}\\s+${UNIT_WORD}\\b`, 'iu');
 const ELAPSED_PATTERNS = Object.freeze([
-  // "Two days on, ..." ends the phrase; "a week on foot" is a travel time.
-  new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:later|afterwards?|on(?=\\s*(?:[,.;:!?—–]|$)))`, 'iu'),
+  // "Two days on, ..." ends the phrase (or its line); "a week on foot" is a travel time.
+  new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:later|afterwards?|on(?=[*_~]*\\s*(?:[,.;:!?—–…]|\\n|$)))`, 'iu'),
   AFTER_PATTERN,
   new RegExp(`\\b${AMOUNT_WORD}\\s+${UNIT_WORD}\\s+(?:have\\s+)?passed\\b`, 'iu'),
 ]);
@@ -217,9 +220,6 @@ function elapsedCandidates(source, defaults = {}) {
   };
   for (const pattern of ELAPSED_PATTERNS) {
     for (const match of source.matchAll(new RegExp(pattern.source, 'giu'))) {
-      // "After three days, ..." opens its sentence or clause; "kills after three days" or "leaves after two
-      // weeks of waiting" is a duration or schedule, not time passing in the story.
-      if (pattern === AFTER_PATTERN && !CLAUSE_OPENING.test(source.slice(Math.max(0, match.index - 16), match.index))) continue;
       add(match, item => {
         const amount = amountValue(item[1]);
         const unit = UNIT_ALIASES[String(item[2] || '').toLocaleLowerCase()] || '';
@@ -365,7 +365,7 @@ const DAY_STEP_PATTERNS = Object.freeze([
   /\bnext\s+morning\b/iu,
   /\bthe\s+(?:morning|day)\s+after\b(?!\s+tomorrow)/iu,
   /\b(?:a|one)\s+day\s+later\b/iu,
-  /\bafter\s+(?:a|one)\s+day\b/iu,
+  new RegExp(`${CLAUSE_START}\\bafter\\s+(?:a|one)\\s+day\\b`, 'iu'),
   /\b(?:a|one|another)\s+(?:full\s+)?day\s+(?:has\s+|had\s+)?passed\b/iu,
 ]);
 
