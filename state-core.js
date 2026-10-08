@@ -426,9 +426,10 @@ export function compactEvidence(state) {
   return state;
 }
 
+// Normalization builds a fresh canonical domain (only frozen history entries are shared), so it is the one
+// private copy the reducer needs. The journal's undo patch is built at the commit boundary, not here.
 export function reduceMutations(inputState, batch) {
-  const state = normalizeState(cloneState(inputState));
-  const before = normalizeState(cloneState(inputState));
+  const state = normalizeState(inputState);
   const context = {
     chatKey: String(batch?.chatKey || state.chatKey || ''),
     messageId: messageId(batch?.messageId),
@@ -448,7 +449,6 @@ export function reduceMutations(inputState, batch) {
     && (context.messageId === null || !context.lineageKey)) {
     return {
       state,
-      undo: null,
       applied,
       rejected: proposals.map(mutation => ({
         mutation,
@@ -578,7 +578,6 @@ export function reduceMutations(inputState, batch) {
   }
   return {
     state,
-    undo: buildUndoPatch(before, state),
     applied,
     rejected,
     indexDelta: {
@@ -590,13 +589,14 @@ export function reduceMutations(inputState, batch) {
   };
 }
 
+// normalizeState already returns a fresh domain, so it is not copied a second time.
 export function canonicalDomain(state) {
   const normalized = normalizeState(state);
   return {
-    records: clone(normalized.records),
-    evidence: clone(normalized.evidence),
-    links: clone(normalized.links),
+    records: normalized.records,
+    evidence: normalized.evidence,
+    links: normalized.links,
     lastCaptureMessage: normalized.lastCaptureMessage,
-    spatial: clone(normalized.spatial),
+    spatial: normalized.spatial,
   };
 }

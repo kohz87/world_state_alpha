@@ -1,3 +1,14 @@
+// The one text canonicalization shared by grounding, duplicates, relevance and Places: NFKC, lower case,
+// every run of non-letters/digits a single space.
+export function canonicalText(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function fnv1a32(text, seed) {
   let hash = seed >>> 0;
   const source = String(text ?? '');

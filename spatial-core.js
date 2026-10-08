@@ -6,7 +6,7 @@ import {
   SPATIAL_LIMITS,
   SPATIAL_LOCATION_STATUSES,
 } from './constants.js';
-import { deterministicId, stableStringify } from './hash.js';
+import { canonicalText, deterministicId, stableStringify } from './hash.js';
 
 export function clone(value) {
   if (typeof structuredClone === 'function') return structuredClone(value);
@@ -503,7 +503,7 @@ export function canonicalSpatialDirection(value) {
   return aliases[raw] || raw;
 }
 
-const OPPOSITE_DIRECTION = Object.freeze({
+export const OPPOSITE_DIRECTION = Object.freeze({
   north: 'south', south: 'north', east: 'west', west: 'east',
   northeast: 'southwest', southwest: 'northeast', northwest: 'southeast', southeast: 'northwest',
 });
@@ -596,9 +596,8 @@ function baseLocationIndex(baseMap) {
   return index;
 }
 
-export function placeNameKey(value) {
-  return String(value ?? '').normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-}
+// A place name as capture and the reducer compare it.
+export const placeNameKey = canonicalText;
 
 // name -> base entries with that name, built once per (read-only) base map like the id index. A name that
 // several base places share is ambiguous: `{ ambiguous: true }`, never an arbitrary one of them.
@@ -892,9 +891,11 @@ function addSpatialEvidence(spatial, location, proposal, context, chatKey, count
   addEntitySpatialEvidence(spatial, location, [location.id], proposal, context, chatKey, counter);
 }
 
+// Normalization builds a fresh Spatial state, the reducer's one private copy; the input is only read (the
+// prior coordinates and the index delta's before-side). The journal's undo patch is built at the commit.
 export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, options = {}) {
-  const spatial = normalizeSpatialState(clone(inputSpatial));
-  const before = normalizeSpatialState(clone(inputSpatial));
+  const spatial = normalizeSpatialState(inputSpatial);
+  const before = inputSpatial && typeof inputSpatial === 'object' ? inputSpatial : createSpatialState();
   const chatKey = String(batch?.chatKey || '');
   const context = {
     chatKey,
@@ -1393,7 +1394,6 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
   // (the operator's direction stands); any other contradicted direction is cleared, its distance kept.
   const lockedProfile = resolveSpatialProfile(spatial, baseMap);
   if (lockedProfile?.trueNorthLocked === true && spatial.relations.length) {
-    const COMPASS = new Set(['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest']);
     const beforeById = new Map((before.locations || []).map(loc => [loc.id, loc]));
     // A new override of a base place moves it from the base coordinate.
     const priorCoordinateOf = loc => beforeById.get(loc.id)?.coordinate
@@ -1410,7 +1410,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     };
     const contradicted = rel => {
       const direction = canonicalSpatialDirection(rel.direction);
-      if (!COMPASS.has(direction) || (!movedLocations.has(rel.fromId) && !movedLocations.has(rel.toId))) return false;
+      if (!OPPOSITE_DIRECTION[direction] || (!movedLocations.has(rel.fromId) && !movedLocations.has(rel.toId))) return false;
       const fromCoord = coordinateOf(rel.fromId);
       const toCoord = coordinateOf(rel.toId);
       if (!Number.isFinite(fromCoord?.x) || !Number.isFinite(fromCoord?.y)
@@ -1501,7 +1501,6 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
 
   return {
     spatial,
-    undo: buildSpatialUndoPatch(before, spatial),
     applied,
     rejected,
     indexDelta: {

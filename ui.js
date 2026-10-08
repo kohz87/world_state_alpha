@@ -2,7 +2,7 @@ import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { hashText } from './hash.js';
 import { clone, cloneState, normalizeState } from './state-core.js';
-import { resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
+import { canonicalSpatialDirection, OPPOSITE_DIRECTION, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 
 export const WORLD_STATE_UI_NAMESPACE = 'world_state_alpha_ui';
 
@@ -111,17 +111,7 @@ function authorityLabel(auth, locked = false) {
 }
 
 function inverseDirection(value) {
-  const map = {
-    north: 'south',
-    northeast: 'southwest',
-    east: 'west',
-    southeast: 'northwest',
-    south: 'north',
-    southwest: 'northeast',
-    west: 'east',
-    northwest: 'southeast',
-  };
-  return map[clean(value, 30).toLowerCase()] || clean(value, 30).toLowerCase();
+  return OPPOSITE_DIRECTION[canonicalSpatialDirection(value)] || clean(value, 30).toLowerCase();
 }
 
 function recordSort(left, right) {
@@ -1819,6 +1809,7 @@ export function createWorldStateUiController({
     // While an input method composes text (Japanese, Chinese, Android keyboards), the panel is not
     // re-rendered: replacing the focused input would abort the composition.
     composingTarget: null,
+    shownModel: null,
     refreshDeferred: false,
     rebuildForm: {
       mode: 'full',
@@ -1834,6 +1825,12 @@ export function createWorldStateUiController({
   function recordStatusOfKey(key) {
     const index = Number(/^row-(\d+)$/.exec(key)?.[1]);
     return Number.isInteger(index) ? normalizeState(cloneState(getState())).records[index]?.status || '' : '';
+  }
+
+  // What the operator is looking at: click handlers read the model of the last render instead of building
+  // a new one (the host re-validates every action against canonical state).
+  function shownModel() {
+    return ui.shownModel || model();
   }
 
   function model() {
@@ -2035,6 +2032,7 @@ export function createWorldStateUiController({
       dismissedRebuildOperationId: ui.dismissedRebuildOperationId,
       bulk: ui.bulk,
     });
+    ui.shownModel = next;
     restoreDrafts();
     restoreScroll();
     if (restoreFocusedField(focus)) return next;
@@ -2186,7 +2184,7 @@ export function createWorldStateUiController({
     }
 
     if (closest(event.target, '[data-wsa-spatial-edit]')) {
-      if (!ui.spatialEditing) ui.editRelationId = model().spatial.detail?.primaryRelation?.id || '';
+      if (!ui.spatialEditing) ui.editRelationId = shownModel().spatial.detail?.primaryRelation?.id || '';
       ui.spatialEditing = true;
       ui.spatialDetailOpen = true;
       refresh();
@@ -2234,7 +2232,7 @@ export function createWorldStateUiController({
     }
 
     if (closest(event.target, '[data-wsa-dismiss-rebuild]')) {
-      const currentModel = model();
+      const currentModel = shownModel();
       ui.dismissedRebuildOperationId = currentModel.maintenance.rebuild.status?.operationId || '';
       refresh();
       return;
@@ -2277,7 +2275,7 @@ export function createWorldStateUiController({
       const lastInput = form?.querySelector?.('[data-wsa-rebuild-last]');
       const maxInput = form?.querySelector?.('[data-wsa-rebuild-max]');
       const hiddenInput = form?.querySelector?.('[data-wsa-rebuild-hidden]');
-      const currentModel = model();
+      const currentModel = shownModel();
       const maxAllowed = currentModel.maintenance.rebuild.maxAllowedBoundaries;
       const chatMessages = currentModel.maintenance.rebuild.chatMessages;
       const mode = ['full', 'last', 'from'].includes(checkedMode) ? checkedMode : ui.rebuildForm.mode;
@@ -2372,7 +2370,7 @@ export function createWorldStateUiController({
     const record = closest(event.target, '[data-wsa-record-index]');
     if (record) {
       const index = Number(record.dataset?.wsaRecordIndex);
-      const currentModel = model();
+      const currentModel = shownModel();
       const rows = selectedRecordRows(currentModel);
       if (ui.bulk.active && WORLD_RECORD_TABS.includes(ui.activeTab) && ui.activeTab !== 'resolved') {
         event.preventDefault?.();
@@ -2397,7 +2395,7 @@ export function createWorldStateUiController({
     if (recordAction && typeof onRecordAction === 'function') {
       const action = clean(recordAction.dataset?.wsaRecordAction, 24);
       if (!['resolve', 'supersede'].includes(action)) return;
-      const currentModel = model();
+      const currentModel = shownModel();
       const currentRecord = currentModel.detail;
       if (!currentRecord || currentRecord.status !== 'active') return;
       await onRecordAction(action, {
@@ -2429,7 +2427,7 @@ export function createWorldStateUiController({
     const spatialAction = closest(event.target, '[data-wsa-spatial-action]');
     if (spatialAction && typeof onSpatialAction === 'function') {
       const action = clean(spatialAction.dataset?.wsaSpatialAction, 40);
-      const currentModel = model();
+      const currentModel = shownModel();
 
       if (action === 'save_profile' || action === 'reset_profile') {
         const profileForm = root.querySelector?.('.wsa-spatial-profile-form');
@@ -2505,7 +2503,7 @@ export function createWorldStateUiController({
     if (action && typeof onMaintenanceAction === 'function') {
       const actionId = clean(action.dataset?.wsaAction, 32);
       if (!WORLD_STATE_UI_MAINTENANCE_ACTIONS.some(item => item.id === actionId)) return;
-      const currentModel = model();
+      const currentModel = shownModel();
       await onMaintenanceAction(actionId, {
         counts: { ...currentModel.counts },
         recoveryAttention: currentModel.maintenance.recoveryAttention,

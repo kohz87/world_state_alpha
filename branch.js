@@ -259,8 +259,9 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
   if (!Number.isInteger(messageId) || messageId < 0 || messageId >= lineage.length) {
     throw new Error('commit boundary must reference an existing raw message');
   }
-  const before = normalizeState(cloneState(beforeState));
-  const next = normalizeState(cloneState(afterState));
+  // Each normalization is a fresh private copy of the domain (history entries are shared and frozen).
+  const before = normalizeState(beforeState);
+  const next = normalizeState(afterState);
   const boundary = lineage[messageId];
   const undo = buildUndoPatch(before, next);
 

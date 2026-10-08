@@ -12,6 +12,7 @@ import {
   validateBounds,
 } from './spatial-core.js';
 import { validateSpatialEnvelope } from './spatial-wire.js';
+import { canonicalText as norm } from './hash.js';
 
 const GENERIC_SCENERY = new Set([
   'clearing', 'a clearing', 'the clearing',
@@ -29,15 +30,6 @@ const GENERIC_SCENERY = new Set([
   'field', 'a field', 'the field',
   'street', 'a street', 'the street',
 ]);
-
-function norm(value) {
-  return String(value ?? '')
-    .normalize('NFKC')
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 function isGenericScenery(name) {
   const n = norm(name);
@@ -752,10 +744,13 @@ export function processSpatialCapture({
     }
   }
 
-  // Create/update locations before relations so a newly created relation can resolve the generated ID
+  // Create/update locations before relations so a newly created relation can resolve the generated ID.
+  // A pass with nothing to apply is skipped: with no proposals at all the caller's (private) Spatial state is
+  // returned as it is, rather than copied and diffed twice.
   const locationMutations = accepted.filter(item => item.action === 'upsert_location');
   const otherMutations = accepted.filter(item => item.action !== 'upsert_location' && !item.__deferredTargetName);
-  const reducedLocations = reduceSpatialMutations(spatial, {
+  const unchanged = input => ({ spatial: input, applied: [], rejected: [], indexDelta: {} });
+  const reducedLocations = !locationMutations.length ? unchanged(spatial) : reduceSpatialMutations(spatial, {
     chatKey,
     messageId: sourceMessageId,
     lineageKey: sourceLineageKey,
@@ -778,7 +773,7 @@ export function processSpatialCapture({
     else rejected.push({ stage: 'spatial-relative', reason: 'relative relation dropped: its place was not saved' });
   }
 
-  const reducedOther = reduceSpatialMutations(reducedLocations.spatial, {
+  const reducedOther = !otherMutations.length ? unchanged(reducedLocations.spatial) : reduceSpatialMutations(reducedLocations.spatial, {
     chatKey,
     messageId: sourceMessageId,
     lineageKey: sourceLineageKey,
@@ -795,10 +790,8 @@ export function processSpatialCapture({
   for (const item of reducedLocations.rejected || []) rejected.push({ stage: 'spatial-reducer', reason: item.reason });
   for (const item of reducedOther.rejected || []) rejected.push({ stage: 'spatial-reducer', reason: item.reason });
 
+  // (The reducer already records lastCaptureMessage for an applied capture.)
   const next = reducedOther.spatial;
-  if ((reducedLocations.applied.length + reducedOther.applied.length) > 0 && operation === 'capture') {
-    next.lastCaptureMessage = sourceMessageId;
-  }
 
   return {
     spatial: next,

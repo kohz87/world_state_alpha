@@ -1,11 +1,4 @@
-function normalizeText(value) {
-  return String(value ?? '')
-    .normalize('NFKC')
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+import { canonicalText as normalizeText } from './hash.js';
 
 function tokens(value) {
   return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];

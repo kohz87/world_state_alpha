@@ -870,7 +870,9 @@ test('host rebuild never persists or reports success before completed outcome ga
   const actionAt = source.indexOf("if (actionId === 'rebuild')");
   const end = source.indexOf('async function applySpatialAction(', actionAt);
   const body = source.slice(actionAt, end);
-  const gateAt = body.indexOf("if (result.outcome !== 'completed' || !isCurrentExact())");
+  // One exact range check is taken when the run returns (alpha.54) and gates both reporting and persisting.
+  assert.match(body, /const currentAtEnd = isCurrentExact\(\);/);
+  const gateAt = body.indexOf("if (result.outcome !== 'completed' || !currentAtEnd)");
   const committingAt = body.indexOf("phase: 'committing'", gateAt);
   const persistAt = body.indexOf('await persistState(chatKey, result.state, {');
   const persistFailureAt = body.indexOf("outcome: 'rebuild-persist-failed'", persistAt);
@@ -1226,7 +1228,7 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
   assert.match(body, /resume: savedResume\?\.resume \|\| null,/);
 
   // Only a genuine failure that is still current leaves a resume point.
-  assert.match(body, /const resumable = result\.outcome === 'failure' && !cancelledOutcome && result\.resume && isCurrentExact\(\);/);
+  assert.match(body, /const resumable = result\.outcome === 'failure' && !cancelledOutcome && result\.resume && currentAtEnd;/);
   assert.match(body, /rebuildResumes\.set\(chatKey, \{/);
   assert.match(body, /Use Resume from message ' \+ result\.resume\.fromMessageId/);
 

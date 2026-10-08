@@ -2,6 +2,7 @@ import { chatLineage, commitMutationBoundary, firstLineageDivergence } from './b
 import { consolidateCreateCandidate } from './duplicate.js';
 import { clone, cloneState, normalizeState, reduceMutations } from './state-core.js';
 import { exportBundle, importBundle, resetState } from './transfer.js';
+import { canonicalText as normalizeText } from './hash.js';
 
 export const MANUAL_LIMITS = Object.freeze({
   queryResults: 100,
@@ -11,15 +12,6 @@ export const MANUAL_LIMITS = Object.freeze({
 
 function clean(value, max = 500) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
-
-function normalizeText(value) {
-  return String(value ?? '')
-    .normalize('NFKC')
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function boundedLimit(value, fallback = 30) {
@@ -67,21 +59,18 @@ export function queryWorldState(state, {
   const normalized = normalizeState(state);
   const statusFilter = normalizedSet(statuses);
   const kindFilter = normalizedSet(kinds);
-  const rows = normalized.records
-    .filter(record => !statusFilter.size || statusFilter.has(record.status))
-    .filter(record => !kindFilter.size || kindFilter.has(record.kind))
-    .filter(record => queryMatches(record, text))
+  // Filtered once: the rows and the total come from the same matches.
+  const matched = normalized.records.filter(record => (!statusFilter.size || statusFilter.has(record.status))
+    && (!kindFilter.size || kindFilter.has(record.kind))
+    && queryMatches(record, text));
+  const rows = matched
     .sort(sortRecords)
     .slice(0, boundedLimit(limit))
     .map(record => clone(record));
 
   return {
     records: rows,
-    totalMatched: normalized.records
-      .filter(record => !statusFilter.size || statusFilter.has(record.status))
-      .filter(record => !kindFilter.size || kindFilter.has(record.kind))
-      .filter(record => queryMatches(record, text))
-      .length,
+    totalMatched: matched.length,
     filters: {
       text: clean(text),
       statuses: [...statusFilter],
@@ -140,7 +129,8 @@ function exactBoundary(chat, messageId, state = null) {
     error.code = 'WORLD_STATE_MANUAL_BOUNDARY_REQUIRED';
     throw error;
   }
-  return boundary;
+  // The chat is fingerprinted once: the commit reuses this lineage.
+  return { boundary, lineage };
 }
 
 function manualProposal(mutation, note, boundary) {
@@ -172,12 +162,12 @@ export function applyManualMutation({
   mutation,
   note,
 } = {}) {
-  const before = normalizeState(cloneState(state), { chatKey });
+  const before = normalizeState(state, { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
   if (before.chatKey && before.chatKey !== owner) throw new Error('manual mutation chatKey does not match state owner');
 
-  const boundary = exactBoundary(chat, messageId, before);
+  const { boundary, lineage } = exactBoundary(chat, messageId, before);
   let proposal = manualProposal(mutation, note, boundary);
 
   if (proposal.action === 'create') {
@@ -220,6 +210,7 @@ export function applyManualMutation({
     chat.slice(0, messageId + 1),
     messageId,
     'manual',
+    { lineage },
   );
 
   return {
@@ -248,12 +239,12 @@ export function applyManualLifecycleBatch({
     throw new Error('bulk lifecycle action is limited to ' + MANUAL_LIMITS.bulkRecords + ' records');
   }
 
-  const before = normalizeState(cloneState(state), { chatKey });
+  const before = normalizeState(state, { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
   if (before.chatKey && before.chatKey !== owner) throw new Error('manual mutation chatKey does not match state owner');
 
-  const boundary = exactBoundary(chat, messageId, before);
+  const { boundary, lineage } = exactBoundary(chat, messageId, before);
   const proposals = ids.map(recordId => manualProposal({ action, recordId }, note, boundary));
 
   const inactive = ids.filter(recordId => before.records.find(record => record.id === recordId)?.status !== 'active');
@@ -292,7 +283,7 @@ export function applyManualLifecycleBatch({
 
   return {
     outcome: 'applied',
-    state: commitMutationBoundary(before, reduced.state, chat.slice(0, messageId + 1), messageId, 'manual'),
+    state: commitMutationBoundary(before, reduced.state, chat.slice(0, messageId + 1), messageId, 'manual', { lineage }),
     applied: reduced.applied,
     rejected: [],
   };
