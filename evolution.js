@@ -1,12 +1,12 @@
-import { duplicateSimilarity, mergeAnchors } from './duplicate.js';
+import { DUPLICATE_THRESHOLD, duplicateLookupKeys, duplicateSimilarity, mergeAnchors } from './duplicate.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { detectElapsedHintFromExchange, normalizeElapsedHint } from './elapsed.js';
 import { EVOLUTION_WIRE_LIMITS, EvolutionWireError, parseEvolutionJson, validateEvolutionEnvelope } from './evolution-wire.js';
-import { hashText, stableStringify } from './hash.js';
 import { buildWorldStateInjection } from './injection.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
 import { selectBackgroundDevelopments, updateRelevanceIndex } from './relevance.js';
 import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.js';
+import { clipMiddle } from './common.js';
 import { cloneState, reduceMutations } from './state-core.js';
 
 export const EVOLUTION_RESPONSE_TOKENS = 2600;
@@ -19,7 +19,6 @@ export const EVOLUTION_LIMITS = Object.freeze({
   affectingEvidence: 8,
   loreChars: 3500,
   timeAnchorChars: 160,
-  duplicateThreshold: 0.78,
 });
 
 export const EVOLUTION_SYSTEM_PROMPT = [
@@ -36,14 +35,6 @@ export const EVOLUTION_SYSTEM_PROMPT = [
   'Never create an episode merely because static lore still describes an old pressure.',
   'Keep the JSON valid: escape every double quote inside a JSON string as \\"; never leave a raw double quote inside a reason or summary.',
 ].join(' ');
-
-function clip(value, max) {
-  const raw = String(value ?? '').trim();
-  if (raw.length <= max) return raw;
-  const head = Math.floor(max * 0.58);
-  const tail = Math.max(0, max - head - 24);
-  return `${raw.slice(0, head)}\n...[bounded]...\n${raw.slice(-tail)}`;
-}
 
 function recordFromEntry(entry) {
   return entry?.record || entry || null;
@@ -276,7 +267,7 @@ export function buildEvolutionContext(state, plan, {
     supportCatalog,
     targetSupportIds,
     promptTargets,
-    currentTimeAnchor: clip(currentTimeAnchor, EVOLUTION_LIMITS.timeAnchorChars),
+    currentTimeAnchor: clipMiddle(currentTimeAnchor, EVOLUTION_LIMITS.timeAnchorChars, 0.58),
   };
 }
 
@@ -303,7 +294,7 @@ export function buildEvolutionPrompt(context, {
     context.currentTimeAnchor || '(none)',
     '',
     'RELEVANT LORE BASELINE (causal constraints/possibilities only; not occurrence evidence):',
-    clip(loreText, EVOLUTION_LIMITS.loreChars) || '(none)',
+    clipMiddle(loreText, EVOLUTION_LIMITS.loreChars, 0.58) || '(none)',
     '',
     'OUTPUT SHAPE:',
     '{"evaluations":[{"recordId":"shown-id","outcome":"stable|update|resolve|supersede","summary":"required for resolve/supersede; replacement when update needs it","trend":"emerging|rising|stable|falling|uncertain when update needs it","anchors":["optional additional anchors"],"reason":"causal explanation grounded in shown state/support","supportIds":["only IDs allowed for this target"]}],"derived":[{"summary":"optional one new development","trend":"optional","anchors":["..."],"causeRecordIds":["target-id"],"reason":"strict causal explanation","supportIds":["shown support IDs"]}]}',
@@ -424,7 +415,21 @@ function evaluationMutation(evaluation, context) {
   return { mutation, supports };
 }
 
-function derivedMutation(candidate, context, state) {
+// The records a derived development could duplicate, found through the relevance index (active and retired
+// records sharing a whole anchor or a counted summary word) plus this batch's targets, whose evaluated text
+// the index does not hold yet. Null compares every record (no index, or spaceless-script text).
+function duplicatePool(index, candidate, targetIds) {
+  const keys = index?.byId && index.tombstones?.byId ? duplicateLookupKeys(candidate) : null;
+  if (!keys) return null;
+  const pool = new Set(targetIds);
+  for (const terms of [index, index.tombstones]) {
+    for (const anchor of keys.anchors) for (const id of terms.anchorPhrases?.get(anchor) || []) pool.add(id);
+    for (const word of keys.words) for (const id of terms.summaryTokens?.get(word) || []) pool.add(id);
+  }
+  return pool;
+}
+
+function derivedMutation(candidate, context, state, index = null) {
   const targetIds = new Set(context.targets.map(target => target.record.id));
   if (!candidate.causeRecordIds.length || candidate.causeRecordIds.some(id => !targetIds.has(id))) {
     return { ok: false, reason: 'derived development causeRecordIds must reference supplied targets only' };
@@ -459,11 +464,13 @@ function derivedMutation(candidate, context, state) {
   }
 
   let bestDuplicate = null;
+  const pool = duplicatePool(index, candidate, targetIds);
   for (const record of Array.isArray(state?.records) ? state.records : []) {
+    if (pool && !pool.has(record?.id)) continue;
     const score = duplicateSimilarity({ kind: 'development', ...candidate }, record);
     if (!bestDuplicate || score > bestDuplicate.score) bestDuplicate = { record, score };
   }
-  if (bestDuplicate && bestDuplicate.score >= EVOLUTION_LIMITS.duplicateThreshold) {
+  if (bestDuplicate && bestDuplicate.score >= DUPLICATE_THRESHOLD) {
     return {
       ok: false,
       reason: bestDuplicate.record.status === 'active'
@@ -497,6 +504,7 @@ export function processEvolutionResponse({
   text,
   state,
   context,
+  index = null,
   chatKey,
   sourceMessageId,
   sourceLineageKey,
@@ -529,14 +537,16 @@ export function processEvolutionResponse({
     outcomes.push({ recordId: evaluation.recordId, outcome: evaluation.outcome });
   }
 
-  const projectedEvaluations = reduceMutations(state, {
+  // Derived developments are judged against the evaluated state; with none proposed, the batch's own
+  // reduction below is the only copy.
+  const projectedEvaluations = wire.derived.length ? reduceMutations(state, {
     chatKey,
     messageId: sourceMessageId,
     lineageKey: sourceLineageKey,
     operation: 'evolution',
     mutations: evaluationMutations,
-  });
-  if (projectedEvaluations.rejected.length) {
+  }) : null;
+  if (projectedEvaluations?.rejected.length) {
     throw new EvolutionWireError(
       `deterministic reducer rejected evolution evaluations: ${projectedEvaluations.rejected.map(item => item.reason).join('; ')}`,
     );
@@ -547,7 +557,7 @@ export function processEvolutionResponse({
     .map(item => ({ stage: 'wire', reason: item.reason, index: item.index }));
   const derivedMutations = [];
   for (const candidate of wire.derived) {
-    const admitted = derivedMutation(candidate, context, projectedEvaluations.state);
+    const admitted = derivedMutation(candidate, context, projectedEvaluations.state, index);
     if (!admitted.ok) {
       rejectedDerived.push({ stage: 'derived-gate', reason: admitted.reason, duplicateRecordId: admitted.duplicateRecordId || '' });
       continue;
@@ -564,7 +574,7 @@ export function processEvolutionResponse({
   });
   if (reduced.rejected.length) {
     throw new EvolutionWireError(
-      `deterministic reducer rejected evolution batch: ${reduced.rejected.map(item => item.reason).join('; ')}`,
+      `deterministic reducer rejected evolution ${projectedEvaluations ? 'batch' : 'evaluations'}: ${reduced.rejected.map(item => item.reason).join('; ')}`,
     );
   }
 
@@ -581,34 +591,12 @@ export function processEvolutionResponse({
   };
 }
 
-export function evolutionSnapshotToken({
-  state,
-  context,
-  sourceMessageId,
-  sourceLineageKey,
-} = {}) {
-  return hashText(stableStringify({
-    rollbackJournalSequence: Number(state?.rollbackJournalSequence) || 0,
-    sourceMessageId,
-    sourceLineageKey: String(sourceLineageKey || ''),
-    elapsedHint: context?.elapsedHint || null,
-    targets: (context?.targets || []).map(target => ({
-      id: target.record.id,
-      summary: target.record.summary,
-      status: target.record.status,
-      trend: target.record.trend,
-      anchors: target.record.anchors,
-      lastChangedMessage: target.record.lastChangedMessage,
-      lastEvaluatedMessage: target.record.lastEvaluatedMessage,
-      evidenceIds: target.record.evidenceIds,
-    })),
-    affectingEvidence: context?.affectingEvidence || [],
-  }));
-}
-
 export async function runLazyEvolution({
   ctx,
   state,
+  // The relevance index of `state`, when the host has one: the derived-development duplicate check looks
+  // up its candidates there instead of comparing every record.
+  index = null,
   selectedEntries = [],
   exchange = [],
   elapsedHint = null,
@@ -655,14 +643,13 @@ export async function runLazyEvolution({
     throw error;
   }
   if (typeof isCurrent !== 'function') {
-    const error = new Error('lazy evolution requires an isCurrent(snapshotToken) guard');
+    const error = new Error('lazy evolution requires an isCurrent() guard');
     error.code = 'WORLD_STATE_EVOLUTION_CURRENT_GUARD_REQUIRED';
     throw error;
   }
 
   const context = buildEvolutionContext(state, plan, { currentTimeAnchor });
-  const snapshotToken = evolutionSnapshotToken({ state, context, sourceMessageId, sourceLineageKey });
-  const current = () => isCurrent(snapshotToken);
+  const current = () => isCurrent();
   if (!current()) {
     return {
       outcome: 'stale',
@@ -672,7 +659,6 @@ export async function runLazyEvolution({
       applied: [],
       outcomes: [],
       rejectedDerived: [],
-      snapshotToken,
     };
   }
 
@@ -716,7 +702,6 @@ export async function runLazyEvolution({
       applied: [],
       outcomes: [],
       rejectedDerived: [],
-      snapshotToken,
       errorCode: error?.code || 'PROVIDER_ERROR',
       routeReceipt: receipt,
     };
@@ -746,7 +731,6 @@ export async function runLazyEvolution({
       applied: [],
       outcomes: [],
       rejectedDerived: [],
-      snapshotToken,
       routeReceipt: dispatched.receipt,
     };
   }
@@ -756,6 +740,7 @@ export async function runLazyEvolution({
       text: dispatched.text,
       state,
       context,
+      index,
       chatKey,
       sourceMessageId,
       sourceLineageKey,
@@ -785,7 +770,6 @@ export async function runLazyEvolution({
       outcome,
       providerCalls: 1,
       plan,
-      snapshotToken,
       routeReceipt: dispatched.receipt,
     };
   } catch (error) {
@@ -814,7 +798,6 @@ export async function runLazyEvolution({
       applied: [],
       outcomes: [],
       rejectedDerived: [],
-      snapshotToken,
       errorCode: error.code,
       errorMessage: error.message,
       routeReceipt: dispatched.receipt,
@@ -913,9 +896,10 @@ export async function prepareWorldStateContinuity({
     ...backgroundSelection.selected,
   ];
 
+  // Nothing to evaluate: the state is returned as it is (unchanged), not copied.
   if (!evolutionEntries.length) {
     return {
-      state: cloneState(state),
+      state,
       injection: beforeInjection,
       evolution: {
         outcome: 'skipped',
@@ -932,6 +916,7 @@ export async function prepareWorldStateContinuity({
   const evolution = await runLazyEvolution({
     ctx,
     state,
+    index,
     selectedEntries: evolutionEntries,
     exchange,
     elapsedHint: resolvedElapsedHint,

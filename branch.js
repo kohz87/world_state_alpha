@@ -1,22 +1,19 @@
+import { clone, hostMessageText } from './common.js';
 import { LIMITS, ROLLBACK_JOURNAL_VERSION } from './constants.js';
 import { deterministicId, hashText, stableStringify } from './hash.js';
 import {
   applyUndoPatch,
   buildUndoPatch,
   canonicalDomain,
-  clone,
+  freezeHistory,
+  hasNormalizedShape,
   normalizeState,
 } from './state-core.js';
 import { createSpatialState } from './spatial-core.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 
-function messageContent(message) {
-  if (!message || typeof message !== 'object') return '';
-  if (typeof message.mes === 'string') return message.mes;
-  if (typeof message.content === 'string') return message.content;
-  if (typeof message.text === 'string') return message.text;
-  return '';
-}
+// A host message's text (`mes` first), as lineage fingerprints have always read it.
+const messageContent = hostMessageText;
 
 export function fingerprintMessage(message) {
   return hashText(stableStringify({
@@ -258,8 +255,9 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
   if (!Number.isInteger(messageId) || messageId < 0 || messageId >= lineage.length) {
     throw new Error('commit boundary must reference an existing raw message');
   }
-  // Each normalization is a fresh private copy of the domain (history entries are shared and frozen).
-  const before = normalizeState(beforeState);
+  // `before` is only read (undo patches copy what they keep), so a normalized state is used as it is; `next` is
+  // this commit's private copy (history entries are shared and frozen) and is returned without another copy.
+  const before = hasNormalizedShape(beforeState) ? beforeState : normalizeState(beforeState);
   const next = normalizeState(afterState);
   const boundary = lineage[messageId];
   const undo = buildUndoPatch(before, next);
@@ -360,7 +358,7 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
 
   trimJournal(next, options.maxJournalEntries);
   trimCheckpoints(next, options.maxCheckpoints);
-  return normalizeState(next);
+  return freezeHistory(next);
 }
 
 function exactCheckpoint(state, currentLineage, targetMessageId) {
@@ -451,10 +449,12 @@ function semanticRewritePlan(previousLineage, currentLineage, chat = []) {
 // The first message whose story really changed since `previousLineage` was
 // recorded (hide/unhide and narration-equivalent rewrites are not changes),
 // or `previousLineage.length` when none did.
-export function firstStoryChange(previousLineage, chat) {
+// `currentLineage`: the chat's lineage when the caller already has it (it is otherwise computed here).
+export function firstStoryChange(previousLineage, chat, currentLineage = null) {
   const previous = Array.isArray(previousLineage) ? previousLineage : [];
   const rows = Array.isArray(chat) ? chat : [];
-  const plan = semanticRewritePlan(previous, chatLineage(rows), rows);
+  const lineage = Array.isArray(currentLineage) && currentLineage.length === rows.length ? currentLineage : chatLineage(rows);
+  const plan = semanticRewritePlan(previous, lineage, rows);
   return plan.kind === 'destructive' ? plan.firstSemantic : previous.length;
 }
 

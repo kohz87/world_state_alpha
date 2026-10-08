@@ -8,6 +8,7 @@ import {
   ROLLBACK_JOURNAL_VERSION,
   SCHEMA_VERSION,
 } from './constants.js';
+import { boundedText, clone, uniqueStrings } from './common.js';
 import { deterministicId, stableStringify } from './hash.js';
 import {
   applySpatialUndoPatch,
@@ -15,11 +16,6 @@ import {
   createSpatialState,
   normalizeSpatialState,
 } from './spatial-core.js';
-
-export function clone(value) {
-  if (typeof structuredClone === 'function') return structuredClone(value);
-  return JSON.parse(JSON.stringify(value));
-}
 
 export const HISTORY_FIELDS = Object.freeze(['lineage', 'rollbackJournal', 'checkpoints']);
 
@@ -30,6 +26,30 @@ function frozenEntry(entry) {
   if (entry.snapshot && typeof entry.snapshot === 'object') Object.freeze(entry.snapshot);
   if (entry.undo && typeof entry.undo === 'object') Object.freeze(entry.undo);
   return Object.freeze(entry);
+}
+
+// Freezes the history entries a caller added to its private state copy (a new journal entry or checkpoint),
+// as normalization would, without copying the state again.
+export function freezeHistory(state) {
+  for (const key of HISTORY_FIELDS) if (Array.isArray(state?.[key])) state[key] = state[key].map(frozenEntry);
+  return state;
+}
+
+// True for a state that already has the normalized shape (the cache, a reducer or branch result), which a
+// read-only caller can use as it is instead of normalizing a copy.
+export function hasNormalizedShape(state) {
+  return Boolean(state && typeof state === 'object' && !Array.isArray(state)
+    && state.schemaVersion === SCHEMA_VERSION
+    && Array.isArray(state.records) && Array.isArray(state.links)
+    && state.evidence && typeof state.evidence === 'object' && !Array.isArray(state.evidence)
+    && HISTORY_FIELDS.every(key => Array.isArray(state[key]))
+    && state.spatial && typeof state.spatial === 'object' && Array.isArray(state.spatial.locations));
+}
+
+// A state to read: the caller's own when it is already normalized (and owned), otherwise a normalized copy.
+// Never modify the result.
+export function readableState(state, { chatKey = '' } = {}) {
+  return hasNormalizedShape(state) && state.chatKey ? state : normalizeState(state, { chatKey });
 }
 
 // A private copy of a state for mutation. The canonical domain and small fields are deep-copied; the
@@ -45,26 +65,8 @@ export function cloneState(state) {
   return out;
 }
 
-function boundedText(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
-
 function messageId(value) {
   return Number.isInteger(value) && value >= 0 ? value : null;
-}
-
-function uniqueStrings(value, maxItems, maxChars) {
-  if (!Array.isArray(value)) return [];
-  const out = [];
-  const seen = new Set();
-  for (const item of value) {
-    const text = boundedText(item, maxChars);
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
-    out.push(text);
-    if (out.length >= maxItems) break;
-  }
-  return out;
 }
 
 function boundedEvidenceRefs(items) {

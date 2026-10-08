@@ -1,33 +1,20 @@
-import { clone } from './state-core.js';
+import { clone, messageRole, messageText } from './common.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 import { SPACELESS_SCRIPT, canonicalText, sharedSpacelessBigrams } from './hash.js';
 
-export { sanitizeAssistantNarration } from './narrative-sanitizer.js';
-
-function messageText(message) {
-  if (typeof message?.content === 'string') return message.content;
-  if (typeof message?.mes === 'string') return message.mes;
-  if (typeof message?.text === 'string') return message.text;
-  return '';
-}
-
-function messageRole(message) {
-  if (message?.role === 'user' || message?.is_user === true) return 'user';
-  if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
-  return 'system';
-}
-
-const SUPPORT_STOPWORDS = new Set([
+// Shared with rebuild's lifecycle check; never modify it.
+export const SUPPORT_STOPWORDS = new Set([
   'the', 'and', 'that', 'this', 'with', 'from', 'into', 'onto', 'over', 'under', 'after', 'before',
   'while', 'where', 'when', 'then', 'than', 'they', 'them', 'their', 'there', 'here', 'have', 'has',
   'had', 'was', 'were', 'are', 'is', 'been', 'being', 'will', 'would', 'could', 'should', 'about',
   'among', 'through', 'around', 'still', 'current', 'currently', 'now', 'near', 'behind', 'outside',
 ]);
 
-function significantTokens(value) {
+// Content words of at least three letters, plural endings folded ('bridges' -> 'bridge').
+export function significantTokens(value, stopwords = SUPPORT_STOPWORDS) {
   return canonicalText(value)
     .split(' ')
-    .filter(token => token.length >= 3 && !SUPPORT_STOPWORDS.has(token))
+    .filter(token => token.length >= 3 && !stopwords.has(token))
     .map(token => {
       if (token.length > 5 && token.endsWith('ies')) return token.slice(0, -3) + 'y';
       if (token.length > 4 && token.endsWith('s')) return token.slice(0, -1);

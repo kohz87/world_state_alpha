@@ -169,13 +169,13 @@ export function createSillyTavernWorldStateStorageAdapter({
     const physical = isLogicalPath(target) ? worldStateHostDeterministicPath(target) : target;
     return withWriterLock(physical, async () => {
       const expected = Math.max(0, Math.trunc(Number(expectedRevision) || 0));
-      const decoded = decodeSidecar(body);
+      const decoded = decodeSidecar(body, { readOnly: true });
 
       const currentText = await read(physical);
       let current = null;
       if (currentText !== null) {
         try {
-          current = decodeSidecar(currentText);
+          current = decodeSidecar(currentText, { readOnly: true });
         } catch (error) {
           // A recovery baseline (revision 1) may replace a damaged file, only the one recorded as damaged.
           if (!(replaceCorrupt && replaceCorrupt === physical && expected === 0 && error?.damaged === true)) {

@@ -20,7 +20,37 @@ function tokenSet(value) {
   return new Set(tokens(value));
 }
 
-
+// A function word used as a name ("Will", "May"): capitalized, and either inside a sentence ("ask Will") or
+// opening one (or a quotation) followed by a word that is not itself a function word, in a sentence that is
+// not a question ("Will nods."). The modal "will", "Will you ...?" and "May the gods ..." are not the name.
+const NAME_SPACE = /[\s*_~(\[—–-]/u;
+const NAME_QUOTE = /["'“”‘’«»「『]/u;
+export function functionWordNames(value) {
+  const source = String(value ?? '');
+  const out = new Set();
+  for (const match of source.matchAll(/(?<![\p{L}\p{N}])\p{Lu}\p{Ll}*(?![\p{L}\p{N}])/gu)) {
+    const word = match[0].toLocaleLowerCase();
+    if (!RELEVANCE_STOPWORDS.has(word) || out.has(word)) continue;
+    let at = match.index - 1;
+    while (at >= 0 && source[at] !== '\n' && NAME_SPACE.test(source[at])) at -= 1;
+    const opens = at < 0 || source[at] === '\n' || NAME_QUOTE.test(source[at]) || /[.!?…:;]/u.test(source[at]);
+    if (!opens) {
+      out.add(word);
+      continue;
+    }
+    const end = match.index + match[0].length;
+    // A modal is never followed straight by a comma or "!": "Will, the ferryman, waves", "Will!".
+    if (/^[,!]/u.test(source.slice(end, end + 1))) {
+      out.add(word);
+      continue;
+    }
+    const next = /^\s*([\p{L}\p{N}]+)/u.exec(source.slice(end, end + 40))?.[1]?.toLocaleLowerCase() || '';
+    const sentenceEnd = /[.!?…\n]/u.exec(source.slice(end));
+    const question = sentenceEnd?.[0] === '?';
+    if (next && !RELEVANCE_STOPWORDS.has(next) && !question) out.add(word);
+  }
+  return out;
+}
 
 function boundedInt(value, fallback, min, max) {
   const number = Number(value);
@@ -28,9 +58,9 @@ function boundedInt(value, fallback, min, max) {
   return Math.max(min, Math.min(max, Math.trunc(number)));
 }
 
-function overlapScore(leftText, rightText) {
+// The right side is the context's token set, tokenised once per context rather than once per record.
+function overlapScore(leftText, right) {
   const left = tokenSet(leftText);
-  const right = tokenSet(rightText);
   if (!left.size || !right.size) return 0;
 
   // Function words never count as shared evidence, but the summary's full size still calibrates the
@@ -49,7 +79,7 @@ function overlapScore(leftText, rightText) {
   return Math.min(1, shared.length / denominator);
 }
 
-function anchorStrength(anchor, normalizedHaystack, haystackTokens) {
+function anchorStrength(anchor, normalizedHaystack, haystackTokens, haystackNames) {
   const normalized = normalizeText(anchor);
   if (!normalized) return 0;
 
@@ -57,7 +87,9 @@ function anchorStrength(anchor, normalizedHaystack, haystackTokens) {
   const hasNonAscii = /[^\x00-\x7F]/u.test(normalized);
   const exactPhrase = anchorTokens.length > 1
     ? ` ${normalizedHaystack} `.includes(` ${normalized} `)
-    : haystackTokens.has(normalized) || (hasNonAscii && normalized.length >= 2 && normalizedHaystack.includes(normalized));
+    : RELEVANCE_STOPWORDS.has(normalized)
+      ? haystackNames.has(normalized)
+      : haystackTokens.has(normalized) || (hasNonAscii && normalized.length >= 2 && normalizedHaystack.includes(normalized));
 
   if (exactPhrase) {
     const lengthBonus = Math.min(1.5, normalized.length / 24);
@@ -111,6 +143,8 @@ function prepareContext({ recentText = '', loreText = '', currentMessageId = nul
     loreTokenList,
     recentTokens: new Set(recentAll),
     loreTokens: new Set(loreAll),
+    recentNames: functionWordNames(recentText),
+    loreNames: functionWordNames(loreText),
     recentLookupTokens: lookupTokens(recentAll, { newestFirst: true }),
     loreLookupTokens: lookupTokens(loreAll.slice(0, 64)),
     // An anchor may itself be a function word used as a name ('Will', 'May'); anchor lookups keep them.
@@ -121,7 +155,7 @@ function prepareContext({ recentText = '', loreText = '', currentMessageId = nul
 }
 
 function baseRelevance(record, context) {
-  const { recentNorm, loreNorm, recentTokens, loreTokens } = context;
+  const { recentNorm, loreNorm, recentTokens, loreTokens, recentNames, loreNames } = context;
 
   let score = 0;
   const reasons = [];
@@ -129,8 +163,8 @@ function baseRelevance(record, context) {
   let bestRecentAnchor = 0;
   let bestLoreAnchor = 0;
   for (const anchor of Array.isArray(record.anchors) ? record.anchors : []) {
-    bestRecentAnchor = Math.max(bestRecentAnchor, anchorStrength(anchor, recentNorm, recentTokens));
-    bestLoreAnchor = Math.max(bestLoreAnchor, anchorStrength(anchor, loreNorm, loreTokens));
+    bestRecentAnchor = Math.max(bestRecentAnchor, anchorStrength(anchor, recentNorm, recentTokens, recentNames));
+    bestLoreAnchor = Math.max(bestLoreAnchor, anchorStrength(anchor, loreNorm, loreTokens, loreNames));
   }
   if (bestRecentAnchor > 0) {
     score += 5 * bestRecentAnchor;
@@ -141,13 +175,13 @@ function baseRelevance(record, context) {
     reasons.push('lore-anchor');
   }
 
-  const recentSummary = overlapScore(record.summary, recentNorm);
+  const recentSummary = overlapScore(record.summary, recentTokens);
   if (recentSummary > 0) {
     score += 2.5 * recentSummary;
     reasons.push('recent-summary');
   }
 
-  const loreSummary = overlapScore(record.summary, loreNorm);
+  const loreSummary = overlapScore(record.summary, loreTokens);
   if (loreSummary > 0) {
     score += 0.9 * loreSummary;
     reasons.push('lore-summary');
@@ -790,19 +824,6 @@ export function extractContextTerms(value, { maxTerms = 96 } = {}) {
     if (out.length >= boundedInt(maxTerms, 96, 1, 256)) break;
   }
   return out;
-}
-
-export function scoreRecordRelevance(record, {
-  recentText = '',
-  loreText = '',
-  currentMessageId = null,
-} = {}) {
-  if (!record || record.status !== 'active') return { score: 0, reasons: [] };
-  const result = baseRelevance(record, prepareContext({ recentText, loreText, currentMessageId }));
-  return {
-    score: Math.round(result.score * 1000) / 1000,
-    reasons: result.reasons,
-  };
 }
 
 export function selectRelevantRecords(state, {

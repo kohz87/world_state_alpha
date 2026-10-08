@@ -1,3 +1,4 @@
+import { boundedText as text, uniqueStrings } from './common.js';
 import { LIMITS, MUTATION_ACTIONS, RECORD_KINDS, RECORD_STATUSES, RECORD_TRENDS } from './constants.js';
 import { boundedExcerpt } from './hash.js';
 
@@ -14,24 +15,6 @@ export class CaptureWireError extends Error {
     this.name = 'WorldStateCaptureWireError';
     this.code = code;
   }
-}
-
-function text(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
-
-function uniqueStrings(value, maxItems, maxChars = 120) {
-  if (!Array.isArray(value)) return [];
-  const out = [];
-  const seen = new Set();
-  for (const item of value) {
-    const clean = text(item, maxChars);
-    if (!clean || seen.has(clean)) continue;
-    seen.add(clean);
-    out.push(clean);
-    if (out.length >= maxItems) break;
-  }
-  return out;
 }
 
 function evidenceItem(raw) {
@@ -115,7 +98,8 @@ function normalizeMutation(raw) {
       throw new CaptureWireError('provider must not assign recordId for create');
     }
     mutation.kind = raw.kind;
-    mutation.status = raw.status === undefined ? 'active' : raw.status;
+    // An absent or null optional field means "not stated", like a null trend or malformed anchors.
+    mutation.status = raw.status === undefined || raw.status === null ? 'active' : raw.status;
     if (!['active', 'resolved'].includes(mutation.status)) {
       throw new CaptureWireError('create status must be active or resolved');
     }
@@ -127,7 +111,7 @@ function normalizeMutation(raw) {
   const recordId = text(raw.recordId, 120);
   if (!recordId) throw new CaptureWireError(`${action} mutation requires recordId`);
   mutation.recordId = recordId;
-  if (raw.status !== undefined) {
+  if (raw.status !== undefined && raw.status !== null) {
     if (!RECORD_STATUSES.includes(raw.status)) throw new CaptureWireError('invalid mutation status');
     mutation.status = raw.status;
   }

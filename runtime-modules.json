@@ -2,6 +2,7 @@
   "stage": "phase9-spatial-continuity",
   "hostEntrypoint": "bootstrap.js",
   "modules": [
+    "common.js",
     "constants.js",
     "hash.js",
     "narrative-sanitizer.js",

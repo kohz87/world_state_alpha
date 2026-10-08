@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.9.0-alpha.59 - Performance, contract text and cleanups (deep pass on alpha.54)
+
+### Fixed
+
+- **State copies:** a saved capture copies the state 6 times instead of 12, and a user turn that needs no evolution copies it not at all (it made 5 copies).
+  - The commit reads the state before the change in place and returns its own copy without copying it again.
+  - Saving reads a verified sidecar without copying it when it only checks revisions and checksums.
+  - A reconcile that only extends the lineage compares the lineage, not the whole state.
+  - Evolution that evaluates nothing returns the state as it is, and evolution with no derived development reduces once.
+  - Manual edits read the state in place; a Places save applies each step once and fingerprints the chat once (it applied the location step twice and fingerprinted up to four times).
+- **Relevance:**
+  - The scene window is tokenised once per selection instead of once per candidate (137 ms to 8 ms for a 12,000-character window and 400 records).
+  - A one-word anchor that is a function word ("Will", "May") matches only where it is used as a name ("ask Will"), not the modal ("they will") or a question ("Will you ...?").
+  - Rebuild's lifecycle reservation no longer counts function words as shared topic, and a development changed recently is reserved only for an exchange that shares a word with it, or for an ending that names nothing ("it finally ends").
+- **Full scans:**
+  - Evolution's derived-development duplicate check compares only the records that could be duplicates (found through the relevance index), plus the batch's targets.
+  - Places capture matches names through one map per capture instead of scanning every place for every proposal.
+  - The panel recounts assistant replies only after a chat event or a second, not on every refresh.
+- **Rebuild:** a chat over the boundary limit is refused before any message is read, hashed or copied, and a rebuild hashes the chat once for its plan, resume check and range proof (it hashed it about five times).
+- **Smaller fixes:**
+  - A null `status` in a capture response means "not stated" (like a null trend) instead of failing the whole response.
+  - World_State checklists read `•`, `+` and numbered bullets and an "Offscreen" or "Off screen" heading.
+  - A Reality-only rebuild no longer throws on a missing chat.
+  - A Places edit made after the last assistant reply is journaled at its own message in a Reality-only rebuild, not folded into the reply before it, so deleting that message still undoes it.
+
+### Architecture
+
+- **Contract corrections:**
+  - C23.1 states the copies a capture actually makes instead of "one copy per mutation".
+  - C24.6 says schema 1 is not migrated (pre-1.0 persistence accepts the current schema only, as C11 says).
+  - C07 says the SillyTavern host passes no affecting evidence, so its automatic evolution trigger is meaningful elapsed time.
+  - C12 adds the function-word anchor rule and the rebuild lifecycle rule; C13 records the derived-duplicate pool, C06 the null status and checklist bullets, and C19 the trailing Places edits.
+- **Cleanup:**
+  - Removed unused code: `cloneForExport`, `querySpatialLocations`, `inspectSpatialLocation`, `straightLineDistance`, `unitsToKm`, `scoreRecordRelevance`, `containsWriterState`, `extractWriterStateBlocks`, `CAPTURE_DEFAULT_INTERVAL`, the sanitizer re-export, the capture and evolution snapshot tokens nothing read, the Places `relationsChanged`/`routesChanged` flags, an always-empty rejection list, an unreachable recovery reset and an unreachable rebuild confirmation (the rebuild sheet is the confirmation).
+  - `extractElapsedHint` now runs the runtime detector on one text, so its tests test the code the extension runs.
+  - New `common.js` holds the helpers that had drifted between modules (copy, bounded strings, message text and role, clipping); evolution's clipping gains capture's small-limit guard, and evolution uses the shared duplicate threshold.
+- No durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha59.test.js`: 18 tests, 15 failing on 0.9.0-alpha.58 (the bare-ending antecedent and synonym tests guard existing behaviour). The 2 review-hardening tests, the synonym test and the review cases added to the relevance and checklist tests fail on the pre-review code. New host scenario `tests/host/state-copies.mjs` counts state copies in an instrumented copy of the runtime.
+- Measured on alpha.58 against alpha.59:
+
+| Check | alpha.58 | alpha.59 |
+|---|---|---|
+| Copies per saved capture (host scenario) | 8 normalizations + 4 copies | 6 normalizations |
+| Copies per user send | 2 normalizations + 3 copies | 0 |
+| Relevance, 12,000-character window, 400 records | 137 ms | 7.6 ms |
+| Message reads before refusing an over-limit rebuild (40 messages) | 160 | 0 |
+| Live: "They will leave at dawn" injects the ferryman anchored "Will" | Yes | No |
+| Live: "ask Will about the crossing" injects him | Yes | Yes |
+| Live: Places save with a relation | Saved, one journal entry | Saved, one journal entry |
+
+- The branch, rebuild, resume, hide and Places live scripts give the same results as on alpha.58.
+
+### Code review hardening
+
+- A name that opens a sentence is matched again ("Will nods and pushes off."), as is a name followed by a comma or "!" ("Will, the ferryman, waves"). A question opening a quotation ("She asked, \"Will you take us across?\"") and "Will the bridge hold?" are not. A lower-case "will" is never read as the name.
+- A recently changed development stays visible to rebuild even when the exchange is about another development, so an ending that names it by a synonym ("the sickness finally breaks" for a plague) can still close it. Only its marking as the interpretive antecedent is withheld while the exchange touches another development.
+- Rebuild's lifecycle and history checks read every word of the bounded exchange. They read only the first 256 distinct words, so a long reply's last paragraph was missed.
+- A numbered label that ends at its colon ("1. Scene goals for next reply:") closes a World_State checklist section instead of becoming an entry.
+- A Reality-only rebuild commits after the last reply only when a place changed there. A no-op commit added a checkpoint and evicted an older one.
+- A lineage-only reconcile compares lineage entries field by field instead of stringifying each one.
+- The panel's reply-count memo no longer holds the previous chat in memory.
+- Host messages are read `mes` first again (`hostMessageText`, also used for lineage fingerprints), so a stale `content` field is never read instead.
+- The shared support stopword set is no longer presented as frozen.
+
 ## 0.9.0-alpha.58 - Panel and accessibility (deep pass on alpha.54)
 
 ### Fixed

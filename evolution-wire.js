@@ -1,3 +1,4 @@
+import { boundedText as text, uniqueStrings } from './common.js';
 import { LIMITS, RECORD_TRENDS } from './constants.js';
 
 export const EVOLUTION_OUTCOMES = Object.freeze(['stable', 'update', 'resolve', 'supersede']);
@@ -14,24 +15,6 @@ export class EvolutionWireError extends Error {
     this.name = 'WorldStateEvolutionWireError';
     this.code = code;
   }
-}
-
-function text(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
-
-function uniqueStrings(value, maxItems, maxChars = 120) {
-  if (!Array.isArray(value)) return [];
-  const out = [];
-  const seen = new Set();
-  for (const item of value) {
-    const clean = text(item, maxChars);
-    if (!clean || seen.has(clean)) continue;
-    seen.add(clean);
-    out.push(clean);
-    if (out.length >= maxItems) break;
-  }
-  return out;
 }
 
 function normalizeEvaluation(raw) {

@@ -1,3 +1,4 @@
+import { uniqueStrings } from './common.js';
 import {
   SPATIAL_ADMISSION_REASONS,
   SPATIAL_AUTHORITIES,
@@ -23,20 +24,6 @@ export class SpatialWireError extends Error {
 
 function text(value, max = 400) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
-
-function uniqueStrings(value, maxItems = 8, maxChars = 120) {
-  if (!Array.isArray(value)) return [];
-  const out = [];
-  const seen = new Set();
-  for (const item of value) {
-    const clean = text(item, maxChars);
-    if (!clean || seen.has(clean)) continue;
-    seen.add(clean);
-    out.push(clean);
-    if (out.length >= maxItems) break;
-  }
-  return out;
 }
 
 function evidenceItem(raw) {

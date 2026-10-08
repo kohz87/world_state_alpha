@@ -1,3 +1,4 @@
+import { clone } from './common.js';
 import { hashText } from './hash.js';
 
 const DEFAULT_LIMIT = 80;
@@ -9,11 +10,6 @@ function clean(value, max) {
 function int(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : fallback;
-}
-
-function clone(value) {
-  if (typeof structuredClone === 'function') return structuredClone(value);
-  return JSON.parse(JSON.stringify(value));
 }
 
 export function sanitizeCaptureDiagnostic(raw = {}) {

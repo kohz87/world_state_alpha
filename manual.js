@@ -1,6 +1,7 @@
 import { chatLineage, commitMutationBoundary, firstLineageDivergence } from './branch.js';
 import { consolidateCreateCandidate } from './duplicate.js';
-import { clone, cloneState, normalizeState, reduceMutations } from './state-core.js';
+import { clone } from './common.js';
+import { cloneState, normalizeState, readableState, reduceMutations } from './state-core.js';
 import { exportBundle, importBundle, resetState } from './transfer.js';
 import { canonicalText as normalizeText } from './hash.js';
 
@@ -162,7 +163,8 @@ export function applyManualMutation({
   mutation,
   note,
 } = {}) {
-  const before = normalizeState(state, { chatKey });
+  // Only read: the reducer and the commit make their own copies.
+  const before = readableState(state, { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
   if (before.chatKey && before.chatKey !== owner) throw new Error('manual mutation chatKey does not match state owner');
@@ -239,7 +241,8 @@ export function applyManualLifecycleBatch({
     throw new Error('bulk lifecycle action is limited to ' + MANUAL_LIMITS.bulkRecords + ' records');
   }
 
-  const before = normalizeState(state, { chatKey });
+  // Only read: the reducer and the commit make their own copies.
+  const before = readableState(state, { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
   if (before.chatKey && before.chatKey !== owner) throw new Error('manual mutation chatKey does not match state owner');

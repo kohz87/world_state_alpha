@@ -11,7 +11,7 @@ import {
   createSpatialState,
   deriveCoordinate,
   directionFromDelta,
-  straightLineDistance,
+  kmToUnits,
 } from '../spatial-core.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations } from '../spatial-relevance.js';
 import { normalizeState } from '../state-core.js';
@@ -86,10 +86,6 @@ if (!halmere || !halmere.routeRefs.includes('North Road')) {
 }
 
 // 5. Spatial coordinate math & authority validation
-const dist = straightLineDistance({ x: 0, y: 0 }, { x: 3, y: 4 }, 5);
-if (dist !== 25) {
-  throw new Error('Phase 9 straightLineDistance incorrect: ' + dist);
-}
 const dir = directionFromDelta(0, 10);
 if (dir !== 'north') throw new Error('Phase 9 directionFromDelta incorrect: ' + dir);
 const derived = deriveCoordinate({ x: 10, y: 20 }, { direction: 'east', distanceKm: 15, distanceMode: 'straight_line', unitKm: 5 });
@@ -99,8 +95,8 @@ if (derived?.x !== 13 || derived?.y !== 20 || derived?.authority !== 'derived') 
 if (deriveCoordinate({ x: 10, y: 20 }, { direction: 'east', distanceKm: 15, distanceMode: 'straight_line' }) !== null) {
   throw new Error('Phase 9 coordinate derivation must require an explicit unit scale');
 }
-if (straightLineDistance({ x: 0, y: 0 }, { x: 3, y: 4 }) !== null) {
-  throw new Error('Phase 9 straight-line distance conversion must require an explicit unit scale');
+if (kmToUnits(15) !== null) {
+  throw new Error('Phase 9 distance conversion must require an explicit unit scale');
 }
 const rotatedProfile = {
   northAxis: '+x',

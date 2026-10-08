@@ -48,7 +48,7 @@ for (const required of [
   "'WORLD_STATE_REBUILD_CURRENT_GUARD_REQUIRED'",
   "result.outcome === 'applied' || result.outcome === 'no-change'",
   "root.spatial = spatialTimeline.base",
-  "disabledSpatialTimeline(original, chat)",
+  "disabledSpatialTimeline(original, chat, { lineage: plan.lineage })",
   "'WORLD_STATE_REBUILD_SPATIAL_HISTORY_UNVERIFIED'",
   "'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE'",
   "reconcileBranch(original, prefix)",
