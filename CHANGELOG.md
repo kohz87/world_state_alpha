@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.9.0-alpha.53 - UI and relevance (deep pass on alpha.49)
+
+Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.52.
+
+### Fixed
+
+- **Multi-word searches could not be typed.** The search box and the Places filter dropped a trailing space on every keystroke, so "iron gate" became "irongate". The text is now kept as typed; matching still ignores outer spaces.
+- **Panel refreshes took focus away.** A capture finishing, or each step of a rebuild, rebuilt the panel and dropped focus from the field you were typing in. Focus and the caret now return to the same field.
+- **A link to a record beyond the first 120 rows opened the wrong record.** The record now opens in its own tab, shown at the end of the list.
+- **Copy JSON could copy another operation.** It now copies the JSON shown beside the button.
+- **Cancelling Reset profile threw away typed values.** They are now dropped only once a reset is saved.
+- **On a landscape phone the panel overflowed the screen.** At 800x360 the 420px panel lost its bottom 70px. A short window now fits the panel to the screen.
+- **Function words in multi-word anchors flooded relevance.** With 300 records anchored "the shrine N", a clearly relevant record was never chosen, because "the" in the scene matched all of them first.
+- **One accented letter broke relevance in French or Spanish chats.** The lookup budget went to plain-ASCII letter pairs ("de", "on"), so nothing was found.
+- **Resolved developments used up background catch-up slots.**
+
+### Architecture
+
+- Core contract updated in the relevance and operator-panel sections. No durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha53.test.js`; each case fails on the previous release. Two older tests were updated: a profile reset now clears the draft only when the host reports it saved, and a source check accepts the trimmed search in the scroll key.
+- Live in SillyTavern. On alpha.52:
+  - typing "iron gate" gave "irongate";
+  - a capture during a place edit took focus away;
+  - at 800x360 the panel overflowed by 70px.
+
+  On alpha.53 the search reads "iron gate", typing continues in the place field at the caret after the refresh, and the panel fits the screen.
+- Not verified: real mobile devices and on-screen keyboards, and screen readers.
+
 ## 0.9.0-alpha.52 - Places accuracy (deep pass on alpha.49)
 
 Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.51.
