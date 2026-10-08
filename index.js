@@ -9,7 +9,7 @@ import {
 
 import { chatLineage, commitMutationBoundary, contentLineageKey, contentLineageKeys, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, relinkParkedBranches, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, boundedExchangeText, CAPTURE_LIMITS, hiddenConversationRole, isNarratorMessage, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
-import { affectsCaptureRecovery, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
+import { affectsCaptureRecovery, CAPTURE_FORFEITED, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
 import { prepareWorldStateContinuity } from './evolution.js';
 import { hashText, stableStringify } from './hash.js';
@@ -3425,7 +3425,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
   await refreshChatStateFromServer(chatKey, { reason: 'maintenance-' + actionId });
   if (hydrationErrors.has(chatKey) || currentChatKey() !== chatKey) return;
-  if (bootstrapRequiredChats.has(chatKey) && !['import', 'reset', 'rebuild'].includes(actionId)) {
+  if (bootstrapRequiredChats.has(chatKey) && !['import', 'reset', 'rebuild', 'forfeit_capture'].includes(actionId)) {
     notifyBootstrapRequiredOnce(chatKey);
     return;
   }
@@ -3474,6 +3474,41 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     updatePrivateInjection();
     refreshPanel();
     return;
+  }
+
+  // Forfeiting a missed capture gives it up without a rebuild: it writes only an Operations-log row for that
+  // exact message version (World State is untouched, nothing is recovered for it). A new version of the
+  // message (a swipe or an edit) is captured, and a failure of it listed, as usual.
+  if (actionId === 'forfeit_capture') {
+    const messageId = Number(payload?.messageId);
+    // Another device may already have recovered or forfeited it; merge the saved log first.
+    const saved = await readOperationLog(chatKey).catch(() => []);
+    if (currentChatKey() !== chatKey) return false;
+    if (saved.length) diagnosticStore.merge(chatKey, saved);
+    const chat = getContext().chat || [];
+    const lineage = stateCache.get(chatKey)?.lineage || [];
+    const lineageKey = Number.isInteger(messageId) ? lineage[messageId]?.lineageKey || '' : '';
+    if (!lineageKey || !pendingCaptureFailures(chatKey).includes(messageId)) {
+      notify('error', 'That missed capture is no longer listed. Review the panel and try again.');
+      refreshPanel();
+      return false;
+    }
+    if (!window.confirm('Forfeit the missed capture of message ' + messageId + '?\n\n'
+      + 'World State does not change: whatever that reply established stays uncaptured unless you add it by hand. '
+      + 'It is no longer offered for Recapture.')) return false;
+    diagnosticStore.record(chatKey, {
+      operationId: 'capture:' + messageId + ':forfeited:' + Date.now(),
+      label: 'capture',
+      sourceMessageId: messageId,
+      lineageKey,
+      contentLineageKey: currentContentLineageKeys(chat, lineage, [messageId]).get(messageId) || '',
+      outcome: CAPTURE_FORFEITED,
+      code: 'WORLD_STATE_CAPTURE_FORFEITED',
+      detail: 'The operator forfeited this missed capture; World State was not changed.',
+    });
+    notify('success', 'Missed capture of message ' + messageId + ' forfeited. World State is unchanged.');
+    refreshPanel();
+    return true;
   }
 
   if (actionId === 'reset') {

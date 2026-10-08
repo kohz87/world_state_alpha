@@ -464,7 +464,7 @@ test('cross-session hydration waits for host readiness, retries deterministic re
   assert.match(source, /EXTENSION_SETTINGS_LOADED[\s\S]*safeInit\(\{ hostReady: true, recheckFresh: true \}\)/);
   assert.match(source, /source: pointer\?\.path \? 'missing-sidecar' : 'fresh'/);
   assert.match(source, /baselineRecoveryWrite[\s\S]*pointer = \{ path: deterministicPath, revision: 0, checksum: '' \}/);
-  assert.match(source, /applyMaintenanceActionNow[\s\S]*bootstrapRequiredChats\.has\(chatKey\) && !\['import', 'reset', 'rebuild'\]\.includes\(actionId\)/);
+  assert.match(source, /applyMaintenanceActionNow[\s\S]*bootstrapRequiredChats\.has\(chatKey\) && !\['import', 'reset', 'rebuild', 'forfeit_capture'\]\.includes\(actionId\)/);
   assert.match(source, /applyRecordActionNow[\s\S]*bootstrapRequiredChats\.has\(chatKey\)[\s\S]*notifyBootstrapRequiredOnce\(chatKey\)/);
   assert.match(source, /applySpatialActionNow[\s\S]*bootstrapRequiredChats\.has\(chatKey\)[\s\S]*notifyBootstrapRequiredOnce\(chatKey\)/);
 });

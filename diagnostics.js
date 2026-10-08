@@ -161,6 +161,9 @@ const CAPTURE_SUPERSEDED = 'superseded';
 // A 'stale' capture was abandoned (chat switch, setting change, edit): it is a
 // missed capture unless its message's lineage changed, which the host checks.
 const CAPTURE_NOT_ATTEMPTED = new Set(['skipped', CAPTURE_SUPERSEDED]);
+// 'forfeited': the operator gave up a missed capture of that message version without recovering it. It
+// clears the failures of that version like a successful capture, and changes no World State.
+export const CAPTURE_FORFEITED = 'forfeited';
 const PINNED_FAILURES = 40;
 
 function recoveryView(row) {
@@ -180,12 +183,12 @@ function isCaptureFailure(row) {
   // tied to a version, and those releases treated it as never attempted.
   if (row.outcome === 'stale' && !row.lineageKey) return false;
   return row.label === 'capture' && Number.isInteger(row.sourceMessageId)
-    && !CAPTURE_SETTLED.has(row.outcome) && !CAPTURE_NOT_ATTEMPTED.has(row.outcome);
+    && !CAPTURE_SETTLED.has(row.outcome) && !CAPTURE_NOT_ATTEMPTED.has(row.outcome) && row.outcome !== CAPTURE_FORFEITED;
 }
 
 function isCaptureRecovery(row) {
   return (row.label === 'capture' && Number.isInteger(row.sourceMessageId)
-    && (CAPTURE_SETTLED.has(row.outcome) || row.outcome === CAPTURE_SUPERSEDED))
+    && (CAPTURE_SETTLED.has(row.outcome) || row.outcome === CAPTURE_SUPERSEDED || row.outcome === CAPTURE_FORFEITED))
     || (row.label === 'rebuild' && row.outcome === 'rebuild-completed')
     || ((row.label === 'import' || row.label === 'reset') && row.outcome === 'applied');
 }
@@ -209,7 +212,7 @@ function sameCaptureLineage(failure, row) {
 
 // Walks the log in time order. A failure is identified by message and the
 // message's lineage key (so another swipe's capture does not clear it), and is
-// cleared by a later successful capture of the same message and lineage, a
+// cleared by a later successful or forfeited capture of the same message and lineage, a
 // completed rebuild whose start covers it (a rebuild also drops parked
 // branches), or an import/reset that replaced the state. Returns each
 // unrecovered version's failure rows, oldest first.
@@ -245,7 +248,8 @@ function unrecoveredFailureLists(rows = []) {
       }
       const key = row.sourceMessageId + '\u0001' + (row.lineageKey || '');
       failed.set(key, [...carried, ...(failed.get(key) || []), row]);
-    } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId) && CAPTURE_SETTLED.has(row.outcome)) {
+    } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId)
+      && (CAPTURE_SETTLED.has(row.outcome) || row.outcome === CAPTURE_FORFEITED)) {
       drop(row, failure => sameCaptureLineage(failure, row));
     } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId) && row.outcome === CAPTURE_SUPERSEDED) {
       drop(row, failure => Boolean(failure.operationId) && failure.operationId === row.operationId);
