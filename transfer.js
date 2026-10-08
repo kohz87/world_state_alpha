@@ -1,6 +1,6 @@
 import { BUNDLE_FORMAT, BUNDLE_VERSION } from './constants.js';
 import { hashText, stableStringify } from './hash.js';
-import { clone, createState, normalizeState } from './state-core.js';
+import { createState, normalizeState } from './state-core.js';
 
 function bundleCore(state, exportedAt) {
   const normalized = normalizeState(state, { strictSchema: true });
@@ -84,8 +84,4 @@ export function importBundle(text, { targetChatKey, preserveChronology = false }
 
 export function resetState(chatKey) {
   return createState(chatKey);
-}
-
-export function cloneForExport(state) {
-  return clone(normalizeState(state, { strictSchema: true }));
 }

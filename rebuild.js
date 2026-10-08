@@ -1,10 +1,12 @@
 import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, firstStoryChange, reconcileBranch, seedRootCheckpoint } from './branch.js';
-import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, isNarratorMessage, normalizeCaptureExchange, roleOf, runCaptureOperation } from './capture.js';
+import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, isNarratorMessage, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { hashText, stableStringify } from './hash.js';
-import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
+import { RELEVANCE_STOPWORDS, extractContextTerms, functionWordNames, normalizeAnchor, selectRelevantRecords } from './relevance.js';
+import { SUPPORT_STOPWORDS, significantTokens } from './source-firewall.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
 import { activeCampaignPlaceCount, applySpatialUndoPatch, compactSpatialEvidence, createSpatialState, normalizeSpatialState, placeNameKey } from './spatial-core.js';
-import { canonicalDomain, clone, createState, normalizeState } from './state-core.js';
+import { clone, messageRole as roleOf } from './common.js';
+import { canonicalDomain, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
   maxBoundaries: 1024,
@@ -49,18 +51,17 @@ function exchangeText(exchange) {
     .join('\n');
 }
 
+// `lineage`: the chat's lineage when the caller already computed it (otherwise it is computed here, after the
+// boundary limit is checked, so an over-limit chat is refused before any message is hashed or copied).
 export function planChronologicalRebuild(chat = [], {
   maxBoundaries = REBUILD_LIMITS.maxBoundaries,
   startMessageId = 0,
   includeHiddenMessages = true,
+  lineage: knownLineage = null,
 } = {}) {
   const rows = Array.isArray(chat) ? chat : [];
-  const lineage = chatLineage(rows);
   const limit = boundedInt(maxBoundaries, REBUILD_LIMITS.maxBoundaries, 1, 4096);
   const start = boundedInt(startMessageId, 0, 0, Math.max(0, rows.length));
-  const windows = [];
-  let hiddenMessagesIncluded = 0;
-  let hiddenAssistantBoundaries = 0;
   let previousAssistant = -1;
   for (let messageId = start - 1; messageId >= 0; messageId -= 1) {
     if (rebuildRoleOf(rows[messageId], includeHiddenMessages) === 'assistant' && !isNarratorMessage(rows[messageId])) {
@@ -69,10 +70,24 @@ export function planChronologicalRebuild(chat = [], {
     }
   }
 
+  // A visible narrator message is narration of the next reply's exchange, not a boundary.
+  const boundaries = [];
   for (let messageId = start; messageId < rows.length; messageId += 1) {
-    const boundaryRole = rebuildRoleOf(rows[messageId], includeHiddenMessages);
-    // A visible narrator message is narration of the next reply's exchange, not a boundary.
-    if (boundaryRole !== 'assistant' || isNarratorMessage(rows[messageId])) continue;
+    if (rebuildRoleOf(rows[messageId], includeHiddenMessages) === 'assistant' && !isNarratorMessage(rows[messageId])) boundaries.push(messageId);
+  }
+  if (boundaries.length > limit) {
+    const error = new Error(`rebuild requires ${boundaries.length} assistant boundaries, exceeding configured limit ${limit}`);
+    error.code = 'WORLD_STATE_REBUILD_BOUNDARY_LIMIT';
+    error.boundaries = boundaries.length;
+    error.limit = limit;
+    throw error;
+  }
+
+  const lineage = Array.isArray(knownLineage) && knownLineage.length === rows.length ? knownLineage : chatLineage(rows);
+  const windows = [];
+  let hiddenMessagesIncluded = 0;
+  let hiddenAssistantBoundaries = 0;
+  for (const messageId of boundaries) {
     if (rows[messageId]?.is_system === true) hiddenAssistantBoundaries += 1;
 
     const raw = rows.slice(previousAssistant + 1, messageId + 1);
@@ -99,14 +114,6 @@ export function planChronologicalRebuild(chat = [], {
     previousAssistant = messageId;
   }
 
-  if (windows.length > limit) {
-    const error = new Error(`rebuild requires ${windows.length} assistant boundaries, exceeding configured limit ${limit}`);
-    error.code = 'WORLD_STATE_REBUILD_BOUNDARY_LIMIT';
-    error.boundaries = windows.length;
-    error.limit = limit;
-    throw error;
-  }
-
   return {
     lineage,
     windows,
@@ -122,77 +129,67 @@ export function planChronologicalRebuild(chat = [], {
   };
 }
 
+// Function words are not shared topic: "the" and "are" never make a record look addressed, and a
+// function-word anchor ("Will") counts only where the exchange uses it as a name.
 function rebuildMatchContext(recentText) {
   return {
     haystack: normalizeAnchor(recentText),
-    terms: new Set(extractContextTerms(recentText)),
+    terms: new Set(extractContextTerms(recentText, { maxTerms: 256 }).filter(term => !RELEVANCE_STOPWORDS.has(term))),
+    names: functionWordNames(recentText),
+    // The exchange's content words for the direct-address check, read once per exchange.
+    directTerms: new Set(significantTokens(recentText, REBUILD_DIRECT_STOPWORDS)),
   };
 }
 
-function historicalRelevant(record, context) {
+function exchangeOverlap(record, context) {
   const anchorHit = (record?.anchors || []).some(anchor => {
     const normalized = normalizeAnchor(anchor);
     if (!normalized) return false;
-    const anchorTerms = normalized.split(' ').filter(Boolean);
-    return anchorTerms.length > 1
-      ? context.haystack.includes(normalized)
-      : context.terms.has(normalized);
+    if (normalized.includes(' ')) return ` ${context.haystack} `.includes(` ${normalized} `);
+    return RELEVANCE_STOPWORDS.has(normalized) ? context.names.has(normalized) : context.terms.has(normalized);
   });
-  if (anchorHit) return true;
-
-  const summaryTerms = extractContextTerms(record?.summary || '');
-  let overlap = 0;
-  for (const term of summaryTerms) if (context.terms.has(term)) overlap += 1;
-  return overlap >= 2;
+  let shared = 0;
+  for (const term of extractContextTerms(record?.summary || '')) if (context.terms.has(term)) shared += 1;
+  return { relevant: anchorHit || shared >= 2, touched: anchorHit || shared >= 1 };
 }
 
+// The firewall's support stopwords plus counting and status words: sharing "two" or "remains" is no topic.
 const REBUILD_DIRECT_STOPWORDS = new Set([
-  'the', 'and', 'that', 'this', 'with', 'from', 'into', 'onto', 'over', 'under', 'after', 'before',
-  'while', 'where', 'when', 'then', 'than', 'they', 'them', 'their', 'there', 'here', 'have', 'has',
-  'had', 'was', 'were', 'are', 'is', 'been', 'being', 'will', 'would', 'could', 'should', 'about',
-  'among', 'through', 'around', 'still', 'current', 'currently', 'now', 'near', 'behind', 'outside',
+  ...SUPPORT_STOPWORDS,
   'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'first', 'second',
   'third', 'last', 'remain', 'remains', 'active',
 ]);
 
-function rebuildDirectTerms(value) {
-  return normalizeAnchor(value)
-    .split(' ')
-    .filter(token => token.length >= 3 && !REBUILD_DIRECT_STOPWORDS.has(token))
-    .map(token => {
-      if (token.length > 5 && token.endsWith('ies')) return token.slice(0, -3) + 'y';
-      if (token.length > 4 && token.endsWith('s')) return token.slice(0, -1);
-      return token;
-    });
-}
-
-function rebuildDirectlyAddresses(record, recentText) {
-  const haystack = normalizeAnchor(recentText);
-  if (!haystack) return false;
+function rebuildDirectlyAddresses(record, context) {
+  if (!context.haystack) return false;
 
   const anchors = (Array.isArray(record?.anchors) ? record.anchors : [])
     .map(normalizeAnchor)
     .filter(Boolean);
-  if (anchors.some(anchor => anchor.includes(' ') && ` ${haystack} `.includes(` ${anchor} `))) return true;
-  if (anchors.length === 1 && anchors[0].length >= 5 && ` ${haystack} `.includes(` ${anchors[0]} `)) return true;
+  if (anchors.some(anchor => anchor.includes(' ') && ` ${context.haystack} `.includes(` ${anchor} `))) return true;
+  if (anchors.length === 1 && anchors[0].length >= 5 && ` ${context.haystack} `.includes(` ${anchors[0]} `)) return true;
 
-  const left = new Set(rebuildDirectTerms(record?.summary || ''));
-  const right = new Set(rebuildDirectTerms(recentText));
+  const left = new Set(significantTokens(record?.summary || '', REBUILD_DIRECT_STOPWORDS));
   let shared = 0;
-  for (const token of left) if (right.has(token)) shared += 1;
+  for (const token of left) if (context.directTerms.has(token)) shared += 1;
   return shared >= 2;
 }
 
 function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessageId) {
   const lifecycle = [];
+  // Recently changed developments the exchange does not touch: the only antecedents an ending that names
+  // nothing ("it finally ends") can mean, so they are offered only when the exchange touches no development.
+  const untouchedRecent = [];
+  let touchesDevelopment = false;
   const historical = [];
   const context = rebuildMatchContext(recentText);
 
   for (const record of state.records || []) {
     const lastChanged = Number.isInteger(record?.lastChangedMessage) ? record.lastChangedMessage : -1;
-    const overlapsExchange = historicalRelevant(record, context);
+    const overlap = exchangeOverlap(record, context);
+    const overlapsExchange = overlap.relevant;
     const directlyAddressed = record?.kind === 'development' && record?.status === 'active'
-      ? rebuildDirectlyAddresses(record, recentText)
+      ? rebuildDirectlyAddresses(record, context)
       : false;
 
     if (record?.kind === 'development' && record?.status === 'active') {
@@ -200,8 +197,12 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
         && lastChanged >= 0
         && boundaryMessageId > lastChanged
         && (boundaryMessageId - lastChanged) <= REBUILD_LIMITS.lifecycleRecentMessages;
-      if (overlapsExchange || recentlyChanged) {
+      if (overlap.touched) touchesDevelopment = true;
+      // A recent change alone is no antecedent while the exchange is about another development.
+      if (overlapsExchange || (recentlyChanged && overlap.touched)) {
         lifecycle.push({ record, overlapsExchange, directlyAddressed, lastChanged });
+      } else if (recentlyChanged) {
+        untouchedRecent.push({ record, overlapsExchange, directlyAddressed, lastChanged });
       }
       continue;
     }
@@ -211,6 +212,7 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
     }
   }
 
+  if (!touchesDevelopment) lifecycle.push(...untouchedRecent);
   lifecycle.sort((left, right) => {
     if (left.overlapsExchange !== right.overlapsExchange) return left.overlapsExchange ? -1 : 1;
     if (right.lastChanged !== left.lastChanged) return right.lastChanged - left.lastChanged;
@@ -263,12 +265,12 @@ function visibleForRebuild(state, exchange, boundaryMessageId) {
   };
 }
 
-export function rebuildSnapshotToken({ state, chat }) {
-  const normalized = normalizeState(state);
+export function rebuildSnapshotToken({ state, chat, lineage = null }) {
+  const rows = Array.isArray(chat) ? chat : [];
   return hashText(stableStringify({
-    domain: canonicalDomain(normalized),
-    rollbackJournalSequence: normalized.rollbackJournalSequence,
-    lineage: chatLineage(Array.isArray(chat) ? chat : []),
+    domain: canonicalDomain(state),
+    rollbackJournalSequence: Math.max(0, Number(state?.rollbackJournalSequence) || 0),
+    lineage: Array.isArray(lineage) && lineage.length === rows.length ? lineage : chatLineage(rows),
   }));
 }
 
@@ -332,7 +334,7 @@ function spatialHasOperatorContent(spatial) {
 // stay recoverable) and keeps the places held at the floor, but says so.
 // With extraction on (`operatorOnly`) the same history supplies the operator's own entities; only those
 // count as held before the floor, and `hasOperator` says whether the history holds any at all.
-function disabledSpatialTimeline(original, chat, { operatorOnly = false } = {}) {
+function disabledSpatialTimeline(original, chat, { operatorOnly = false, lineage = null } = {}) {
   const journal = Array.isArray(original.rollbackJournal) ? original.rollbackJournal : [];
   const floor = Number.isInteger(original.rollbackJournalFloorMessageId) ? original.rollbackJournalFloorMessageId : -1;
   const held = operatorOnly ? spatialHasOperatorContent : spatialHasContent;
@@ -343,11 +345,11 @@ function disabledSpatialTimeline(original, chat, { operatorOnly = false } = {}) 
       base: clone(original.spatial),
       hasOperator: spatialHasOperatorContent(original.spatial),
       unprovableBelow: heldBeforeFloor ? floor : -1,
-      unverified: heldBeforeFloor && firstStoryChange(original.lineage, chat) <= floor,
+      unverified: heldBeforeFloor && firstStoryChange(original.lineage, chat, lineage) <= floor,
       at: () => clone(original.spatial),
     };
   }
-  const divergence = firstStoryChange(original.lineage, chat);
+  const divergence = firstStoryChange(original.lineage, chat, lineage);
   const bySeq = new Map(journal.map(entry => [entry.seq, entry]));
   const steps = [];
   let spatial = clone(original.spatial);
@@ -468,6 +470,8 @@ export async function runManualRebuild({
   baseMap = null,
   spatialProfile = null,
   resume = null,
+  // The chat's lineage when the host already computed it for its own range proof.
+  lineage = null,
 } = {}) {
   const original = normalizeState(state, { chatKey });
   const owner = String(chatKey || original.chatKey || '');
@@ -478,6 +482,7 @@ export async function runManualRebuild({
     maxBoundaries,
     startMessageId,
     includeHiddenMessages,
+    lineage,
   });
   if (plan.windows.length && typeof isCurrent !== 'function') {
     const error = new Error('manual rebuild requires an isCurrent(snapshotToken) guard');
@@ -485,7 +490,7 @@ export async function runManualRebuild({
     throw error;
   }
 
-  const snapshotToken = rebuildSnapshotToken({ state: original, chat });
+  const snapshotToken = rebuildSnapshotToken({ state: original, chat, lineage: plan.lineage });
   const current = () => typeof isCurrent !== 'function' || isCurrent(snapshotToken);
 
   if (!current()) {
@@ -500,10 +505,10 @@ export async function runManualRebuild({
     };
   }
 
-  const spatialTimeline = spatialEnabled ? null : disabledSpatialTimeline(original, chat);
+  const spatialTimeline = spatialEnabled ? null : disabledSpatialTimeline(original, chat, { lineage: plan.lineage });
   // With extraction on, the same history supplies the operator's own places at each boundary (skipped
   // entirely when the history holds no operator entity).
-  const operatorHistory = spatialEnabled ? disabledSpatialTimeline(original, chat, { operatorOnly: true }) : null;
+  const operatorHistory = spatialEnabled ? disabledSpatialTimeline(original, chat, { operatorOnly: true, lineage: plan.lineage }) : null;
   const operatorTimeline = operatorHistory?.hasOperator ? operatorHistory : null;
   const historyTimeline = spatialTimeline || operatorTimeline;
   const warnings = historyTimeline?.unverified
@@ -517,7 +522,7 @@ export async function runManualRebuild({
   const lastWindowMessageId = plan.windows.length ? plan.windows[plan.windows.length - 1].messageId : null;
   // The candidate's Spatial after boundary `messageId`: replayed as it was when extraction is off, or the
   // model's places with the operator's own as they stood there when it is on.
-  const spatialAtBoundary = (state, messageId, last = messageId === lastWindowMessageId) => {
+  const spatialAtBoundary = (state, messageId, last = false) => {
     if (spatialTimeline) return { ...state, spatial: spatialTimeline.at(messageId, last) };
     if (operatorTimeline) return { ...state, spatial: overlayOperatorSpatial(state.spatial, operatorTimeline.at(messageId, last)) };
     return state;
@@ -557,7 +562,7 @@ export async function runManualRebuild({
     candidate = normalizeState(resume.candidate, { strictSchema: true, chatKey: owner });
   } else if (plan.metrics.startMessageId > 0) {
     const prefix = (Array.isArray(chat) ? chat : []).slice(0, plan.metrics.startMessageId);
-    const currentLineage = chatLineage(Array.isArray(chat) ? chat : []);
+    const currentLineage = plan.lineage;
     const priorLineage = Array.isArray(original.lineage) ? original.lineage : [];
     const prefixProven = priorLineage.length >= plan.metrics.startMessageId
       && priorLineage.slice(0, plan.metrics.startMessageId)
@@ -813,14 +818,16 @@ export async function runManualRebuild({
 
   if (signal?.aborted) return cancelledResult(null);
 
-  // With extraction off the replayed Places are applied at each boundary. A range with no assistant
-  // boundary applies none, so commit them at the last message (journaled, so rollback still undoes them).
-  if ((spatialTimeline || operatorTimeline) && !plan.windows.length && chat.length) {
-    const lastMessageId = chat.length - 1;
+  // With extraction off the replayed Places are applied at each boundary. Places changed after the last
+  // assistant boundary (or in a range with none) are committed at the last message, where they were made
+  // (journaled, so deleting that message still undoes them), never folded into an earlier reply.
+  const rows = Array.isArray(chat) ? chat : [];
+  if ((spatialTimeline || operatorTimeline) && rows.length && (lastWindowMessageId === null || lastWindowMessageId < rows.length - 1)) {
+    const lastMessageId = rows.length - 1;
     candidate = commitMutationBoundary(
       candidate,
       spatialAtBoundary(candidate, lastMessageId, true),
-      chat,
+      rows,
       lastMessageId,
       'rebuild',
       { lineage: plan.lineage },

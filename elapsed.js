@@ -1,3 +1,4 @@
+import { messageRole, messageText } from './common.js';
 import { sanitizeExchangeMessage } from './narrative-sanitizer.js';
 
 const WORD_NUMBERS = Object.freeze({
@@ -172,52 +173,6 @@ const ELAPSED_PATTERNS = Object.freeze([
 // "The next month" / "the following week" narrate a step; a bare "next week" is usually still ahead.
 const NAMED_STEP = /\b(?:the\s+)?(?:next|following)\s+(day|week|month|year|term|semester|season|cycle)\b/iu;
 
-export function extractElapsedHint(textValue, defaults = {}) {
-  const source = String(textValue ?? '');
-  if (!source.trim()) return null;
-
-  for (const pattern of ELAPSED_PATTERNS) {
-    const match = source.match(pattern);
-    if (!match) continue;
-    const { amount, unit } = measure(match[1] || undefined, match[2]);
-    return hint(match[0], {
-      amount,
-      unit,
-      meaningful: meaningfulAmount(amount, unit),
-      ...defaults,
-      source: 'detected',
-    });
-  }
-
-  const named = source.match(NAMED_STEP);
-  if (named) {
-    const unit = UNIT_ALIASES[String(named[1]).toLocaleLowerCase()] || named[1].toLocaleLowerCase();
-    return hint(named[0], {
-      amount: 1,
-      unit,
-      meaningful: unit !== 'day',
-      ...defaults,
-      source: 'detected',
-    });
-  }
-
-  // ("several/many <unit> later" is the first pattern above.)
-  return null;
-}
-
-function messageRole(message) {
-  if (message?.role === 'user' || message?.is_user === true) return 'user';
-  if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
-  return 'system';
-}
-
-function messageText(message) {
-  if (typeof message?.content === 'string') return message.content;
-  if (typeof message?.mes === 'string') return message.mes;
-  if (typeof message?.text === 'string') return message.text;
-  return '';
-}
-
 const ELAPSED_CANDIDATES_PER_MESSAGE = 12;
 
 // Every elapsed phrase in the text with its offset, in reading order. Each is
@@ -368,6 +323,16 @@ function establishedElapsedHints(source, defaults = {}) {
   return out;
 }
 
+function messageElapsedHints(message, defaults) {
+  return establishedElapsedHints(messageText(sanitizeExchangeMessage(message)), defaults);
+}
+
+// One narrated text, judged exactly as the runtime detector judges a reply in the exchange.
+export function extractElapsedHint(textValue, defaults = {}) {
+  const hints = messageElapsedHints({ role: 'assistant', content: String(textValue ?? '') }, defaults);
+  return hints.find(item => item.meaningful) || hints[0] || null;
+}
+
 export function detectElapsedHintFromExchange(exchange = []) {
   const rows = Array.isArray(exchange) ? exchange : [];
   let shortSpan = null;
@@ -375,8 +340,7 @@ export function detectElapsedHintFromExchange(exchange = []) {
     const rawMessage = rows[index];
     if (!Number.isInteger(rawMessage?.messageId) || rawMessage.messageId < 0) continue;
     if (messageRole(rawMessage) === 'system') continue;
-    const message = sanitizeExchangeMessage(rawMessage);
-    const hints = establishedElapsedHints(messageText(message), {
+    const hints = messageElapsedHints(rawMessage, {
       sourceMessageId: rawMessage.messageId,
       lineageKey: typeof rawMessage.lineageKey === 'string' ? rawMessage.lineageKey : '',
     });

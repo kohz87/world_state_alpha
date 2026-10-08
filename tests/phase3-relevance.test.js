@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import {
   extractContextTerms,
   normalizeAnchor,
-  scoreRecordRelevance,
   selectLifecycleCandidates,
   selectRelevantRecords,
 } from '../relevance.js';
@@ -134,9 +133,9 @@ test('summary overlap can retrieve a record even when the exact anchor is absent
   const target = record('reactor', 'Reactor output is limited while coolant pumps are repaired.', {
     anchors: ['core systems'],
   });
-  const scored = scoreRecordRelevance(target, {
+  const [scored] = selectRelevantRecords(state([target]), {
     recentText: 'The crew asks whether reactor output remains limited during coolant repairs.',
-  });
+  }).selected;
   assert.ok(scored.score >= 0.9);
   assert.ok(scored.reasons.includes('recent-summary'));
 });

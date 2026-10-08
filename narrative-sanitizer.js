@@ -82,14 +82,3 @@ export function sanitizeExchangeMessage(message) {
     ...(typeof message.mes === 'string' ? { mes: sanitized } : {}),
   };
 }
-
-export function containsWriterState(text) {
-  if (typeof text !== 'string') return false;
-  return /<writer_state(?:\s+[^>]*)?>[\s\S]*?(?:<\/writer_state\s*>|$)/i.test(text);
-}
-
-export function extractWriterStateBlocks(text) {
-  if (typeof text !== 'string') return [];
-  const matches = text.match(/<writer_state(?:\s+[^>]*)?>[\s\S]*?(?:<\/writer_state\s*>|$)/gi);
-  return matches || [];
-}

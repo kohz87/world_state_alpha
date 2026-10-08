@@ -72,20 +72,37 @@ function locationNameGrounded(name, evidence, exchangeById) {
   return false;
 }
 
+// Campaign places by id and by folded name, built once per capture and only when a proposal needs them, so
+// name matching reads a map instead of scanning every place for every proposal.
+function campaignPlaces(spatial) {
+  const byId = new Map();
+  const activeByName = new Map();
+  const mergedByName = new Map();
+  for (const loc of Array.isArray(spatial?.locations) ? spatial.locations : []) {
+    if (loc?.id && !byId.has(loc.id)) byId.set(loc.id, loc);
+    const key = placeNameKey(loc?.name);
+    if (!key) continue;
+    if (loc.status === 'active') {
+      if (!activeByName.has(key)) activeByName.set(key, loc);
+    } else if (loc.status === 'archived' && loc.mergedInto && !mergedByName.has(key)) {
+      mergedByName.set(key, loc);
+    }
+  }
+  return { byId, activeByName, mergedByName };
+}
+
 // The active place a merged-away duplicate named `name` ended up in (following chained merges), or null.
-function mergeTargetByName(spatial, name) {
+function mergeTargetByName(places, name) {
   const key = placeNameKey(name);
-  const locations = Array.isArray(spatial?.locations) ? spatial.locations : [];
-  if (!key || locations.some(loc => loc.status === 'active' && placeNameKey(loc.name) === key)) return null;
-  return followMerges(spatial, locations.find(loc => loc.status === 'archived' && loc.mergedInto && placeNameKey(loc.name) === key));
+  if (!key || places.activeByName.has(key)) return null;
+  return followMerges(places, places.mergedByName.get(key));
 }
 
 // The active place a merged-away place ended up in, following chained merges (at most 8), or null.
-function followMerges(spatial, start) {
-  const locations = Array.isArray(spatial?.locations) ? spatial.locations : [];
+function followMerges(places, start) {
   let current = start;
   for (let hops = 0; current && current.status !== 'active' && hops < 8; hops += 1) {
-    current = current.mergedInto ? locations.find(loc => loc.id === current.mergedInto) : null;
+    current = current.mergedInto ? places.byId.get(current.mergedInto) || null : null;
   }
   return current?.status === 'active' && current !== start ? current : null;
 }
@@ -548,6 +565,7 @@ export function processSpatialCapture({
   const visibleById = new Map((Array.isArray(visibleLocations) ? visibleLocations : []).map(item => [item.id, item]));
   // Base-map places named by the narration but outside the visible set (looked up by name, never scanned).
   const namedBase = [];
+  let places = null;
   const activeProfile = baseMap ? resolveSpatialProfile(spatial, baseMap) : (profile || resolveSpatialProfile(spatial));
   // Places this reply gives a position: a relation to one of them is judged after they are saved.
   const movedThisReply = new Set(supplemented.mutations
@@ -609,7 +627,8 @@ export function processSpatialCapture({
         if (visibleMatch?.id) proposal.locationId = visibleMatch.id;
         // A base-map place outside the visible set is that place, not a new campaign one (a campaign place
         // of the same name is matched by the reducer).
-        const base = !visibleMatch && baseMap && !(spatial?.locations || []).some(item => item.status === 'active' && norm(item.name) === nameKey)
+        places ||= campaignPlaces(spatial);
+        const base = !visibleMatch && baseMap && !places.activeByName.has(nameKey)
           ? baseLocationByName(baseMap, proposal.name)
           : null;
         if (base?.ambiguous) {
@@ -619,9 +638,9 @@ export function processSpatialCapture({
         const effective = base ? resolveEffectiveLocations(spatial, baseMap, { onlyIds: new Set([base.id]) })[0] : null;
         // A merged-away duplicate's old name is the place it was merged into (its name kept); so is a base
         // place whose override was merged away.
-        const override = effective?.overrideId ? (spatial?.locations || []).find(loc => loc.id === effective.overrideId) : null;
+        const override = effective?.overrideId ? places.byId.get(effective.overrideId) || null : null;
         const mergedTarget = !visibleMatch
-          ? (override?.mergedInto ? followMerges(spatial, override) : (!effective ? mergeTargetByName(spatial, proposal.name) : null))
+          ? (override?.mergedInto ? followMerges(places, override) : (!effective ? mergeTargetByName(places, proposal.name) : null))
           : null;
         const known = mergedTarget || effective;
         if (known?.id && (known.status || 'active') !== 'active' && !mergedTarget) {
@@ -926,8 +945,6 @@ export function processSpatialCapture({
         ...(reducedLocations.indexDelta?.removedRouteIds || []),
         ...(reducedOther.indexDelta?.removedRouteIds || []),
       ],
-      relationsChanged: Boolean(reducedLocations.indexDelta?.relationsChanged || reducedOther.indexDelta?.relationsChanged),
-      routesChanged: Boolean(reducedLocations.indexDelta?.routesChanged || reducedOther.indexDelta?.routesChanged),
     },
   };
 }

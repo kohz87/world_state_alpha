@@ -436,7 +436,7 @@ test('cross-session hydration waits for host readiness, retries deterministic re
   assert.match(source, /const STARTUP_SIDECAR_RETRY_DELAYS_MS = Object\.freeze\(\[120, 240\]\)/);
   assert.match(source, /async function recoverExistingSidecarPointer\(chatKey, preferredPointer = null, \{[\s\S]*retryDeterministicMiss = false/);
   assert.match(source, /retryDeterministicMiss && deterministic[\s\S]*STARTUP_SIDECAR_RETRY_DELAYS_MS/);
-  assert.match(source, /loadChatState\(chatKey\)[\s\S]*recoverExistingSidecarPointer\(chatKey, pointer, \{ retryDeterministicMiss: true \}\)/);
+  assert.match(source, /loadChatState\(chatKey\)[\s\S]*recoverExistingSidecarPointer\(chatKey, pointer, \{ retryDeterministicMiss: true(?:, readOnly: true)? \}\)/);
   assert.match(source, /if \(!hostHydrationReady\)[\s\S]*WORLD_STATE_HOST_NOT_READY/);
   assert.match(source, /provisionalFreshChats\.add\(chatKey\)[\s\S]*chatHasEstablishedHistory\(chatKey\)[\s\S]*bootstrapRequiredChats\.add\(chatKey\)/);
   assert.match(source, /async function recheckProvisionalFreshHydration\(chatKey = currentChatKey\(\)\)/);
@@ -1214,7 +1214,7 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
   // reconcile, status or provider side effects.
   assert.match(body, /savedResume\.resume\.fromMessageId !== rebuildRequest\.fromMessageId/);
   assert.match(body, /There is no failed rebuild to resume at that message for this chat/);
-  const staleAt = body.indexOf('rebuildSnapshotToken({ state, chat }) !== savedResume.resume.snapshotToken');
+  const staleAt = body.indexOf('rebuildSnapshotToken({ state, chat, lineage: chatLineageOnce() }) !== savedResume.resume.snapshotToken');
   assert.ok(staleAt > 0 && staleAt < body.indexOf('extendCurrentBranchFast(chatKey)') && staleAt < body.indexOf("phase: 'running'"));
   assert.match(body, /resumeParams\.bootstrapRecoveryAtStart !== bootstrapRecoveryAtStart/);
   assert.match(body, /const routeKey = stableStringify\(routeFingerprint\);[\s\S]{0,240}resumeParams\.routeKey !== routeKey/);

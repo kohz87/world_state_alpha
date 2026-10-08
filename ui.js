@@ -1,7 +1,8 @@
 import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { hashText } from './hash.js';
-import { clone, normalizeState } from './state-core.js';
+import { clone } from './common.js';
+import { normalizeState } from './state-core.js';
 import { canonicalSpatialDirection, OPPOSITE_DIRECTION, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 
 export const WORLD_STATE_UI_NAMESPACE = 'world_state_alpha_ui';
@@ -1843,10 +1844,16 @@ export function createWorldStateUiController({
     destroyed: false,
   };
 
+  // The host's state is already normalized, so its records are read in place (a click never copies the state).
+  function stateRecords() {
+    const records = getState()?.records;
+    return Array.isArray(records) ? records : [];
+  }
+
   // A record's status from its row key ('row-' + its index among the normalized records), read only on click.
   function recordStatusOfKey(key) {
     const index = Number(/^row-(\d+)$/.exec(key)?.[1]);
-    return Number.isInteger(index) ? normalizeState(getState()).records[index]?.status || '' : '';
+    return Number.isInteger(index) ? stateRecords()[index]?.status || '' : '';
   }
 
   // What the operator is looking at: click handlers read the model of the last render instead of building
@@ -1870,7 +1877,7 @@ export function createWorldStateUiController({
     if (!row?.key) return '';
     if (ui.shownState === getState()) return row.key;
     const fingerprint = rowFingerprint(row);
-    const index = normalizeState(getState()).records.findIndex(record => rowFingerprint(projectRecord(record, new Map())) === fingerprint);
+    const index = stateRecords().findIndex(record => rowFingerprint(projectRecord(record, new Map())) === fingerprint);
     return index >= 0 ? 'row-' + index : '';
   }
 

@@ -154,7 +154,7 @@ test('review hardening: header bullets close the checklist section; function-wor
   const rec = (id, summary, anchors) => ({ id, kind: 'fact', summary, status: 'active', trend: null, anchors, createdAtMessage: 1, lastChangedMessage: null, lastEvaluatedMessage: null, timeAnchor: '', evidenceIds: [], causedBy: [], affects: [] });
   const filler = n => Array.from({ length: n }, (_, i) => 'filler' + i).join(' ');
   const named = { records: [rec('will', 'Will keeps the ferry at the river.', ['Will'])], links: [] };
-  const text = filler(80) + ' I go see will.';
+  const text = filler(80) + ' I go see Will.';
   assert.deepEqual(selectRelevantRecords(named, { index: buildRelevanceIndex(named), recentText: text }).selected.map(item => item.record.id), ['will']);
 
   // A long older window full of another record's words must not crowd out a multi-word anchor in the newest

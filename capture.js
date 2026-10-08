@@ -1,16 +1,15 @@
-import { chatLineage, fingerprintMessage } from './branch.js';
+import { chatLineage } from './branch.js';
 import { CaptureWireError, parseCaptureJson, validateCaptureEnvelope } from './capture-wire.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { DUPLICATE_THRESHOLD, consolidateCreateCandidate, duplicateSimilarity, mergeAnchors } from './duplicate.js';
-import { hashText, stableStringify } from './hash.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 import { processSpatialCapture } from './spatial-capture.js';
 import { SPATIAL_WIRE_LIMITS } from './spatial-wire.js';
 import { applyCaptureSourceFirewall } from './source-firewall.js';
-import { clone, cloneState, reduceMutations } from './state-core.js';
+import { clone, clipMiddle, messageRole as roleOf, messageText } from './common.js';
+import { cloneState, reduceMutations } from './state-core.js';
 
-export const CAPTURE_DEFAULT_INTERVAL = 1;
 export const CAPTURE_RESPONSE_TOKENS = 2200;
 const REALITY_MUTATION_SHAPE = '{"action":"create|update|resolve|supersede","recordId":"existing-id-for-non-create","kind":"fact|development-for-create","summary":"compact current state","status":"active for create","trend":"emerging|rising|stable|falling|uncertain when useful","anchors":["concept"],"reason":"grounded reason","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from current exchange"}],"relatedRecordIds":["visible-id"],"newEpisodeOfRecordId":"optional visible resolved/superseded id"}';
 export const CAPTURE_LIMITS = Object.freeze({
@@ -25,9 +24,15 @@ export const CAPTURE_LIMITS = Object.freeze({
   completenessHintChars: 320,
 });
 
+// A checklist bullet: '-', '*', '+', '•' and similar marks, or a number ('1.', '2)').
+const CHECKLIST_BULLET = /^\s*(?:[-*+•‣◦▪●]|\d{1,3}[.)])\s+/u;
+// A bullet that is itself a bold section label ('- **🌱 Planted Seeds:** …').
+const CHECKLIST_LABEL_BULLET = /^\s*(?:[-*+•‣◦▪●]|\d{1,3}[.)])\s+\*\*[^*\n]{1,80}?:\s*\*\*/u;
+
 function normalizeChecklistText(value) {
   return String(value ?? '')
     .replace(/<[^>]+>/g, ' ')
+    .replace(CHECKLIST_BULLET, '')
     .replace(/^\s*[-*]+\s*/u, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -41,7 +46,7 @@ function parseWorldStateSectionLine(line) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  const offScreen = cleaned.match(/^[^\p{L}\p{N}]*off-screen\s*:\s*(.*)$/iu);
+  const offScreen = cleaned.match(/^[^\p{L}\p{N}]*off[-\s]?screen\s*:\s*(.*)$/iu);
   if (offScreen) return { section: 'off_screen', inline: offScreen[1] || '' };
 
   const unresolved = cleaned.match(/^[^\p{L}\p{N}]*unresolved threads\s*:\s*(.*)$/iu);
@@ -77,7 +82,7 @@ export function extractWorldStateCompletenessHints(exchange = []) {
         // only non-bullet lines can start or end a section.
         // A bullet that is itself a bold section label ('- **🌱 Planted Seeds:** …') still switches or closes
         // the section like any heading.
-        if (section && /^\s*[-*]\s+/u.test(rawLine) && !/^\s*[-*]\s+\*\*[^*\n]{1,80}?:\s*\*\*/u.test(rawLine)) {
+        if (section && CHECKLIST_BULLET.test(rawLine) && !CHECKLIST_LABEL_BULLET.test(rawLine)) {
           if (pushHint(message.messageId, section, rawLine)) return hints;
           continue;
         }
@@ -91,7 +96,7 @@ export function extractWorldStateCompletenessHints(exchange = []) {
           section = '';
           continue;
         }
-        if (!section || !/^\s*[-*]\s+/u.test(rawLine)) continue;
+        if (!section || !CHECKLIST_BULLET.test(rawLine)) continue;
         if (pushHint(message.messageId, section, rawLine)) return hints;
       }
     }
@@ -127,19 +132,6 @@ export const CAPTURE_SYSTEM_PROMPT = [
   'An ending may be transient as an event but still retires the prior ongoing record. Silence, off-screen status, temporary absence, escape, interruption, uncertainty, scene departure, or PC irrelevance never proves resolution.',
   'Use resolve/supersede for lifecycle changes; do not smuggle them through update. If no persistent change or proven lifecycle transition exists, return {"mutations":[]}.',
 ].join(' ');
-
-function messageText(message) {
-  if (typeof message?.content === 'string') return message.content;
-  if (typeof message?.mes === 'string') return message.mes;
-  if (typeof message?.text === 'string') return message.text;
-  return '';
-}
-
-export function roleOf(message) {
-  if (message?.role === 'user' || message?.is_user === true) return 'user';
-  if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
-  return 'system';
-}
 
 const SYSTEM_MESSAGE_TYPES = new Set([
   'help',
@@ -217,17 +209,6 @@ export function assistantBoundaryExchange(chat = [], endMessageId, knownLineage 
   });
 }
 
-function clip(value, max) {
-  const text = String(value ?? '').trim();
-  if (!(max > 0)) return '';
-  if (text.length <= max) return text;
-  // Too small for head + marker + tail: a plain prefix keeps the result within max.
-  if (max < 80) return text.slice(0, max);
-  const head = Math.floor(max * 0.55);
-  const tail = max - head - 24;
-  return `${text.slice(0, head)}\n...[bounded]...\n${text.slice(-tail)}`;
-}
-
 // The relevance view of an exchange, bounded exactly like the capture exchange: newest message first within
 // the exchange budget, each message clipped to keep its start and its end (the newest text).
 export function boundedExchangeText(contents = []) {
@@ -235,7 +216,7 @@ export function boundedExchangeText(contents = []) {
   let remaining = CAPTURE_LIMITS.exchangeChars;
   const out = [];
   for (let index = rows.length - 1; index >= 0 && remaining > 0; index -= 1) {
-    const text = clip(rows[index], Math.min(CAPTURE_LIMITS.perMessageChars, remaining));
+    const text = clipMiddle(rows[index], Math.min(CAPTURE_LIMITS.perMessageChars, remaining));
     remaining -= text.length + 1;
     out.unshift(text);
   }
@@ -250,7 +231,7 @@ export function normalizeCaptureExchange(exchange = []) {
       messageId: message.messageId,
       role: roleOf(message),
       lineageKey: typeof message.lineageKey === 'string' ? message.lineageKey : '',
-      content: clip(
+      content: clipMiddle(
         roleOf(message) === 'assistant'
           ? sanitizeAssistantNarration(messageText(message))
           : messageText(message),
@@ -263,7 +244,7 @@ export function normalizeCaptureExchange(exchange = []) {
   for (let i = candidates.length - 1; i >= 0; i -= 1) {
     if (remaining <= 0) break;
     const message = candidates[i];
-    const content = clip(message.content, remaining);
+    const content = clipMiddle(message.content, remaining);
     remaining -= content.length;
     out.unshift({ ...message, content });
   }
@@ -317,7 +298,7 @@ export function buildCapturePrompt({
   const interpretiveLifecycle = records
     .filter(record => record.status === 'active' && lifecycleContextIdSet.has(record.id))
     .map(record => ({ id: record.id, kind: record.kind, summary: record.summary, anchors: record.anchors }));
-  const lore = clip(loreText, CAPTURE_LIMITS.loreChars);
+  const lore = clipMiddle(loreText, CAPTURE_LIMITS.loreChars);
   const prompt = [
     'CURRENT EXCHANGE (the only automatic mutation evidence source):',
     JSON.stringify(currentExchange.map(({ messageId, role, content }) => ({ messageId, role, content }))),
@@ -383,41 +364,6 @@ export function buildCapturePrompt({
   };
 }
 
-export function captureSnapshotToken({
-  state,
-  exchange,
-  visibleRecords = [],
-  lifecycleContextRecordIds = [],
-  visibleLocations = [],
-  spatialEnabled = false,
-  sourceMessageId,
-  sourceLineageKey,
-}) {
-  return hashText(stableStringify({
-    rollbackJournalSequence: Number(state?.rollbackJournalSequence) || 0,
-    lastCaptureMessage: state?.lastCaptureMessage ?? null,
-    sourceMessageId,
-    sourceLineageKey: String(sourceLineageKey || ''),
-    exchange: normalizeCaptureExchange(exchange).map(message => ({
-      messageId: message.messageId,
-      fingerprint: fingerprintMessage({ role: message.role, content: message.content }),
-    })),
-    visibleRecords: renderRecords(visibleRecords),
-    lifecycleContextRecordIds: (Array.isArray(lifecycleContextRecordIds) ? lifecycleContextRecordIds : [])
-      .map(value => String(value || '').trim())
-      .filter(Boolean)
-      .slice(0, CAPTURE_LIMITS.lifecycleVisibleRecords),
-    spatialEnabled: Boolean(spatialEnabled),
-    visibleLocations: spatialEnabled
-      ? (Array.isArray(visibleLocations) ? visibleLocations : []).slice(0, 8).map(item => ({
-        id: item.id,
-        name: item.name,
-        coordinate: item.coordinate || null,
-      }))
-      : [],
-  }));
-}
-
 function rejectedEntry(stage, reason, extra = {}) {
   return { stage, reason: String(reason || 'rejected'), ...extra };
 }
@@ -454,7 +400,7 @@ export function processCaptureResponse({
     );
   }
   const boundedRecords = boundedVisibleRecords(visibleRecords);
-  const rejected = wire.rejected.map(item => rejectedEntry('wire', item.reason, { code: item.code, index: item.index }));
+  const rejected = [];
   const accepted = [];
 
   for (let index = 0; index < wire.mutations.length; index += 1) {
@@ -548,8 +494,6 @@ export function processCaptureResponse({
       removedRelationIds: [],
       upsertedRoutes: [],
       removedRouteIds: [],
-      relationsChanged: false,
-      routesChanged: false,
     },
   };
   if (spatialEnabled) {
@@ -639,22 +583,12 @@ export async function runCaptureOperation({
     return { outcome: 'skipped', state: cloneState(state), providerCalls: 0, rejected: [], applied: [] };
   }
 
-  const snapshotToken = captureSnapshotToken({
-    state,
-    exchange,
-    visibleRecords,
-    lifecycleContextRecordIds,
-    visibleLocations,
-    spatialEnabled,
-    sourceMessageId,
-    sourceLineageKey,
-  });
   if (typeof isCurrent !== 'function') {
-    const error = new Error('automatic capture requires an isCurrent(snapshotToken) guard');
+    const error = new Error('automatic capture requires an isCurrent() guard');
     error.code = 'WORLD_STATE_CAPTURE_CURRENT_GUARD_REQUIRED';
     throw error;
   }
-  const current = () => isCurrent(snapshotToken);
+  const current = () => isCurrent();
   if (!current()) {
     // Recorded so a capture abandoned by a chat switch is listed as missed; a
     // swipe, edit or delete changes the message's lineage and drops the row.
@@ -669,7 +603,7 @@ export async function runCaptureOperation({
       detail: 'Operation became stale before the provider request was sent.',
       durationMs: Date.now() - startedAt,
     });
-    return { outcome: 'stale', state: cloneState(state), providerCalls: 0, rejected: [], applied: [], snapshotToken };
+    return { outcome: 'stale', state: cloneState(state), providerCalls: 0, rejected: [], applied: [] };
   }
 
   const options = buildCapturePrompt({
@@ -722,7 +656,6 @@ export async function runCaptureOperation({
       providerCalls,
       rejected: [rejectedEntry('provider', error?.message || error, { code: error?.code || 'PROVIDER_ERROR' })],
       applied: [],
-      snapshotToken,
       errorCode: error?.code || 'PROVIDER_ERROR',
       routeReceipt: receipt,
     };
@@ -747,7 +680,7 @@ export async function runCaptureOperation({
       responseChars: dispatched.text.length,
       durationMs: Date.now() - startedAt,
     });
-    return { outcome: 'stale', state: cloneState(state), providerCalls: 1, rejected: [], applied: [], snapshotToken };
+    return { outcome: 'stale', state: cloneState(state), providerCalls: 1, rejected: [], applied: [] };
   }
 
   try {
@@ -804,7 +737,6 @@ export async function runCaptureOperation({
       ...processed,
       outcome,
       providerCalls: 1,
-      snapshotToken,
       routeReceipt: dispatched.receipt,
       completenessHints: options.completenessHints?.length || 0,
     };
@@ -836,7 +768,6 @@ export async function runCaptureOperation({
       providerCalls: 1,
       rejected: [rejectedEntry('response', error.message, { code: error.code })],
       applied: [],
-      snapshotToken,
       errorCode: error.code,
       routeReceipt: dispatched.receipt,
     };

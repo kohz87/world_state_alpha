@@ -24,6 +24,7 @@ The shipped runtime is intentionally split by semantic ownership:
 ```text
 bootstrap.js               SillyTavern load shim
 index.js                   host orchestration/event wiring only
+common.js                  small shared helpers (copy, bounded strings, message text/role, clipping)
 state-core.js              canonical Reality normalization + reducer
 branch.js                  lineage, journal, exact rollback/rebase
 storage.js                 sidecar envelope/revision contract

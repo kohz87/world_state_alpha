@@ -27,8 +27,6 @@ import {
   resolveEffectiveLocations,
   resolveSpatialProfile,
   roundDecimal,
-  straightLineDistance,
-  unitsToKm,
 } from '../spatial-core.js';
 import { parseBaseMap } from '../spatial-base-map.js';
 import { loadBaseMapSource, storeBaseMapSource } from '../host-base-map.js';
@@ -45,12 +43,8 @@ import {
 } from '../spatial-injection.js';
 import {
   applySpatialManualMutation,
-  inspectSpatialLocation,
-  querySpatialLocations,
 } from '../spatial-manual.js';
 import {
-  containsWriterState,
-  extractWriterStateBlocks,
   sanitizeAssistantNarration,
 } from '../narrative-sanitizer.js';
 import { buildCapturePrompt, runCaptureOperation } from '../capture.js';
@@ -87,11 +81,7 @@ test('Phase 9 constants, schema versions, and limits', () => {
   assert.ok(SPATIAL_LIMITS.candidateCap >= 64);
 });
 
-test('Coordinate math: unitsToKm, kmToUnits, and roundDecimal', () => {
-  assert.equal(unitsToKm(1, 5), 5);
-  assert.equal(unitsToKm(3.2, 5), 16);
-  assert.equal(unitsToKm(0, 5), 0);
-
+test('Coordinate math: kmToUnits and roundDecimal', () => {
   assert.equal(kmToUnits(15, 5), 3);
   assert.equal(kmToUnits(2.5, 5), 0.5);
   assert.equal(kmToUnits(0, 5), 0);
@@ -102,15 +92,7 @@ test('Coordinate math: unitsToKm, kmToUnits, and roundDecimal', () => {
   assert.equal(roundDecimal(-5.55, 0.1), -5.5);
 });
 
-test('Coordinate math: straightLineDistance and directionFromDelta', () => {
-  // 3-4-5 triangle in units -> 5 units * 5km/unit = 25km
-  const dist = straightLineDistance({ x: 0, y: 0 }, { x: 3, y: 4 }, 5);
-  assert.equal(dist, 25);
-
-  // Invalid coords return null
-  assert.equal(straightLineDistance(null, { x: 1, y: 1 }), null);
-  assert.equal(straightLineDistance({ x: 'a', y: 0 }, { x: 1, y: 1 }), null);
-
+test('Coordinate math: directionFromDelta', () => {
   // Cardinal directions (+Y is North, +X is East)
   assert.equal(directionFromDelta(0, 10), 'north');
   assert.equal(directionFromDelta(0, -10), 'south');
@@ -343,8 +325,6 @@ test('Configured profile without unit scale cannot derive distance coordinates',
     trueNorthLocked: true,
   });
   assert.equal(profile.unitKm, null);
-  assert.equal(straightLineDistance({ x: 0, y: 0 }, { x: 3, y: 4 }), null);
-  assert.equal(unitsToKm(5), null);
   assert.equal(kmToUnits(5), null);
   assert.equal(deriveCoordinate({ x: 0, y: 0 }, {
     direction: 'east',
@@ -803,9 +783,6 @@ test('Narrative Sanitizer strips writer_state blocks completely from capture and
     '<!-- INVENTORY_BLOCK_V05 <Inventory>Imaginary Key | 1</Inventory> -->',
   ].join('\n');
 
-  assert.ok(containsWriterState(textWithWriterState));
-  assert.equal(extractWriterStateBlocks(textWithWriterState).length, 2);
-
   const sanitized = sanitizeAssistantNarration(textWithWriterState);
   assert.ok(!sanitized.toLowerCase().includes('writer_state'));
   assert.ok(!sanitized.includes('Shadowrealm'));
@@ -1027,12 +1004,11 @@ test('Spatial manual CRUD operations and rollback', () => {
   assert.equal(created.coordinate.authority, 'manual');
   assert.equal(created.coordinate.locked, true, 'manual coordinate locks by default');
 
-  const query = querySpatialLocations(state, { text: 'Sunspire' });
+  const query = state.spatial.locations.filter(location => location.name.includes('Sunspire'));
   assert.equal(query.length, 1);
-  const inspection = inspectSpatialLocation(state, query[0].id);
-  assert.equal(inspection.location.name, 'Sunspire Citadel');
-  assert.equal(inspection.evidence.length, 1);
-  assert.equal(inspection.evidence[0].claim, 'Player discovered citadel');
+  const evidence = query[0].evidenceIds.map(id => state.spatial.evidence[id]);
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].claim, 'Player discovered citadel');
 
   const unlockRes = applySpatialManualMutation({
     state,

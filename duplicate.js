@@ -10,6 +10,17 @@ function tokenSet(value) {
   return tokens;
 }
 
+// Every record duplicateSimilarity can score above zero shares one of these with the candidate: a whole
+// anchor or a summary word it counts. (Spaceless-script text is compared by pairs and is not covered.)
+export function duplicateLookupKeys(candidate) {
+  const texts = [candidate?.summary, ...(Array.isArray(candidate?.anchors) ? candidate.anchors : [])];
+  if (texts.some(value => SPACELESS_SCRIPT.test(String(value ?? '')))) return null;
+  return {
+    anchors: [...anchorSet(candidate)],
+    words: [...tokenSet(candidate?.summary || '')],
+  };
+}
+
 function jaccard(left, right) {
   if (!left.size && !right.size) return 0;
   let overlap = 0;

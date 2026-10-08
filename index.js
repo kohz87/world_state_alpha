@@ -38,7 +38,8 @@ import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelev
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
 import { activeCampaignPlaceCount, normalizeSpatialProfile, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
-import { clone, createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
+import { clone, messageText } from './common.js';
+import { createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
@@ -821,7 +822,9 @@ function getCachedState(chatKey = currentChatKey()) {
 // History entries are frozen and shared between copies, so an unchanged entry is the same object; only an
 // entry that is not is stringified. Stringifying every checkpoint snapshot and undo patch of both states
 // took most of a second per turn at a few hundred records.
-function sameHistoryEntries(left = [], right = []) {
+function sameHistoryEntries(leftEntries, rightEntries) {
+  const left = Array.isArray(leftEntries) ? leftEntries : [];
+  const right = Array.isArray(rightEntries) ? rightEntries : [];
   if (left.length !== right.length) return false;
   for (let index = 0; index < left.length; index += 1) {
     if (left[index] !== right[index] && stableStringify(left[index]) !== stableStringify(right[index])) return false;
@@ -829,12 +832,18 @@ function sameHistoryEntries(left = [], right = []) {
   return true;
 }
 
-function stateChanged(left, right) {
-  const a = normalizeState(left);
-  const b = normalizeState(right);
-  const rest = state => Object.fromEntries(Object.entries(state).filter(([key]) => !HISTORY_FIELDS.includes(key)));
-  if (stableStringify(rest(a)) !== stableStringify(rest(b))) return true;
-  return !HISTORY_FIELDS.every(key => sameHistoryEntries(a[key], b[key]));
+// Both sides are normalized states (the cache, a reducer or branch result), so they are compared as they are,
+// without a copy. `domainUnchanged`: the caller knows the canonical domain was carried over unchanged (a
+// reconcile that only extended or re-proved the lineage), so only the fields that can still differ are read.
+function stateChanged(left, right, { domainUnchanged = false } = {}) {
+  if (left === right) return false;
+  if (domainUnchanged) {
+    if (stableStringify(left?.recoveryRequired ?? null) !== stableStringify(right?.recoveryRequired ?? null)) return true;
+    return !sameHistoryEntries(left?.lineage, right?.lineage);
+  }
+  const rest = state => Object.fromEntries(Object.entries(state || {}).filter(([key]) => !HISTORY_FIELDS.includes(key)));
+  if (stableStringify(rest(left)) !== stableStringify(rest(right))) return true;
+  return !HISTORY_FIELDS.every(key => sameHistoryEntries(left?.[key], right?.[key]));
 }
 
 function pointerFor(chatKey) {
@@ -863,6 +872,8 @@ function waitForMs(delayMs) {
 async function recoverExistingSidecarPointer(chatKey, preferredPointer = null, {
   retryDeterministicMiss = false,
   reportCorrupt = false,
+  // The caller only reads the payload (it normalizes its own copy of the state before caching it).
+  readOnly = false,
 } = {}) {
   const deterministicPath = hostStorage.deterministicPath?.(makeSidecarPath(chatKey)) || '';
   const preferredPath = preferredPointer?.path ? String(preferredPointer.path) : '';
@@ -889,6 +900,7 @@ async function recoverExistingSidecarPointer(chatKey, preferredPointer = null, {
           adapter: hostStorage,
           pointer: { path: candidate.path },
           expectedChatKey: chatKey,
+          readOnly,
         });
       } catch (error) {
         // Load and refresh treat a damaged file (not JSON, or a checksum that no longer matches) like a
@@ -1730,7 +1742,7 @@ async function recheckProvisionalFreshHydration(chatKey = currentChatKey()) {
   const ownerEpoch = ownershipEpoch(chatKey);
   const pointer = pointerFor(chatKey);
   try {
-    const recovered = await recoverExistingSidecarPointer(chatKey, pointer, { retryDeterministicMiss: true });
+    const recovered = await recoverExistingSidecarPointer(chatKey, pointer, { retryDeterministicMiss: true, readOnly: true });
     assertOwnershipEpoch(chatKey, ownerEpoch);
 
     if (!recovered) {
@@ -1850,6 +1862,7 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   const recovered = await recoverExistingSidecarPointer(chatKey, preferredPointer, {
     retryDeterministicMiss: retryDeterministicMiss ?? Boolean(preferredPointer?.path),
     reportCorrupt: true,
+    readOnly: true,
   });
   assertOwnershipEpoch(chatKey, ownerEpoch);
 
@@ -2104,13 +2117,6 @@ function notifyBootstrapRequiredOnce(chatKey = currentChatKey()) {
   );
 }
 
-function messageText(message) {
-  if (typeof message?.mes === 'string') return message.mes;
-  if (typeof message?.content === 'string') return message.content;
-  if (typeof message?.text === 'string') return message.text;
-  return '';
-}
-
 function messageRole(message) {
   if (message?.is_system || message?.role === 'system') return 'system';
   if (message?.is_user || message?.role === 'user') return 'user';
@@ -2353,7 +2359,6 @@ function extendCurrentBranchFast(chatKey) {
   if (appended === null) return null;
   if (appended.length) {
     state.lineage.push(...appended);
-    state.recoveryRequired = null;
     stateEpochs.set(chatKey, epoch(chatKey) + 1);
   }
   locallyProvenTails.set(chatKey, lineageTailKey(state.lineage));
@@ -2439,7 +2444,7 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
       result = { ...result, state: resumed.state, action: 'parked-branch-resume', rolledBackBy: result.action };
     }
   }
-  const changed = stateChanged(state, result.state);
+  const changed = stateChanged(state, result.state, { domainUnchanged: ['same', 'forward-extension'].includes(result.action) });
   const passiveRebase = result.action === 'passive-capture-rebase';
   const semanticRebase = result.action === 'semantic-lineage-rebase';
   const lineageRebase = passiveRebase || semanticRebase;
@@ -3496,9 +3501,13 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const chat = Number.isInteger(savedResume?.params?.chatLength)
       ? liveAtStart.slice(0, savedResume.params.chatLength)
       : liveAtStart.slice();
-    if (!payload?.rebuild
-      && !window.confirm('Rebuild World State Alpha from this chat chronology? This is an explicit provider-backed recovery operation.')) return;
+    // The panel's rebuild sheet (or its Resume / Recapture button) is the confirmation, and it always names
+    // its request; an action without one starts nothing.
+    if (!payload?.rebuild || typeof payload.rebuild !== 'object') return;
 
+    // The rebuilt chat is a fixed copy, so its lineage is hashed once and shared by every check below.
+    let startChatLineage = null;
+    const chatLineageOnce = () => (startChatLineage ||= chatLineage(chat));
     const refuseResume = message => {
       rebuildResumes.delete(chatKey);
       notify('error', message);
@@ -3511,7 +3520,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         return;
       }
       // Refuse a stale resume before any reconcile, status, or provider side effect.
-      if (rebuildSnapshotToken({ state, chat }) !== savedResume.resume.snapshotToken) {
+      if (rebuildSnapshotToken({ state, chat, lineage: chatLineageOnce() }) !== savedResume.resume.snapshotToken) {
         refuseResume('The chat or World State changed since the rebuild failed, so it cannot resume. Start a new rebuild.');
         return;
       }
@@ -3581,7 +3590,8 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     if (recapture) {
       let preview;
       try {
-        preview = planChronologicalRebuild(chat, { maxBoundaries, startMessageId, includeHiddenMessages });
+        preview = planChronologicalRebuild(chat, { maxBoundaries, startMessageId, includeHiddenMessages, lineage: startChatLineage });
+        startChatLineage = preview.lineage;
       } catch (error) {
         notify('error', 'World State Alpha recapture could not start: ' + String(error?.message || error).slice(0, 320));
         return;
@@ -3620,6 +3630,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         maxBoundaries,
         startMessageId,
         includeHiddenMessages,
+        lineage: startChatLineage,
       });
     } catch (error) {
       const detail = String(error?.message || error || 'rebuild planning failed').slice(0, 320);
@@ -3630,7 +3641,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const sourceMessageId = Math.max(0, chat.length - 1);
     const totalBoundaries = rebuildPlan.metrics.assistantBoundaries;
     const startEpoch = epoch(chatKey);
-    const startLineage = chatLineage(chat);
+    const startLineage = rebuildPlan.lineage;
     const startTailKey = startLineage.length ? startLineage[startLineage.length - 1].lineageKey : '';
     const operationId = 'rebuild:' + sourceMessageId + ':' + startEpoch + ':' + startMessageId
       + (savedResume ? ':resume-' + savedResume.resume.fromMessageId + '-' + Date.now().toString(36) : '');
@@ -3747,6 +3758,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         baseMap,
         spatialProfile: resolveSpatialProfile(state.spatial, baseMap),
         resume: savedResume?.resume || null,
+        lineage: startLineage,
         onProgress: progress => {
           const previous = rebuildStatuses.get(chatKey) || {};
           rebuildStatuses.set(chatKey, {
@@ -4367,7 +4379,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
   };
 
   // `stepBaseMap` is the map the steps apply against (attaching a base map passes the new one).
-  const applySequence = (initialState, steps, stepBaseMap = baseMap) => {
+  // `lineage`: the chat's lineage, computed once by a caller applying several sequences to the same chat.
+  const applySequence = (initialState, steps, stepBaseMap = baseMap, lineage = steps.length > 1 ? chatLineage(chat) : null) => {
     let working = initialState;
     const combined = [];
     for (const step of steps) {
@@ -4379,6 +4392,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
         mutation: step.mutation,
         note: step.note,
         baseMap: stepBaseMap,
+        lineage,
       });
       if (res.outcome !== 'applied') {
         return { outcome: 'rejected', state: initialState, rejected: res.rejected || [] };
@@ -4634,8 +4648,11 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       });
     }
 
+    // Each step builds on the one before (the anchor is looked up once the location is saved): every step is
+    // applied once and the chat is fingerprinted once.
+    const saveLineage = chatLineage(chat);
+    const afterLocation = applySequence(state, steps.slice(0, 1), baseMap, saveLineage);
     if (anchorName) {
-      const afterLocation = applySequence(state, steps.slice(0, 1));
       if (afterLocation.outcome !== 'applied') {
         notify('error', 'Location update rejected.');
         return;
@@ -4668,7 +4685,9 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       });
     }
 
-    const res = applySequence(state, steps);
+    const res = afterLocation.outcome === 'applied'
+      ? applySequence(afterLocation.state, steps.slice(1), baseMap, saveLineage)
+      : afterLocation;
     if (res.outcome === 'applied') {
       // The panel leaves edit mode (dropping the draft) only once the save is committed.
       return await persistSpatialState(res.state, 'Saved location ' + (fd.name || payload.location.name));
@@ -4930,7 +4949,7 @@ export async function openWorldStatePanel() {
       return {
         chatMessages: chat.length,
         earliestPartialStart: earliestPartialRebuildStart(stateCache.get(chatKey)),
-        assistantBoundaries: chat.filter(message => messageRole(message) === 'assistant' && messageText(message).trim()).length,
+        assistantBoundaries: assistantBoundaryCount(chatKey, chat),
         defaultRebuildBoundaries: REBUILD_LIMITS.maxBoundaries,
         maxRebuildBoundaries: 4096,
         spatialEnabled: Boolean(getWorldStateSettings().spatialEnabled),
@@ -4954,6 +4973,19 @@ export async function openWorldStatePanel() {
     onClose: closeWorldStatePanel,
   });
   return true;
+}
+
+// The panel's assistant-reply count, recounted only when the chat changes (a chat event, another length or
+// array) or a second has passed (hiding a message sends no event), not on every panel refresh.
+let assistantBoundaryMemo = null;
+function assistantBoundaryCount(chatKey, chat) {
+  const events = chatEventCounts.get(chatKey) || 0;
+  const memo = assistantBoundaryMemo;
+  if (memo && memo.chat === chat && memo.chatKey === chatKey && memo.length === chat.length && memo.events === events
+    && Date.now() - memo.at < 1000) return memo.count;
+  const count = chat.filter(message => messageRole(message) === 'assistant' && messageText(message).trim()).length;
+  assistantBoundaryMemo = { chat, chatKey, length: chat.length, events, at: Date.now(), count };
+  return count;
 }
 
 function registerEvents() {

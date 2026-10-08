@@ -1,17 +1,18 @@
 import { chatLineage, commitMutationBoundary, firstLineageDivergence } from './branch.js';
 import { SPATIAL_AUTHORITIES, SPATIAL_LIMITS } from './constants.js';
-import { clone, cloneState, normalizeState } from './state-core.js';
+import { clone } from './common.js';
+import { cloneState, normalizeState, readableState } from './state-core.js';
 import {
   normalizeCoordinate,
   reduceSpatialMutations,
-  resolveEffectiveLocations,
 } from './spatial-core.js';
 
 function clean(value, max = 500) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
 
-function exactBoundary(chat, messageId, state = null) {
+// `knownLineage`: the chat's lineage when the caller already computed it for this same chat.
+function exactBoundary(chat, messageId, state = null, knownLineage = null) {
   if (!Array.isArray(chat) || chat.length === 0) {
     return null; // Root / no-message context
   }
@@ -25,7 +26,7 @@ function exactBoundary(chat, messageId, state = null) {
     error.code = 'WORLD_STATE_SPATIAL_MANUAL_HEAD_REQUIRED';
     throw error;
   }
-  const lineage = chatLineage(chat);
+  const lineage = Array.isArray(knownLineage) && knownLineage.length === chat.length ? knownLineage : chatLineage(chat);
   const previous = Array.isArray(state?.lineage) ? state.lineage : [];
   if (previous.length) {
     const divergence = firstLineageDivergence(previous, lineage);
@@ -39,47 +40,6 @@ function exactBoundary(chat, messageId, state = null) {
   return { boundary: lineage[messageId], lineage };
 }
 
-export function querySpatialLocations(state, {
-  baseMap = null,
-  text = '',
-  status = 'active',
-} = {}) {
-  const normalized = normalizeState(state);
-  const locations = resolveEffectiveLocations(normalized.spatial, baseMap);
-  const needle = clean(text, 120).toLowerCase();
-
-  return locations.filter(loc => {
-    if (status && loc.status !== status) return false;
-    if (!needle) return true;
-    return loc.name.toLowerCase().includes(needle)
-      || loc.type.toLowerCase().includes(needle)
-      || (loc.context && loc.context.toLowerCase().includes(needle));
-  });
-}
-
-export function inspectSpatialLocation(state, locationId, baseMap = null) {
-  const normalized = normalizeState(state);
-  const locations = resolveEffectiveLocations(normalized.spatial, baseMap);
-  const loc = locations.find(l => l.id === locationId || l.overrideId === locationId);
-  if (!loc) return null;
-
-  const evidence = (loc.evidenceIds || [])
-    .map(evId => normalized.spatial?.evidence?.[evId])
-    .filter(Boolean)
-    .map(item => clone(item));
-
-  const campaignId = loc.overrideId || loc.id;
-  const relations = (normalized.spatial?.relations || [])
-    .filter(r => r.fromId === loc.id || r.toId === loc.id
-      || r.fromId === campaignId || r.toId === campaignId);
-
-  return {
-    location: clone(loc),
-    evidence,
-    relations,
-  };
-}
-
 export function applySpatialManualMutation({
   state,
   chat = [],
@@ -88,13 +48,15 @@ export function applySpatialManualMutation({
   mutation,
   note = '',
   baseMap = null,
+  lineage = null,
 } = {}) {
-  const before = normalizeState(state, { chatKey });
+  // Only read: the reducer and the commit make their own copies.
+  const before = readableState(state, { chatKey });
   const owner = String(chatKey || before.chatKey || '');
   if (!owner) throw new Error('chatKey is required');
 
   const checked = Array.isArray(chat) && chat.length > 0
-    ? exactBoundary(chat, messageId, before)
+    ? exactBoundary(chat, messageId, before, lineage)
     : null;
   const boundary = checked?.boundary || null;
 
@@ -153,8 +115,8 @@ export function applySpatialManualMutation({
     };
   }
 
-  const nextState = cloneState(before);
-  nextState.spatial = reduced.spatial;
+  // The commit (or the root update below) copies this before it is kept.
+  const nextState = { ...before, spatial: reduced.spatial };
 
   if (boundary) {
     const committed = commitMutationBoundary(
@@ -179,6 +141,7 @@ export function applySpatialManualMutation({
     // Checkpoint entries are shared between state copies: replace the root entry, never edit it.
     const rootIndex = nextState.checkpoints.findIndex(c => c.messageId === -1);
     if (rootIndex >= 0) {
+      nextState.checkpoints = [...nextState.checkpoints];
       const rootCp = nextState.checkpoints[rootIndex];
       nextState.checkpoints[rootIndex] = { ...rootCp, snapshot: { ...rootCp.snapshot, spatial: clone(nextState.spatial) } };
     }

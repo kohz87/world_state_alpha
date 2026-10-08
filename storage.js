@@ -4,7 +4,8 @@ import {
   SIDECAR_FORMAT_VERSION,
 } from './constants.js';
 import { hashText, stableStringify } from './hash.js';
-import { clone, cloneState, normalizeState } from './state-core.js';
+import { clone } from './common.js';
+import { cloneState, normalizeState } from './state-core.js';
 
 export class RevisionConflictError extends Error {
   constructor(message = 'sidecar revision conflict', { currentRevision = null } = {}) {
@@ -67,15 +68,17 @@ function decodedCopy(result) {
   return { ...result, state: cloneState(result.state) };
 }
 
-export function decodeSidecar(text, { expectedChatKey = '' } = {}) {
+// `readOnly`: the caller only reads the result (a writer checking revisions and checksums), so the verified
+// result is shared instead of copied; it must never be modified.
+export function decodeSidecar(text, { expectedChatKey = '', readOnly = false } = {}) {
   const source = String(text || '');
   const known = VERIFIED_SIDECARS.find(item => item.text === source);
   if (known) {
     if (expectedChatKey && known.result.chatKey !== expectedChatKey) throw new SidecarCorruptionError('sidecar belongs to a different chat');
-    return decodedCopy(known.result);
+    return readOnly ? known.result : decodedCopy(known.result);
   }
   const result = verifySidecar(source, { expectedChatKey });
-  VERIFIED_SIDECARS.unshift({ text: source, result: decodedCopy(result) });
+  VERIFIED_SIDECARS.unshift({ text: source, result: readOnly ? result : decodedCopy(result) });
   VERIFIED_SIDECARS.length = Math.min(VERIFIED_SIDECARS.length, VERIFIED_SIDECAR_LIMIT);
   return result;
 }
@@ -111,12 +114,12 @@ function retryable(error) {
   return Boolean(error?.retryable) && error?.code !== 'WORLD_STATE_REVISION_CONFLICT';
 }
 
-export async function readSidecar({ adapter, pointer, expectedChatKey }) {
+export async function readSidecar({ adapter, pointer, expectedChatKey, readOnly = false }) {
   if (!pointer?.path) return null;
   if (!adapter || typeof adapter.read !== 'function') throw new Error('storage adapter.read is required');
   const text = await adapter.read(pointer.path);
   if (text === null || text === undefined) return null;
-  return decodeSidecar(text, { expectedChatKey });
+  return decodeSidecar(text, { expectedChatKey, readOnly });
 }
 
 export async function writeSidecar({
@@ -136,7 +139,7 @@ export async function writeSidecar({
   const expectedRevision = Math.max(0, Math.trunc(Number(pointer?.revision) || 0));
   const nextRevision = expectedRevision + 1;
   const body = encodeSidecar({ chatKey, state, revision: nextRevision, appVersion });
-  const target = decodeSidecar(body, { expectedChatKey: chatKey });
+  const target = decodeSidecar(body, { expectedChatKey: chatKey, readOnly: true });
   const attempts = Math.max(1, Math.trunc(Number(maxAttempts) || 1));
 
   const recoverCommittedWrite = async () => {
@@ -144,7 +147,7 @@ export async function writeSidecar({
     const currentText = await adapter.read(path);
     if (currentText === null || currentText === undefined) return null;
     try {
-      const current = decodeSidecar(currentText, { expectedChatKey: chatKey });
+      const current = decodeSidecar(currentText, { expectedChatKey: chatKey, readOnly: true });
       if (current.revision === nextRevision && current.checksum === target.checksum) {
         return { path, revision: nextRevision, checksum: target.checksum };
       }

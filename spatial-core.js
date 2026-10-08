@@ -6,34 +6,19 @@ import {
   SPATIAL_LIMITS,
   SPATIAL_LOCATION_STATUSES,
 } from './constants.js';
+import { clone, uniqueStrings as boundedUniqueStrings } from './common.js';
 import { canonicalText, deterministicId, stableStringify } from './hash.js';
-
-export function clone(value) {
-  if (typeof structuredClone === 'function') return structuredClone(value);
-  return JSON.parse(JSON.stringify(value));
-}
 
 // Idempotent: a value cut right after a space is trimmed again (base-map digests re-parse stored names).
 function boundedText(value, max) {
   return typeof value === 'string' ? value.trim().slice(0, max).trim() : '';
 }
 
+// The shared helper, bounding each item with the idempotent rule above.
+const uniqueStrings = (value, maxItems, maxChars) => boundedUniqueStrings(value, maxItems, maxChars, boundedText);
+
 function messageId(value) {
   return Number.isInteger(value) && value >= 0 ? value : null;
-}
-
-function uniqueStrings(value, maxItems, maxChars) {
-  if (!Array.isArray(value)) return [];
-  const out = [];
-  const seen = new Set();
-  for (const item of value) {
-    const text = boundedText(item, maxChars);
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
-    out.push(text);
-    if (out.length >= maxItems) break;
-  }
-  return out;
 }
 
 function boundedEvidenceRefs(items) {
@@ -438,12 +423,6 @@ export function validateBounds(x, y, bounds = null) {
   return x >= bounds.xMin && x <= bounds.xMax && y >= bounds.yMin && y <= bounds.yMax;
 }
 
-export function unitsToKm(units, unitKm = null) {
-  const scale = Number(unitKm);
-  if (!Number.isFinite(scale) || scale <= 0) return null;
-  return (Number(units) || 0) * scale;
-}
-
 export function kmToUnits(km, unitKm = null) {
   const scale = Number(unitKm);
   if (!Number.isFinite(scale) || scale <= 0) return null;
@@ -520,15 +499,6 @@ function effectiveCoordinateFor(id, effectiveById, spatial) {
   return campaign?.coordinate || null;
 }
 
-export function straightLineDistance(fromCoord, toCoord, unitKm = null) {
-  if (!fromCoord || !toCoord || !Number.isFinite(fromCoord.x) || !Number.isFinite(fromCoord.y)
-    || !Number.isFinite(toCoord.x) || !Number.isFinite(toCoord.y)) return null;
-  const dx = toCoord.x - fromCoord.x;
-  const dy = toCoord.y - fromCoord.y;
-  const units = Math.hypot(dx, dy);
-  return unitsToKm(units, unitKm);
-}
-
 export function deriveCoordinate(anchorCoord, {
   direction,
   distanceKm,
@@ -603,6 +573,16 @@ function baseLocationIndex(baseMap) {
 
 // A place name as capture and the reducer compare it.
 export const placeNameKey = canonicalText;
+
+// A stored place's name key, folded once per place object and name rather than once per proposal compared.
+const storedNameKeys = new WeakMap();
+function storedNameKey(loc) {
+  const hit = storedNameKeys.get(loc);
+  if (hit && hit.name === loc.name) return hit.key;
+  const key = placeNameKey(loc.name);
+  storedNameKeys.set(loc, { name: loc.name, key });
+  return key;
+}
 
 // name -> base entries with that name, built once per (read-only) base map like the id index. A name that
 // several base places share is ambiguous: `{ ambiguous: true }`, never an arbitrary one of them.
@@ -1056,7 +1036,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       if (!existingLoc && !targetId) {
         // Name consolidation for duplicates (punctuation-folded, as capture matches names).
         const normName = placeNameKey(name);
-        const existingCandidate = spatial.locations.find(l => l.status === 'active' && placeNameKey(l.name) === normName);
+        const existingCandidate = spatial.locations.find(l => l.status === 'active' && storedNameKey(l) === normName);
         if (existingCandidate) {
           existingLoc = existingCandidate;
         }
@@ -1561,8 +1541,6 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       removedRelationIds: [...removedRelationIds],
       upsertedRoutes,
       removedRouteIds: [],
-      relationsChanged: applied.some(item => /relation/.test(item.action) || item.action === 'merge_locations' || item.action === 'delete_location'),
-      routesChanged: applied.some(item => /route/.test(item.action) || item.action === 'merge_locations' || item.action === 'delete_location'),
     },
   };
 }
