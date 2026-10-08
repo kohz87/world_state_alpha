@@ -43,7 +43,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.50';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.51';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -2729,6 +2729,10 @@ async function handleUserMessage(messageId) {
       hasActiveDevelopments: Boolean(index?.backgroundDevelopmentSet?.size),
     });
     const isCurrent = operationGuard(chatKey, messageId);
+    // Background selection advances these two fields on the shared index before evolution answers.
+    const backgroundBefore = index
+      ? { backgroundCursor: index.backgroundCursor, backgroundElapsedBoundary: index.backgroundElapsedBoundary }
+      : null;
 
     let prepared;
     try {
@@ -2789,6 +2793,11 @@ async function handleUserMessage(messageId) {
       setCachedState(chatKey, committed, indexDelta
         ? { indexMode: 'delta', indexDelta, spatialIndexDelta: {} }
         : { indexMode: 'rebuild' });
+    } else if (prepared.evolution?.outcome !== 'skipped' && backgroundBefore && relevanceIndices.get(chatKey) === index) {
+      // Evolution ran but changed nothing (it failed, or was answered without a usable result): only the
+      // background cursor and boundary it advanced on the shared index are put back, so a later turn
+      // retries that catch-up; the rest of the index still matches the unchanged state.
+      Object.assign(index, backgroundBefore);
     }
     updatePrivateInjection();
     refreshPanel();

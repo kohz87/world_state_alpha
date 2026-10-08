@@ -12,6 +12,9 @@ const NON_CANONICAL_ASSISTANT_BLOCKS = Object.freeze([
 
 function stripTaggedBlock(text, tagName) {
   const escaped = String(tagName).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  // A self-closing tag (<writer_state mode="x" />) has no block: remove the tag alone, or the opening-tag
+  // pattern below would read it as a block left open and strip the whole reply after it.
+  text = text.replace(new RegExp('<' + escaped + '(?:\\s[^>]*)?\\/>', 'gi'), '');
   const pattern = new RegExp(
     '<' + escaped + '(?:\\s+[^>]*)?>[\\s\\S]*?(?:<\\/' + escaped + '>|$)',
     'gi',

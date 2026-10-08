@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.9.0-alpha.51 - Capture accuracy (deep pass on alpha.49)
+
+Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.50.
+
+### Fixed
+
+- **Quoted text matched inside words.** "inactive volcano" grounded "active volcano", "unarmed guards" grounded "armed guards", "old viking" grounded "king is dead". An excerpt must now match whole words; Chinese, Japanese and similar text still matches inside runs of letters.
+- **A rumour cited across two sentences could end a real condition.** "The tavern is loud. A drunk trader says the siege of Karsk is over" resolved the siege. A multi-sentence excerpt now counts as reported when every sentence about the change is reported. Narration of the change itself (a carter shaking down a farmer) still counts.
+- **Dialogue was read as narration** when a quotation continued into the next paragraph, or after an inch mark like 6'2". A quotation now stays open across a wrapped line until it closes, a blank line, or a new line opening with a quote; a quote mark after a number is an inch mark.
+- **Demands became facts.** "The duke's men demand that every vendor pay a doubled levy" created "every vendor pays a doubled levy". What is demanded, ordered, threatened or promised is now reported. The act of demanding is still narration, so an extortion shown in the scene is still captured.
+- **A self-closing tag wiped the reply.** `<writer_state mode="x" />` stripped everything after it, so the capture was skipped.
+- **Travel times counted as time passing.** "A week on foot", "three days on horseback", "leaves after two weeks of waiting" and "kills after three days" triggered catch-up. "Two days on, …" and "After three days, …" still count.
+- **A skip without an amount reached the model as zero days.**
+- **A failed background catch-up was never retried** for that time skip.
+- **An evolution asking for 7–8 developments always failed** after the model call. It now asks for at most the 6 the response may carry.
+- **Merged rebuild evidence was labelled as live narration.**
+
+### Architecture
+
+- Core contract updated for each rule above. No durable format change (schema 2; envelopes 1).
+
+### Validation
+
+- New `tests/audit-alpha51.test.js`; each case fails on the previous release. The existing extortion and dialogue-evidence tests pass unchanged.
+- Live in SillyTavern with a stub model returning these mutations. On alpha.50:
+  - the "active volcano", the cross-sentence rumour, the quotation that ran on to the next paragraph and the levy demand each created or resolved a record;
+  - the self-closing tag dropped the capture;
+  - a travel time started a catch-up call.
+
+  On alpha.51 none of these happen, the bridge is captured, and "three weeks later" still starts catch-up.
+- Not verified: a real model. Attribution and elapsed rules are wording heuristics; how they fare in real play remains to be seen.
+
+### Code review hardening
+
+- A demand, order or threat marks only what it governs: the same clause, within four words of the verb. "Under the captain's orders, the bridge burned" and "The inn offers no rooms; the city is under quarantine" stay narration.
+- A quotation wrapped onto the next line stays dialogue, and so does an inch mark inside a quotation.
+- A sentence that shares only a place name with the summary no longer counts as "about the change", so "Smoke rises above Karsk" cannot make a rumour that the siege is over into narration.
+- Summaries such as "the guards are demanding a toll" keep their reported status; a test now checks that every demand/order/threat verb is also a reported-information word.
+- "*After three days*" in emphasis and "Two days on" at the end of a line or before an ellipsis count as time passing. The opening-of-clause rule for "after N days" now applies everywhere elapsed time is read, including "after a day" day steps, so "kills after a day" is not a day step.
+- A failed background catch-up puts back only its catch-up position instead of rebuilding the whole relevance index.
+
 ## 0.9.0-alpha.50 - Data loss and host lifecycle (deep pass on alpha.49)
 
 Each fix was reproduced first and has a regression test that fails on 0.9.0-alpha.49.
