@@ -623,6 +623,12 @@ export function baseLocationByName(baseMap, name) {
   return index.get(key) || null;
 }
 
+// The places a rebuild reports (its progress and its result alike): active campaign places, never archived
+// places or read-only base-map places.
+export function activeCampaignPlaceCount(spatial) {
+  return (Array.isArray(spatial?.locations) ? spatial.locations : []).filter(location => location?.status === 'active').length;
+}
+
 // name -> base route with that name, built once per base map (no scan on a turn).
 const baseRouteNameIndexes = new WeakMap();
 export function baseRouteByName(baseMap, name) {

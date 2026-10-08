@@ -3,7 +3,7 @@ import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, isNarratorMessage, 
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
-import { applySpatialUndoPatch, compactSpatialEvidence, createSpatialState, normalizeSpatialState, placeNameKey } from './spatial-core.js';
+import { activeCampaignPlaceCount, applySpatialUndoPatch, compactSpatialEvidence, createSpatialState, normalizeSpatialState, placeNameKey } from './spatial-core.js';
 import { canonicalDomain, clone, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
@@ -650,7 +650,7 @@ export async function runManualRebuild({
         providerCalls,
         ...boundary,
         currentRecords: (candidate.records || []).filter(record => record?.status === 'active').length,
-        places: (candidate.spatial?.locations || []).filter(location => location?.status !== 'archived').length,
+        places: activeCampaignPlaceCount(candidate.spatial),
       });
     } catch {
       // Progress reporting is presentation-only and must never fail an atomic rebuild.

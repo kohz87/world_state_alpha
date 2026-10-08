@@ -37,13 +37,13 @@ import { buildRelevanceIndex, selectLifecycleCandidates, selectRelevantRecords, 
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
-import { normalizeSpatialProfile, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
+import { activeCampaignPlaceCount, normalizeSpatialProfile, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 import { clone, createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.57';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.58';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -3302,6 +3302,7 @@ function closeWorldStatePanel() {
   panelController = null;
   panelRoot?.remove?.();
   panelRoot = null;
+  globalThis.document?.body?.classList?.remove('wsa-panel-open');
   panelChatKey = 'no-chat';
 }
 
@@ -3699,7 +3700,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       applied: priorTotals.applied,
       rejected: priorTotals.rejected,
       currentRecords: (state.records || []).filter(record => record?.status === 'active').length,
-      places: resolveEffectiveLocations(state.spatial, baseMap).length,
+      places: activeCampaignPlaceCount(state.spatial),
       startedAt: Date.now(),
       detail: 'Rebuilding ' + rangeLabel
         + (includeHiddenMessages
@@ -4058,7 +4059,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     passiveCaptureRebaseCandidates.delete(chatKey);
     forgetBranchContinuations(chatKey);
     const currentCount = (result.state.records || []).filter(record => record?.status === 'active').length;
-    const placeCount = resolveEffectiveLocations(result.state.spatial, baseMap).length;
+    const placeCount = activeCampaignPlaceCount(result.state.spatial);
     rebuildStatuses.set(chatKey, {
       ...(rebuildStatuses.get(chatKey) || {}),
       phase: 'completed',
@@ -4493,12 +4494,18 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       notify('warning', 'A place named ' + existingPlace.name + ' already exists. Open it in Places to edit it instead.');
       return;
     }
-    const type = window.prompt('Location type (e.g. inn, hamlet, ford, ruin):', 'landmark') || 'landmark';
+    // Cancel at any prompt cancels the whole add (an empty answer is still a blank field).
+    const typeRaw = window.prompt('Location type (e.g. inn, hamlet, ford, ruin):', 'landmark');
+    if (typeRaw === null) return;
+    const type = typeRaw.trim() || 'landmark';
     const xRaw = window.prompt('Coordinate X (leave blank if unknown):', '');
+    if (xRaw === null) return;
     const yRaw = window.prompt('Coordinate Y (leave blank if unknown):', '');
-    const context = window.prompt('Region / context (optional):', '') || '';
-    const x = xRaw !== null && xRaw.trim() !== '' ? Number(xRaw) : null;
-    const y = yRaw !== null && yRaw.trim() !== '' ? Number(yRaw) : null;
+    if (yRaw === null) return;
+    const contextRaw = window.prompt('Region / context (optional):', '');
+    if (contextRaw === null) return;
+    const x = xRaw.trim() !== '' ? Number(xRaw) : null;
+    const y = yRaw.trim() !== '' ? Number(yRaw) : null;
     if ((x !== null) !== (y !== null) || (x !== null && (!Number.isFinite(x) || !Number.isFinite(y)))) {
       notify('error', 'Provide both X and Y as numbers, or leave both blank.');
       return;
@@ -4511,8 +4518,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       mutation: {
         action: 'upsert_location',
         name: name.trim(),
-        type: type.trim() || 'landmark',
-        context: context.trim(),
+        type,
+        context: contextRaw.trim(),
         coordinate: {
           x,
           y,
@@ -4643,11 +4650,15 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
         notify('error', 'A location cannot be relative to itself.');
         return;
       }
+      // A free-text direction kept as stated from the other place ("the Weir is upstream of here") keeps that
+      // orientation: written from this place it would say the opposite.
+      const statedFromAnchorSide = Boolean(keptAnchor && shownRelation.freeText && shownRelation.selectedIsTarget === false
+        && (fd.direction || '') === (shownRelation.direction || ''));
       steps.push({
         mutation: {
           action: 'upsert_relation',
-          fromId: anchor.id,
-          toId: selectedEffectiveId,
+          fromId: statedFromAnchorSide ? selectedEffectiveId : anchor.id,
+          toId: statedFromAnchorSide ? anchor.id : selectedEffectiveId,
           direction: fd.direction || '',
           distanceKm: Number.isFinite(fd.distanceKm) ? fd.distanceKm : null,
           distanceMode: fd.distanceMode || 'unspecified',
@@ -4711,8 +4722,9 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       note: 'Archived campaign location',
       baseMap,
     });
+    // True only once saved: the panel closes the edit form (and its unsaved edits) only then.
     if (res.outcome === 'applied') {
-      await persistSpatialState(res.state, 'Archived location ' + payload.location.name);
+      return persistSpatialState(res.state, 'Archived location ' + payload.location.name);
     } else {
       notify('error', 'Archive rejected: ' + (res.rejected?.[0]?.reason || 'invalid archive'));
     }
@@ -4756,7 +4768,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       baseMap,
     });
     if (res.outcome === 'applied') {
-      await persistSpatialState(res.state, 'Merged duplicate into ' + target.name);
+      return persistSpatialState(res.state, 'Merged duplicate into ' + target.name);
     } else {
       notify('error', 'Merge rejected: ' + (res.rejected?.[0]?.reason || 'invalid merge'));
     }
@@ -4779,7 +4791,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       baseMap,
     });
     if (res.outcome === 'applied') {
-      await persistSpatialState(res.state, 'Deleted location ' + payload.location.name);
+      return persistSpatialState(res.state, 'Deleted location ' + payload.location.name);
     } else {
       notify('error', 'Delete rejected: ' + (res.rejected?.[0]?.reason || 'invalid delete'));
     }
@@ -4900,6 +4912,8 @@ export async function openWorldStatePanel() {
   panelRoot = document.createElement('div');
   panelRoot.id = WORLD_STATE_PANEL_ROOT_ID;
   document.body.appendChild(panelRoot);
+  // Lets SillyTavern's toasts (panel errors included) show above the panel while it is open.
+  document.body.classList.add('wsa-panel-open');
   panelController = createWorldStateUiController({
     root: panelRoot,
     // The panel only reads it (its model is built from a private copy), so the cached state is passed as is.
