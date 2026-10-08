@@ -92,9 +92,15 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     return rows.length;
   }
 
+  // The newest rows, for display.
   function records(chatKey, requested = max) {
     const rows = byChat.get(clean(chatKey, 500)) || [];
     return clone(rows.slice(-Math.max(1, Math.min(max, int(requested, max)))));
+  }
+
+  // Every kept row, the pinned unrecovered failures beyond the display limit included: what is saved.
+  function allRecords(chatKey) {
+    return clone(byChat.get(clean(chatKey, 500)) || []);
   }
 
   // The few fields missed-capture detection reads, without copying response JSON.
@@ -120,7 +126,7 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     };
   }
 
-  return Object.freeze({ record, records, recoveryRows, merge, clear, bundle });
+  return Object.freeze({ record, records, allRecords, recoveryRows, merge, clear, bundle });
 }
 
 // A rebuild operation id is `rebuild:<sourceMessageId>:<epoch>:<startMessageId>[:resume-…]`.

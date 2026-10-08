@@ -24,7 +24,7 @@ test('A09/A10: a rename clears the old log only after the new owner saved it; a 
   assert.match(save, /if \(!snapshot\) unsavedOperationRows\.delete\(chatKey\);\s*return true;/);
   const postpone = source.slice(source.indexOf('function postponeOperationLogSave('), source.indexOf('function saveOperationLog('));
   // Out of retries, even a cached chat's rows are parked so a later eviction cannot drop them.
-  assert.match(postpone, /if \(attempt >= OPERATION_LOG_SAVE_RETRIES\) \{\s*const rows = snapshot \|\| diagnosticStore\.records\(chatKey\);/);
+  assert.match(postpone, /if \(attempt >= OPERATION_LOG_SAVE_RETRIES\) \{\s*const rows = snapshot \|\| diagnosticStore\.allRecords\(chatKey\);/);
 });
 
 test('A11: trimming keeps every still-unrecovered capture failure, however many', () => {

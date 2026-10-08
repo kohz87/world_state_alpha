@@ -185,7 +185,7 @@ test('SillyTavern host storage detects revision conflict before upload', async (
     expectedRevision: 2,
     body: next,
   });
-  assert.deepEqual(result, { conflict: true });
+  assert.deepEqual(result, { conflict: true, currentRevision: 4 });
   assert.equal(uploads, 0);
 });
 
@@ -1170,7 +1170,7 @@ test('a local tail delete or regenerate rolls back instead of being mistaken for
   const fastBody = source.slice(fastStart, source.indexOf('async function reconcileCurrentBranch(', fastStart));
   assert.match(fastBody, /if \(appended === null\) return null;[\s\S]*locallyProvenTails\.set\(chatKey, lineageTailKey\(state\.lineage\)\);/);
 
-  assert.match(source, /localChatIsBehindState\(recoveredState\)\s*&& locallyProvenTails\.get\(chatKey\) !== lineageTailKey\(recoveredState\.lineage\);/);
+  assert.match(source, /localChatIsBehindState\(recoveredState, localLineage\)\s*&& locallyProvenTails\.get\(chatKey\) !== lineageTailKey\(recoveredState\.lineage\);/);
 
   const forgetStart = source.indexOf('function forgetBranchContinuations(');
   assert.match(source.slice(forgetStart, forgetStart + 300), /locallyProvenTails\.delete\(chatKey\)/);
@@ -1191,7 +1191,7 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   assert.match(source, /addEventListener\?\.\('pagehide', \(\) => flushAllOperationLogs\(\)\)/);
   assert.match(source, /return 'world-state-alpha-ops-' \+ hashText\(String\(chatKey\)\) \+ '\.json';/);
   assert.match(source, /raw\.format !== OPERATION_LOG_FORMAT[\s\S]{0,120}raw\.chatKey !== chatKey/);
-  assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.records\(chatKey\), OPERATION_LOG_LIMIT\);/);
+  assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.allRecords\(chatKey\), OPERATION_LOG_LIMIT\);/);
   assert.match(source, /return withWorldStateFileLock\(operationLogFile\(chatKey\), task\);/);
   assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return false;/);
   assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);
@@ -1224,7 +1224,7 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
   const consumeAt = body.indexOf('rebuildResumes.delete(chatKey);\n    const priorTotals');
   assert.ok(consumeAt > body.indexOf('attached Spatial base map is unavailable') && consumeAt < body.indexOf('runManualRebuild({'));
   const cacheStart = source.indexOf('function setCachedState(');
-  assert.match(source.slice(cacheStart, cacheStart + 400), /rebuildResumes\.delete\(chatKey\)/);
+  assert.match(source.slice(cacheStart, cacheStart + 700), /rebuildResumes\.delete\(chatKey\)/);
   assert.match(body, /resume: savedResume\?\.resume \|\| null,/);
 
   // Only a genuine failure that is still current leaves a resume point.
@@ -1256,7 +1256,7 @@ test('a first write to a logical sidecar path is revision-checked against the de
   const firstBody = encodeSidecar({ chatKey: 'chat:a:first', state: createState('chat:a:first'), revision: 1 });
 
   // Another device already saved revision 3: a blind first write would replace it with revision 1.
-  assert.deepEqual(await adapter.write({ path: logical, expectedRevision: 0, body: firstBody }), { conflict: true });
+  assert.deepEqual(await adapter.write({ path: logical, expectedRevision: 0, body: firstBody }), { conflict: true, currentRevision: 3 });
   assert.deepEqual(calls, [[physical, 'GET']]);
 
   // With no sidecar on the server the first write goes through.

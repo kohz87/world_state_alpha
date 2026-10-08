@@ -7,8 +7,9 @@ import {
   normalizeSpatialRoute,
 } from './spatial-core.js';
 
+// Idempotent: a value cut right after a space is trimmed again, so re-parsing a stored map changes nothing.
 function boundedText(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+  return typeof value === 'string' ? value.trim().slice(0, max).trim() : '';
 }
 
 function normalizeBaseCoordinate(item) {
@@ -93,6 +94,7 @@ export function parseBaseMap(rawInput) {
   }
   const routes = [];
   const routeIds = new Set();
+  const routeNameCounts = new Map();
   for (let index = 0; index < (Array.isArray(raw.routes) ? raw.routes : []).length; index += 1) {
     const item = raw.routes[index];
     if (!item || typeof item !== 'object') continue;
@@ -100,7 +102,13 @@ export function parseBaseMap(rawInput) {
     const routeName = boundedText(item.name, SPATIAL_LIMITS.nameChars);
     if (!routeName) continue;
 
-    const routeId = boundedText(item.id, 120) || deterministicId('brt', [id, routeName]);
+    // As for places: without ids, later routes of a repeated name are told apart by their order among them.
+    let routeId = boundedText(item.id, 120);
+    if (!routeId) {
+      const seen = routeNameCounts.get(routeName) || 0;
+      routeNameCounts.set(routeName, seen + 1);
+      routeId = deterministicId('brt', seen ? [id, routeName, seen] : [id, routeName]);
+    }
     const endpoints = Array.isArray(item.endpoints)
       ? item.endpoints.filter(value => locationIds.has(String(value || '').trim()))
       : [];

@@ -37,13 +37,13 @@ import { buildRelevanceIndex, selectLifecycleCandidates, selectRelevantRecords, 
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
-import { normalizeSpatialProfile, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
+import { normalizeSpatialProfile, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 import { clone, createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.54';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.55';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -67,6 +67,10 @@ const DEFAULTS = Object.freeze({
 
 const stateCache = new Map();
 const relevanceIndices = new Map();
+// Chats whose saved sidecar could not be read: chat key -> that file's path, replaceable by a recovery write.
+const corruptSidecars = new Map();
+// Counts canonical state replacements per chat (not lineage-only extensions): what a running rebuild compares.
+const canonicalGenerations = new Map();
 const spatialRelevanceIndices = new Map();
 const baseMapCache = new Map();
 const loadedChats = new Set();
@@ -265,7 +269,7 @@ function operationLogBody(chatKey, operations) {
 function postponeOperationLogSave(chatKey, snapshot, attempt) {
   const delay = OPERATION_LOG_SAVE_DELAY_MS * (attempt + 2);
   if (attempt >= OPERATION_LOG_SAVE_RETRIES) {
-    const rows = snapshot || diagnosticStore.records(chatKey);
+    const rows = snapshot || diagnosticStore.allRecords(chatKey);
     unsavedOperationRows.set(chatKey, mergeOperationRows(unsavedOperationRows.get(chatKey) || [], rows, OPERATION_LOG_LIMIT));
     return;
   }
@@ -311,7 +315,7 @@ async function saveOperationLogLocked(chatKey, snapshot, attempt) {
   }
   const parked = unsavedOperationRows.get(chatKey);
   if (!snapshot && parked) diagnosticStore.merge(chatKey, parked);
-  const rows = mergeOperationRows(server, snapshot || diagnosticStore.records(chatKey), OPERATION_LOG_LIMIT);
+  const rows = mergeOperationRows(server, snapshot || diagnosticStore.allRecords(chatKey), OPERATION_LOG_LIMIT);
   try {
     await hostStorage.uploadJsonFile(operationLogFile(chatKey), operationLogBody(chatKey, rows));
   } catch (error) {
@@ -342,7 +346,7 @@ function flushOperationLog(chatKey) {
   if (!operationLogTimers.has(chatKey)) return;
   clearTimeout(operationLogTimers.get(chatKey));
   operationLogTimers.delete(chatKey);
-  void saveOperationLog(chatKey, diagnosticStore.records(chatKey));
+  void saveOperationLog(chatKey, diagnosticStore.allRecords(chatKey));
 }
 
 // Best-effort save of every pending Operations log before the page is hidden or unloaded.
@@ -393,7 +397,7 @@ function retireOperationLog(chatKey, successorKey = '', attempt = 0) {
           console.warn('[World State Alpha] renamed chat\'s Operations log could not be read; retrying before it is cleared.', error);
           return null;
         }));
-        const rows = mergeOperationRows(mergeOperationRows(server || [], parked, OPERATION_LOG_LIMIT), diagnosticStore.records(chatKey), OPERATION_LOG_LIMIT);
+        const rows = mergeOperationRows(mergeOperationRows(server || [], parked, OPERATION_LOG_LIMIT), diagnosticStore.allRecords(chatKey), OPERATION_LOG_LIMIT);
         // The old log is cleared only once the live owner's log durably holds its rows; otherwise both
         // are kept (a failed save retries on its own) and the retirement is retried.
         const target = liveOperationLogKey(successorKey);
@@ -777,7 +781,10 @@ function setCachedState(chatKey, state, {
   indexDelta = null,
   spatialIndexDelta = null,
   sourcePointer = undefined,
+  // A forward lineage extension of the same canonical state (the chat grew): it is not new canonical state.
+  lineageOnly = false,
 } = {}) {
+  if (!lineageOnly) canonicalGenerations.set(chatKey, (canonicalGenerations.get(chatKey) || 0) + 1);
   // Any new canonical state makes a failed rebuild's resume point stale.
   rebuildResumes.delete(chatKey);
   const normalized = normalizeState(state, { strictSchema: true, chatKey });
@@ -855,6 +862,7 @@ function waitForMs(delayMs) {
 
 async function recoverExistingSidecarPointer(chatKey, preferredPointer = null, {
   retryDeterministicMiss = false,
+  reportCorrupt = false,
 } = {}) {
   const deterministicPath = hostStorage.deterministicPath?.(makeSidecarPath(chatKey)) || '';
   const preferredPath = preferredPointer?.path ? String(preferredPointer.path) : '';
@@ -875,11 +883,20 @@ async function recoverExistingSidecarPointer(chatKey, preferredPointer = null, {
 
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
       if (delays[attempt] > 0) await waitForMs(delays[attempt]);
-      const payload = await readSidecar({
-        adapter: hostStorage,
-        pointer: { path: candidate.path },
-        expectedChatKey: chatKey,
-      });
+      let payload;
+      try {
+        payload = await readSidecar({
+          adapter: hostStorage,
+          pointer: { path: candidate.path },
+          expectedChatKey: chatKey,
+        });
+      } catch (error) {
+        // Load and refresh treat a damaged file (not JSON, or a checksum that no longer matches) like a
+        // missing one: the chat waits for an explicit recovery that may replace it. A readable file this
+        // version cannot use (a newer World State's) and every other caller still fail closed.
+        if (reportCorrupt && error?.damaged === true) return { corrupt: true, path: candidate.path, error };
+        throw error;
+      }
       if (payload?.state) {
         return {
           pointer: pointerFromPayload(candidate.path, payload),
@@ -974,8 +991,12 @@ async function persistState(chatKey, state = stateCache.get(chatKey), {
     state,
     pointer,
     appVersion: WORLD_STATE_ALPHA_VERSION,
+    // Only an explicit recovery (Full rebuild, import, reset) may replace a damaged sidecar, and only the
+    // file recorded as damaged.
+    replaceCorrupt: baselineRecoveryWrite ? corruptSidecars.get(chatKey) || '' : '',
   });
   assertOwnershipEpoch(chatKey, ownerEpoch);
+  corruptSidecars.delete(chatKey);
 
   settings.dataFiles[chatKey] = committed;
   observedServerPointers.set(chatKey, structuredClone(committed));
@@ -1009,7 +1030,18 @@ async function loadChatState(chatKey) {
     };
   }
 
-  const recovered = await recoverExistingSidecarPointer(chatKey, pointer, { retryDeterministicMiss: true });
+  const recovered = await recoverExistingSidecarPointer(chatKey, pointer, { retryDeterministicMiss: true, reportCorrupt: true });
+  if (recovered?.corrupt) {
+    return {
+      state: seedRootCheckpoint(createState(chatKey)),
+      pointer: pointer?.path ? structuredClone(pointer) : null,
+      repairPointer: false,
+      tombstoned: false,
+      source: 'corrupt-sidecar',
+      corruptPath: recovered.path,
+      corruptReason: String(recovered.error?.message || 'unreadable sidecar'),
+    };
+  }
   if (!recovered) {
     return {
       state: seedRootCheckpoint(createState(chatKey)),
@@ -1053,6 +1085,7 @@ function clearChatRuntimeState(chatKey) {
   bootstrapRequiredChats.delete(chatKey);
   bootstrapWarnings.delete(chatKey);
   branchDirtyChats.delete(chatKey);
+  corruptSidecars.delete(chatKey);
   passiveCaptureRebaseCandidates.delete(chatKey);
   forgetBranchContinuations(chatKey);
   chatCacheTouches.delete(chatKey);
@@ -1591,13 +1624,30 @@ async function ensureChatStateLoaded(chatKey = currentChatKey()) {
         assertOwnershipEpoch(chatKey, ownerEpoch);
       }
 
-      setCachedState(chatKey, loaded.state, { sourcePointer: loaded.pointer });
-      if (loaded.pointer?.path) observedServerPointers.set(chatKey, structuredClone(loaded.pointer));
+      // The empty stand-in for a sidecar that could not be read is not that revision: it records no hydrated
+      // pointer, so a later read of the real sidecar is adopted rather than taken as already current.
+      const standIn = loaded.source === 'missing-sidecar' || loaded.source === 'corrupt-sidecar';
+      setCachedState(chatKey, loaded.state, { sourcePointer: standIn ? null : loaded.pointer });
+      if (loaded.pointer?.path && !standIn) observedServerPointers.set(chatKey, structuredClone(loaded.pointer));
       else observedServerPointers.delete(chatKey);
       hydrationSources.set(chatKey, loaded.source || 'unknown');
-      if (loaded.source === 'fresh' || loaded.source === 'missing-sidecar') {
+      if (loaded.source === 'corrupt-sidecar') {
+        corruptSidecars.set(chatKey, loaded.corruptPath);
+        diagnosticStore.record(chatKey, {
+          operationId: 'hydrate:corrupt',
+          label: 'hydration',
+          sourceMessageId: null,
+          outcome: 'corrupt-sidecar',
+          code: 'WORLD_STATE_CORRUPT_SIDECAR',
+          detail: 'The saved World State file could not be read (' + loaded.corruptReason.slice(0, 160) + '). Nothing is written until a Full chat rebuild, an import or a reset replaces it.',
+          providerCalls: 0,
+        });
+      } else {
+        corruptSidecars.delete(chatKey);
+      }
+      if (loaded.source === 'fresh' || standIn) {
         provisionalFreshChats.add(chatKey);
-        if (loaded.source === 'missing-sidecar' || chatHasEstablishedHistory(chatKey)) {
+        if (standIn || chatHasEstablishedHistory(chatKey)) {
           bootstrapRequiredChats.add(chatKey);
         }
       } else {
@@ -1742,8 +1792,14 @@ function lineageIsPrefix(prefix = [], full = []) {
   return left.every((entry, index) => entry?.lineageKey === right[index]?.lineageKey);
 }
 
-function localChatIsBehindState(state, chat = getContext().chat || []) {
-  const localLineage = chatLineage(chat);
+// The adopted state's lineage is not a prefix of this chat, nor this chat of it: it was captured on another branch.
+function localChatDivergesFromState(state, localLineage) {
+  const storedLineage = Array.isArray(state?.lineage) ? state.lineage : [];
+  if (!storedLineage.length) return false;
+  return !lineageIsPrefix(storedLineage, localLineage) && !lineageIsPrefix(localLineage, storedLineage);
+}
+
+function localChatIsBehindState(state, localLineage) {
   const storedLineage = Array.isArray(state?.lineage) ? state.lineage : [];
   return storedLineage.length > localLineage.length && lineageIsPrefix(localLineage, storedLineage);
 }
@@ -1754,6 +1810,8 @@ function localChatIsBehindState(state, chat = getContext().chat || []) {
 async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   reason = 'boundary',
   retryDeterministicMiss = null,
+  // After a write conflict: the revision that write found on the server, when known.
+  conflictRevision = null,
 } = {}) {
   if (!chatKey || chatKey === 'no-chat' || !hostHydrationReady) {
     return { outcome: 'skipped', changed: false };
@@ -1773,12 +1831,41 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
 
   const recovered = await recoverExistingSidecarPointer(chatKey, preferredPointer, {
     retryDeterministicMiss: retryDeterministicMiss ?? Boolean(preferredPointer?.path),
+    reportCorrupt: true,
   });
   assertOwnershipEpoch(chatKey, ownerEpoch);
 
   if (epoch(chatKey) !== startStateEpoch
     || sidecarPointerToken(pointerFor(chatKey)) !== startSettingsToken) {
     return { outcome: 'raced', changed: false };
+  }
+
+  if (recovered?.corrupt) {
+    // Same as a missing sidecar: keep what is cached, write nothing until an explicit recovery replaces it.
+    // The cache no longer stands for a server revision: a damaged file is replaced only by a baseline that
+    // restarts at revision 1, so a later readable file is adopted rather than ignored as an older read.
+    corruptSidecars.set(chatKey, recovered.path);
+    observedServerPointers.delete(chatKey);
+    hydratedPointers.delete(chatKey);
+    bootstrapRequiredChats.add(chatKey);
+    branchDirtyChats.add(chatKey);
+    hydrationSources.set(chatKey, 'server-corrupt:' + reason);
+    diagnosticStore.record(chatKey, {
+      operationId: 'freshness:corrupt:' + reason + ':' + Date.now(),
+      label: 'hydration',
+      sourceMessageId: null,
+      outcome: 'corrupt-sidecar',
+      code: 'WORLD_STATE_CORRUPT_SIDECAR',
+      detail: 'The saved World State file could not be read during a ' + reason + ' freshness check ('
+        + String(recovered.error?.message || 'unreadable sidecar').slice(0, 160)
+        + '). Cached state was kept; nothing is written until a Full chat rebuild, an import or a reset replaces it.',
+      providerCalls: 0,
+    });
+    if (currentChatKey() === chatKey) {
+      clearPrivatePrompt();
+      notifyBootstrapRequiredOnce(chatKey);
+    }
+    return { outcome: 'corrupt', changed: false };
   }
 
   if (!recovered?.payload?.state) {
@@ -1807,9 +1894,18 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
 
   const remotePointer = recovered.pointer;
   observedServerPointers.set(chatKey, structuredClone(remotePointer));
+  // The file read back is a readable sidecar again.
+  corruptSidecars.delete(chatKey);
   const hydratedPointer = hydratedPointerFor(chatKey);
 
+  // A read older than the working copy is ignored as a stale read, except right after this session's write
+  // conflicted on the revision now read (or a newer one): the remembered revision is gone, and the file was
+  // started over (a baseline restarted at revision 1). A read older than what the conflict saw stays stale.
+  const conflictConfirmsRead = reason === 'write-conflict'
+    && Number.isInteger(conflictRevision)
+    && Number(remotePointer?.revision || 0) >= conflictRevision;
   if (hydratedPointer?.path
+    && !conflictConfirmsRead
     && remotePointer?.path === hydratedPointer.path
     && Number(remotePointer.revision || 0) < Number(hydratedPointer.revision || 0)) {
     diagnosticStore.record(chatKey, {
@@ -1859,9 +1955,14 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
 
   // Our own last proven branch coming back from the server is not "ahead":
   // the shorter local chat was truncated here and reconciliation rolls it back.
-  const hostChatBehind = currentChatKey() === chatKey && localChatIsBehindState(recoveredState)
+  // The open chat's lineage is fingerprinted once for both checks.
+  const localLineage = currentChatKey() === chatKey ? chatLineage(getContext().chat || []) : null;
+  const hostChatBehind = localLineage !== null && localChatIsBehindState(recoveredState, localLineage)
     && locallyProvenTails.get(chatKey) !== lineageTailKey(recoveredState.lineage);
-  if (hostChatBehind) {
+  // State captured on a branch this chat does not have (another device swiped or edited) is not injected
+  // until reconciliation has decided what belongs to this branch.
+  const branchDiverged = localLineage !== null && !hostChatBehind && localChatDivergesFromState(recoveredState, localLineage);
+  if (hostChatBehind || branchDiverged) {
     branchDirtyChats.add(chatKey);
     clearPrivatePrompt();
   }
@@ -1900,6 +2001,7 @@ async function handleServerRevisionConflict(chatKey, error, {
     const refreshed = await refreshChatStateFromServer(chatKey, {
       reason: 'write-conflict',
       retryDeterministicMiss: true,
+      conflictRevision: Number.isInteger(error?.currentRevision) ? error.currentRevision : null,
     });
     refreshOutcome = refreshed?.outcome || 'unknown';
   } catch (refreshError) {
@@ -2239,6 +2341,17 @@ function extendCurrentBranchFast(chatKey) {
   };
 }
 
+// A whole-state replacement (Full rebuild, import, reset) is proven against this chat right away, so a
+// branch left dirty by the failure it recovers does not keep the next generation uninjected.
+async function settleReplacedBranch(chatKey) {
+  if (currentChatKey() !== chatKey) return;
+  try {
+    await reconcileCurrentBranch(chatKey, { persistRestore: true });
+  } catch (error) {
+    console.warn('[World State Alpha] branch check after a state replacement failed; the next chat event retries it.', error);
+  }
+}
+
 async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) {
   const state = await ensureChatStateLoaded(chatKey);
   if (!state || currentChatKey() !== chatKey) return null;
@@ -2332,7 +2445,7 @@ async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) 
   } else if (changed) {
     // Forward lineage extension and passive lineage rebases change chronology
     // metadata only; canonical relevance data is unchanged.
-    setCachedState(chatKey, result.state, { indexMode: 'preserve' });
+    setCachedState(chatKey, result.state, { indexMode: 'preserve', lineageOnly: result.action === 'forward-extension' });
   }
   if (parks.length || parkedBranches.has(chatKey)) parkedBranches.set(chatKey, parks.filter(park => park !== resumedPark));
   rememberParkedBranch(chatKey, abandonedBranch);
@@ -2490,6 +2603,8 @@ async function captureAssistantBoundary(chatKey, messageId, markStarted) {
   };
 
   const before = stateCache.get(chatKey);
+  // Created before any wait (the base map below): a newer state hydrated meanwhile makes this capture stale.
+  const isCurrent = operationGuard(chatKey, messageId);
   const index = getRelevanceIndex(chatKey, before);
   const captureText = recentText(normalizeCaptureExchange(exchange));
   const currentExchangeIds = new Set(exchange.map(row => row?.messageId).filter(Number.isInteger));
@@ -2559,7 +2674,6 @@ async function captureAssistantBoundary(chatKey, messageId, markStarted) {
     }
   }
 
-  const isCurrent = operationGuard(chatKey, messageId);
   markStarted();
   const result = await runCaptureOperation({
     ctx: getContext(),
@@ -3086,13 +3200,12 @@ function bindSettingsEvents() {
     }
     else return;
 
+    // Settings that change provider work cancel it; the injection-only toggles change only the next prompt.
     if ([
       'world_state_alpha_enabled',
       'world_state_alpha_auto_capture',
-      'world_state_alpha_inject',
       'world_state_alpha_connection_profile',
       'world_state_alpha_spatial_enabled',
-      'world_state_alpha_spatial_inject',
     ].includes(target.id)) {
       invalidateChatOperations();
     }
@@ -3305,6 +3418,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         resetSpatialRelevanceIndex(chatKey, stateCache.get(chatKey).spatial, reboundBaseMap);
       }
     }
+    await settleReplacedBranch(chatKey);
     updatePrivateInjection();
     refreshPanel();
     return;
@@ -3333,6 +3447,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       sourceMessageId: Math.max(0, (getContext().chat || []).length - 1),
       detail: 'World State reset and persisted; earlier failed captures no longer apply.',
     });
+    await settleReplacedBranch(chatKey);
     updatePrivateInjection();
     refreshPanel();
     return;
@@ -3495,7 +3610,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     // It stops for a chat switch, an explicit invalidation (settings), new canonical state (another
     // device's save), or any change inside its range; branch events after the range do not stop it.
     const startInvalidations = operationInvalidations.get(chatKey) || 0;
-    const startState = stateCache.get(chatKey);
+    const startGeneration = canonicalGenerations.get(chatKey) || 0;
     // The range proof hashes the chat up to the rebuilt range. The run checks currentness several times per
     // boundary, so the proof is reused until a host chat event (edit, swipe, delete, send) or a second passes
     // (a hide has no event) and a chat shorter than the range is caught at once; the host's own checks before
@@ -3503,7 +3618,8 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     let rangeProof = { at: -Infinity, events: -1, current: true };
     const rangeCurrent = exact => {
       if (currentChatKey() !== chatKey || (operationInvalidations.get(chatKey) || 0) !== startInvalidations) return false;
-      if (stateCache.get(chatKey) !== startState) return false;
+      // New canonical state (another device's save, a branch restore) stops it; the chat growing does not.
+      if ((canonicalGenerations.get(chatKey) || 0) !== startGeneration) return false;
       const liveChat = getContext().chat || [];
       if (liveChat.length < startLineage.length) return false;
       const now = Date.now();
@@ -3939,6 +4055,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       hiddenMessagesIncluded: result.plan?.hiddenMessagesIncluded || 0,
       hiddenAssistantBoundaries: result.plan?.hiddenAssistantBoundaries || 0,
     });
+    await settleReplacedBranch(chatKey);
     updatePrivateInjection();
     refreshPanel();
     notify(
@@ -4235,11 +4352,12 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     return { outcome: 'applied', state: working, applied: combined };
   };
 
+  // Names are compared as capture and the reducer compare them (case, punctuation and spacing folded).
   const findEffectiveByName = (currentState, name) => {
-    const needle = String(name || '').trim().toLowerCase();
+    const needle = placeNameKey(name);
     if (!needle) return null;
     return effectiveLocations(currentState)
-      .find(loc => loc.status !== 'archived' && loc.name.toLowerCase() === needle) || null;
+      .find(loc => loc.status !== 'archived' && placeNameKey(loc.name) === needle) || null;
   };
 
   const derivedCoordinateLocations = currentState =>
@@ -4334,7 +4452,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     // adding that name would silently overwrite its type, context and coordinates. Refuse instead (a
     // base-map name is never merged into, so a campaign place may still share it).
     const existingPlace = (state.spatial?.locations || [])
-      .find(item => item.status === 'active' && String(item.name || '').trim().toLowerCase() === name.trim().toLowerCase());
+      .find(item => item.status === 'active' && placeNameKey(item.name) === placeNameKey(name));
     if (existingPlace) {
       notify('warning', 'A place named ' + existingPlace.name + ' already exists. Open it in Places to edit it instead.');
       return;
@@ -4417,7 +4535,12 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     const priorX = Number.isFinite(priorCoord.x) ? priorCoord.x : null;
     const priorY = Number.isFinite(priorCoord.y) ? priorCoord.y : null;
     const nextLocked = Boolean(fd.locked && fd.x !== null);
-    const nextAuthority = fd.authority || (fd.x === null ? 'unknown' : 'manual');
+    // A position the operator typed is theirs: the Authority select still showing the place's previous label
+    // (or a label that cannot hold a position) does not make it rank below derivation or narration.
+    const positionTyped = fd.x !== null && (fd.x !== priorX || fd.y !== priorY);
+    let nextAuthority = fd.authority || (fd.x === null ? 'unknown' : 'manual');
+    if (fd.x !== null && (['unknown', 'relative'].includes(nextAuthority)
+      || (positionTyped && nextAuthority === String(priorCoord.authority || 'unknown')))) nextAuthority = 'manual';
     const coordinateChanged = fd.x !== priorX
       || fd.y !== priorY
       || nextLocked !== Boolean(priorCoord.locked)
@@ -4567,7 +4690,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       notify('warning', 'No other campaign location is available to merge into.');
       return;
     }
-    const normalName = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const normalName = placeNameKey;
     const sameName = (left, right) => normalName(left) === normalName(right);
     const suggested = [...new Set((Array.isArray(payload.mergeSuggestions) ? payload.mergeSuggestions : [])
       .map(item => candidates.find(loc => loc.id === item?.id))

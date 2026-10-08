@@ -7,18 +7,24 @@ import { hashText, stableStringify } from './hash.js';
 import { clone, cloneState, normalizeState } from './state-core.js';
 
 export class RevisionConflictError extends Error {
-  constructor(message = 'sidecar revision conflict') {
+  constructor(message = 'sidecar revision conflict', { currentRevision = null } = {}) {
     super(message);
     this.name = 'RevisionConflictError';
     this.code = 'WORLD_STATE_REVISION_CONFLICT';
+    // The revision the conflicting write found on the server, when the adapter reports it.
+    if (Number.isInteger(currentRevision)) this.currentRevision = currentRevision;
   }
 }
 
 export class SidecarCorruptionError extends Error {
-  constructor(message = 'invalid or corrupt World State sidecar') {
+  constructor(message = 'invalid or corrupt World State sidecar', { damaged = false } = {}) {
     super(message);
     this.name = 'SidecarCorruptionError';
     this.code = 'WORLD_STATE_CORRUPT_SIDECAR';
+    // Damaged: not valid JSON, or its checksum no longer matches its content. Only such a file may be
+    // replaced by an explicit recovery. A readable file of another format, version, schema or chat (a newer
+    // World State on another device, for example) is never damaged and always fails closed.
+    if (damaged) this.damaged = true;
   }
 }
 
@@ -79,7 +85,7 @@ function verifySidecar(text, { expectedChatKey = '' } = {}) {
   try {
     raw = JSON.parse(String(text || ''));
   } catch {
-    throw new SidecarCorruptionError('sidecar is not valid JSON');
+    throw new SidecarCorruptionError('sidecar is not valid JSON', { damaged: true });
   }
   if (raw?.format !== SIDECAR_FORMAT || raw?.version !== SIDECAR_FORMAT_VERSION) {
     throw new SidecarCorruptionError('sidecar format/version mismatch');
@@ -87,7 +93,7 @@ function verifySidecar(text, { expectedChatKey = '' } = {}) {
   if (expectedChatKey && raw.chatKey !== expectedChatKey) throw new SidecarCorruptionError('sidecar belongs to a different chat');
   const { checksum, ...withoutChecksum } = raw;
   if (!checksum || checksum !== hashText(stableStringify(withoutChecksum))) {
-    throw new SidecarCorruptionError('sidecar checksum mismatch');
+    throw new SidecarCorruptionError('sidecar checksum mismatch', { damaged: true });
   }
   let state;
   try {
@@ -121,6 +127,9 @@ export async function writeSidecar({
   appVersion = '',
   maxAttempts = LIMITS.storageAttempts,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  // An explicit recovery may replace a damaged current file (never a readable one): the path recorded
+  // when it was found damaged, so a file that was replaced since is not overwritten blindly.
+  replaceCorrupt = '',
 }) {
   if (!adapter || typeof adapter.write !== 'function') throw new Error('storage adapter.write is required');
   const path = pointer?.path || makeSidecarPath(chatKey);
@@ -148,11 +157,11 @@ export async function writeSidecar({
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const result = await adapter.write({ path, expectedRevision, body });
+      const result = await adapter.write({ path, expectedRevision, body, ...(replaceCorrupt ? { replaceCorrupt: String(replaceCorrupt) } : {}) });
       if (result?.conflict) {
         const recovered = await recoverCommittedWrite();
         if (recovered) return recovered;
-        throw new RevisionConflictError();
+        throw new RevisionConflictError(undefined, { currentRevision: result.currentRevision });
       }
       const revision = Math.max(0, Math.trunc(Number(result?.revision) || nextRevision));
       if (revision !== nextRevision) throw new RevisionConflictError('storage adapter returned an unexpected revision');

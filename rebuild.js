@@ -3,7 +3,7 @@ import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, normalizeCaptureExc
 import { hashText, stableStringify } from './hash.js';
 import { extractContextTerms, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
-import { applySpatialUndoPatch } from './spatial-core.js';
+import { applySpatialUndoPatch, compactSpatialEvidence, createSpatialState, normalizeSpatialState, placeNameKey } from './spatial-core.js';
 import { canonicalDomain, clone, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
@@ -315,6 +315,11 @@ function spatialHasContent(spatial) {
   return Boolean(spatial?.locations?.length || spatial?.relations?.length || spatial?.routes?.length);
 }
 
+function spatialHasOperatorContent(spatial) {
+  const owned = entity => entity?.operatorOwned === true;
+  return Boolean(spatial?.locations?.some(owned) || spatial?.relations?.some(owned) || spatial?.routes?.some(owned));
+}
+
 // With Spatial extraction off a rebuild still owns Spatial rollback. The
 // original journal says when each Spatial change happened, so the rebuild
 // replays it at the boundary where it happened (the first boundary at or after
@@ -324,14 +329,18 @@ function spatialHasContent(spatial) {
 // at or below the journal floor while places existed, which places belong to
 // the current story cannot be told apart: the rebuild still runs (Reality must
 // stay recoverable) and keeps the places held at the floor, but says so.
-function disabledSpatialTimeline(original, chat) {
+// With extraction on (`operatorOnly`) the same history supplies the operator's own entities; only those
+// count as held before the floor, and `hasOperator` says whether the history holds any at all.
+function disabledSpatialTimeline(original, chat, { operatorOnly = false } = {}) {
   const journal = Array.isArray(original.rollbackJournal) ? original.rollbackJournal : [];
   const floor = Number.isInteger(original.rollbackJournalFloorMessageId) ? original.rollbackJournalFloorMessageId : -1;
+  const held = operatorOnly ? spatialHasOperatorContent : spatialHasContent;
   // Only Spatial patches are replayed; with none, Places stayed as they were since the floor.
   if (!journal.some(entry => entry?.undo?.spatial)) {
-    const heldBeforeFloor = floor >= 0 && spatialHasContent(original.spatial);
+    const heldBeforeFloor = floor >= 0 && held(original.spatial);
     return {
       base: clone(original.spatial),
+      hasOperator: spatialHasOperatorContent(original.spatial),
       unprovableBelow: heldBeforeFloor ? floor : -1,
       unverified: heldBeforeFloor && firstStoryChange(original.lineage, chat) <= floor,
       at: () => clone(original.spatial),
@@ -353,9 +362,10 @@ function disabledSpatialTimeline(original, chat) {
   }
   steps.reverse();
   const base = spatial;
-  const heldBeforeFloor = floor >= 0 && spatialHasContent(base);
+  const heldBeforeFloor = floor >= 0 && held(base);
   return {
     base: clone(base),
+    hasOperator: spatialHasOperatorContent(base) || steps.some(step => spatialHasOperatorContent(step.spatial)),
     // Below this boundary the Spatial history is unknown (nothing proves when those places appeared).
     unprovableBelow: heldBeforeFloor ? floor : -1,
     unverified: heldBeforeFloor && divergence <= floor,
@@ -365,6 +375,75 @@ function disabledSpatialTimeline(original, chat) {
       return clone(current);
     },
   };
+}
+
+// With Places extraction on, the model's places are rebuilt from narration, but what the operator authored
+// (places, relations and routes carrying operatorOwned) is campaign authority: at each boundary the
+// candidate holds exactly the operator entities the original Places history held there. A model place with
+// the same name gives way to the operator's (its relations and routes move to it). An operator relation or
+// route keeps its other end: a model place the rebuild re-created (under a new id) by name, otherwise the
+// original place itself, so nothing the operator linked is left pointing at a missing place.
+function overlayOperatorSpatial(spatial, source) {
+  const next = normalizeSpatialState(spatial);
+  const src = source || createSpatialState();
+  const owned = list => (list || []).filter(entity => entity?.operatorOwned === true);
+  const locations = owned(src.locations);
+  const relations = owned(src.relations);
+  const routes = owned(src.routes);
+  const operatorIds = new Set(locations.map(loc => loc.id));
+  const operatorNames = new Map(locations.filter(loc => loc.status === 'active').map(loc => [placeNameKey(loc.name), loc.id]));
+  const moved = new Map();
+  next.locations = next.locations.filter(loc => {
+    if (loc.operatorOwned === true || operatorIds.has(loc.id)) return false;
+    const operatorId = loc.status === 'active' ? operatorNames.get(placeNameKey(loc.name)) : null;
+    if (operatorId) moved.set(loc.id, operatorId);
+    return !operatorId;
+  });
+  next.locations.push(...locations.map(clone));
+  const to = id => moved.get(id) || id;
+  const relationIds = new Set(relations.map(rel => rel.id));
+  next.relations = next.relations
+    .filter(rel => rel.operatorOwned !== true && !relationIds.has(rel.id))
+    .map(rel => ({ ...rel, fromId: to(rel.fromId), toId: to(rel.toId) }))
+    .filter(rel => rel.fromId !== rel.toId);
+  next.relations.push(...relations.map(clone));
+  const routeIds = new Set(routes.map(route => route.id));
+  next.routes = next.routes
+    .filter(route => route.operatorOwned !== true && !routeIds.has(route.id))
+    .map(route => ({ ...route, endpoints: [...new Set((route.endpoints || []).map(to))], waypoints: [...new Set((route.waypoints || []).map(to))] }));
+  next.routes.push(...routes.map(clone));
+
+  // Ends of operator relations and routes that name a non-operator place of the original history.
+  const presentIds = new Set(next.locations.map(loc => loc.id));
+  const sourceById = new Map((src.locations || []).map(loc => [loc.id, loc]));
+  const activeByName = new Map();
+  for (const loc of next.locations) {
+    if (loc.status === 'active' && !activeByName.has(placeNameKey(loc.name))) activeByName.set(placeNameKey(loc.name), loc.id);
+  }
+  const carried = [];
+  const endpoint = id => {
+    if (presentIds.has(id)) return id;
+    const original = sourceById.get(id);
+    // Not a stored place (a base-map place, or an override addressed by its base id): left as it is.
+    if (!original) return id;
+    const rebuilt = activeByName.get(placeNameKey(original.name));
+    if (rebuilt) return rebuilt;
+    presentIds.add(id);
+    carried.push(clone(original));
+    return id;
+  };
+  const relationAt = new Set(relations.map(rel => rel.id));
+  const routeAt = new Set(routes.map(route => route.id));
+  next.relations = next.relations.map(rel => (relationAt.has(rel.id) ? { ...rel, fromId: endpoint(rel.fromId), toId: endpoint(rel.toId) } : rel));
+  next.routes = next.routes.map(route => (routeAt.has(route.id)
+    ? { ...route, endpoints: [...new Set((route.endpoints || []).map(endpoint))], waypoints: [...new Set((route.waypoints || []).map(endpoint))] }
+    : route));
+  next.locations.push(...carried);
+
+  for (const entity of [...locations, ...carried, ...relations, ...routes]) {
+    for (const id of entity.evidenceIds || []) if (src.evidence?.[id]) next.evidence[id] = clone(src.evidence[id]);
+  }
+  return normalizeSpatialState(compactSpatialEvidence(next));
 }
 
 export async function runManualRebuild({
@@ -421,17 +500,27 @@ export async function runManualRebuild({
   }
 
   const spatialTimeline = spatialEnabled ? null : disabledSpatialTimeline(original, chat);
-  const warnings = spatialTimeline?.unverified
+  // With extraction on, the same history supplies the operator's own places at each boundary (skipped
+  // entirely when the history holds no operator entity).
+  const operatorHistory = spatialEnabled ? disabledSpatialTimeline(original, chat, { operatorOnly: true }) : null;
+  const operatorTimeline = operatorHistory?.hasOperator ? operatorHistory : null;
+  const historyTimeline = spatialTimeline || operatorTimeline;
+  const warnings = historyTimeline?.unverified
     ? [{
       code: 'WORLD_STATE_REBUILD_SPATIAL_HISTORY_UNVERIFIED',
-      message: 'Places were kept as they were before the oldest saved change, but the chat changed before that point, so some places may belong to an abandoned branch. Review Places, or rebuild with Places extraction on.',
+      message: spatialTimeline
+        ? 'Places were kept as they were before the oldest saved change, but the chat changed before that point, so some places may belong to an abandoned branch. Review Places, or rebuild with Places extraction on.'
+        : 'Places you added were kept as they were before the oldest saved change, but the chat changed before that point, so some of them may belong to an abandoned branch. Review Places.',
     }]
     : [];
   const lastWindowMessageId = plan.windows.length ? plan.windows[plan.windows.length - 1].messageId : null;
-  // The candidate's Spatial after boundary `messageId` when extraction is off.
-  const withDisabledSpatial = (state, messageId) => (spatialTimeline
-    ? { ...state, spatial: spatialTimeline.at(messageId, messageId === lastWindowMessageId) }
-    : state);
+  // The candidate's Spatial after boundary `messageId`: replayed as it was when extraction is off, or the
+  // model's places with the operator's own as they stood there when it is on.
+  const spatialAtBoundary = (state, messageId, last = messageId === lastWindowMessageId) => {
+    if (spatialTimeline) return { ...state, spatial: spatialTimeline.at(messageId, last) };
+    if (operatorTimeline) return { ...state, spatial: overlayOperatorSpatial(state.spatial, operatorTimeline.at(messageId, last)) };
+    return state;
+  };
 
   // An operator-initiated resume continues a failed rebuild from its failed
   // boundary with the candidate accepted up to there. It is only valid while
@@ -514,6 +603,7 @@ export async function runManualRebuild({
     if (spatialEnabled) {
       root.spatial.profile = spatialProfile || original.spatial?.profile || null;
       root.spatial.baseMapRef = original.spatial?.baseMapRef || null;
+      if (operatorTimeline) root.spatial = overlayOperatorSpatial(root.spatial, operatorTimeline.base);
     } else {
       // Reality-only rebuild keeps the disabled sibling subsystem: its state before the first replayed change.
       root.spatial = spatialTimeline.base;
@@ -586,7 +676,7 @@ export async function runManualRebuild({
     // reply, or only <writer_state>/tracker blocks) has nothing to capture. Live capture skips it with the
     // same captureDue rule, so the rebuild advances past it without a provider call instead of failing.
     if (!captureDue({ exchange: window.exchange, sourceMessageId: window.messageId })) {
-      candidate = commitMutationBoundary(candidate, withDisabledSpatial(candidate, window.messageId), chat.slice(0, window.messageId + 1), window.messageId, 'rebuild', { lineage: plan.lineage.slice(0, window.messageId + 1) });
+      candidate = commitMutationBoundary(candidate, spatialAtBoundary(candidate, window.messageId), chat.slice(0, window.messageId + 1), window.messageId, 'rebuild', { lineage: plan.lineage.slice(0, window.messageId + 1) });
       receipts.push({ messageId: window.messageId, outcome: 'empty-boundary', providerCalls: 0, applied: 0, rejected: 0, aliasRepairs: 0, completenessHints: 0, rejections: [] });
       processedBoundaries += 1;
       await reportProgress(window.messageId, { boundaryApplied: 0, boundaryRejected: 0, aliasRepairs: 0, completenessHints: 0 });
@@ -703,7 +793,7 @@ export async function runManualRebuild({
     {
       candidate = commitMutationBoundary(
         beforeStep,
-        withDisabledSpatial(result.state, window.messageId),
+        spatialAtBoundary(result.state, window.messageId),
         chat.slice(0, window.messageId + 1),
         window.messageId,
         'rebuild',
@@ -724,11 +814,11 @@ export async function runManualRebuild({
 
   // With extraction off the replayed Places are applied at each boundary. A range with no assistant
   // boundary applies none, so commit them at the last message (journaled, so rollback still undoes them).
-  if (spatialTimeline && !plan.windows.length && chat.length) {
+  if ((spatialTimeline || operatorTimeline) && !plan.windows.length && chat.length) {
     const lastMessageId = chat.length - 1;
     candidate = commitMutationBoundary(
       candidate,
-      { ...candidate, spatial: spatialTimeline.at(lastMessageId, true) },
+      spatialAtBoundary(candidate, lastMessageId, true),
       chat,
       lastMessageId,
       'rebuild',
@@ -738,11 +828,11 @@ export async function runManualRebuild({
 
   candidate.lineage = plan.lineage;
   candidate.recoveryRequired = null;
-  if (spatialTimeline && spatialTimeline.unprovableBelow >= 0 && plan.metrics.startMessageId <= spatialTimeline.unprovableBelow) {
+  if (historyTimeline && historyTimeline.unprovableBelow >= 0 && plan.metrics.startMessageId <= historyTimeline.unprovableBelow) {
     // Places existed before the oldest saved change, so a rollback below it cannot be proven: keep only
     // journal entries and checkpoints from there on, exactly like a trimmed journal (it fails closed).
     // The first kept entry's state before it is also the state at the floor (no boundary lies between).
-    const cutoff = spatialTimeline.unprovableBelow;
+    const cutoff = historyTimeline.unprovableBelow;
     candidate.rollbackJournal = (candidate.rollbackJournal || []).filter(entry => entry.messageId > cutoff);
     if (candidate.rollbackJournal[0]) {
       // Journal entries are shared between state copies: replace, never edit in place.
