@@ -74,10 +74,27 @@ function subjectModifiers(summary, otherTokens) {
   return modifiers;
 }
 
+// Spaceless scripts have no words to compare: two summaries that differ only in a short run of direction,
+// position or number characters ("北門" / "南門", "第一" / "第二") name different subjects.
+const CJK_DISTINGUISHING = /[北南東西东上下左右前後后内外第一二三四五六七八九十百千0-9０-９]/u;
+function distinctSpacelessSubjects(left, right) {
+  const a = [...canonicalText(left)];
+  const b = [...canonicalText(right)];
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
+  let end = 0;
+  while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end += 1;
+  const leftDiff = a.slice(start, a.length - end).join('');
+  const rightDiff = b.slice(start, b.length - end).join('');
+  return Boolean(leftDiff && rightDiff && leftDiff.length <= 3 && rightDiff.length <= 3
+    && CJK_DISTINGUISHING.test(leftDiff) && CJK_DISTINGUISHING.test(rightDiff));
+}
+
 // Two summaries name different subjects when the same noun carries different
 // distinguishing modifiers in each; such conditions are never merged or
 // treated as one, however much else they share.
 export function distinctSubjects(left, right) {
+  if (SPACELESS_SCRIPT.test(String(left ?? '')) && SPACELESS_SCRIPT.test(String(right ?? '')) && distinctSpacelessSubjects(left, right)) return true;
   const leftTokens = new Set(canonicalText(left).split(' ').filter(Boolean));
   const rightTokens = new Set(canonicalText(right).split(' ').filter(Boolean));
   const leftModifiers = subjectModifiers(left, rightTokens);

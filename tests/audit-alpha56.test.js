@@ -206,3 +206,40 @@ test('36: relevant developments evaluated since the skip leave background slots 
   assert.equal(result.evolution.backgroundSelection.selected, 3);
   assert.equal(result.evolution.plan.targets.length, 3);
 });
+
+// Code review hardening.
+
+test('review: narrated day steps, the noun "will" and "whether" openers are not plans', () => {
+  assert.equal(created('The next morning, the garrison of Karsk surrendered to the raiders.', 'The garrison of Karsk has surrendered to the raiders', 'the garrison of Karsk surrendered to the raiders', ['Karsk']), 1);
+  assert.equal(created('The next morning, the garrison of Karsk surrendered to the raiders.', 'The garrison of Karsk has surrendered to the raiders', 'The next morning, the garrison of Karsk surrendered to the raiders', ['Karsk']), 1);
+  assert.equal(created('Against their will, the miners of Dunmoor were pressed into the levy.', 'The miners of Dunmoor are pressed into the levy', 'Against their will, the miners of Dunmoor were pressed into the levy', ['Dunmoor']), 1);
+  assert.equal(created('Whether by luck or design, the dam at Karsk held through the storm.', 'The dam at Karsk held through the storm', 'Whether by luck or design, the dam at Karsk held through the storm', ['Karsk']), 1);
+});
+
+test('review: a future clause does not let a quoted claim become fact', () => {
+  assert.equal(created('"The king is dead," the herald said.', 'The king is dead and the court will choose a successor', 'The king is dead', ['king']), 0);
+});
+
+test('review: bold and numbered World_State lines keep their sections apart', () => {
+  const bold = sanitizeAssistantNarration('<World_State>\n**Planted Seeds:**\n- seed\n**Off-Screen:**\n- The duke marches on Harrow.\n</World_State>');
+  assert.match(bold, /The duke marches on Harrow/);
+  assert.doesNotMatch(bold, /seed\n/);
+  const numbered = sanitizeAssistantNarration('<World_State>\nPlanted Seeds:\n1. Duke: will march on Harrow\n2. Timer: plague in 3 days\n</World_State>');
+  assert.doesNotMatch(numbered, /Duke|Timer/);
+});
+
+test('review: north and south gates in Japanese stay apart', () => {
+  assert.equal(duplicateSimilarity({ kind: 'development', summary: '北門は兵士によって封鎖されている', anchors: [] }, { kind: 'development', summary: '南門は兵士によって封鎖されている', anchors: [] }), 0);
+});
+
+test('review: lower-case words and units end sentences; a capitalized hypothetical voids a skip', () => {
+  assert.equal(sentencesOf('Asked whether the fort still stood, the scout said no. The fort of Karsk had fallen to raiders.').length, 2);
+  assert.equal(sentencesOf('The wall rose 10 ft. The bridge collapsed.').length, 2);
+  assert.equal(created('Asked whether the fort still stood, the scout said no. The fort of Karsk had fallen to raiders.', 'The fort of Karsk has fallen to raiders', 'The fort of Karsk had fallen to raiders', ['Karsk']), 1);
+  assert.equal(elapsed('Hypothetically, three weeks later, the city falls.'), null);
+});
+
+test('review: a shouted word is dialogue; a quoted name needs a naming word', () => {
+  assert.equal(created('The sentry yelled "Bandits Attack Gate" and ran.', 'Bandits attack the gate', 'Bandits Attack Gate', ['gate']), 0);
+  assert.equal(created('A ship named "Sea Wolf" anchors off the harbor of Varn.', 'The Sea Wolf is anchored off the harbor of Varn', 'A ship named "Sea Wolf" anchors off the harbor of Varn', ['harbor of Varn']), 1);
+});

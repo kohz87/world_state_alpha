@@ -305,9 +305,10 @@ function sentenceAt(source, at, end) {
   return source.slice(before < 0 ? 0 : before + 1, stop).trim().slice(0, 400);
 }
 
-// Modal and planning words in lower case only, so a character named Will does not count.
-const ELAPSED_PROSPECTIVE = /(?:\b(?:will|would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|appointment|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/u;
-const DAY_STEP_PROSPECTIVE = /(?:\b(?:will|would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|[Tt]omorrow|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/u;
+// Any case ("Hypothetically, ...", "Could ..."), except "will", which counts in lower case only.
+const ELAPSED_PROSPECTIVE = /(?:\b(?:would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|appointment|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/iu;
+const DAY_STEP_PROSPECTIVE = /(?:\b(?:would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|tomorrow|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/iu;
+const LOWER_CASE_WILL = /\bwill\b/u;
 const CLAUSE_BREAKS = /[,;:—–]|\s(?:and|but|while|then|so)\s/gu;
 
 // The clause of `sentence` holding the phrase at `offset`: a modal or "if" elsewhere in the sentence ("Three
@@ -336,9 +337,9 @@ function clauseAt(sentence, offset, length = 0) {
 // a condition ("If the rains come, three weeks later ...").
 function prospectivePhrase(sentence, offset, length, prospective) {
   const clause = clauseAt(sentence, offset, length);
-  if (prospective.test(clause)) return true;
+  if (prospective.test(clause) || LOWER_CASE_WILL.test(clause)) return true;
   if (/(?:^|[^\p{L}])(?:if|unless)\b/iu.test(clause)) return true;
-  return /^[^\p{L}]*(?:if|unless|should|suppose|supposing)\b/iu.test(sentence);
+  return /^[^\p{L}]*(?:if|unless|should|suppose|supposing|hypothetically|imagine|imagining|in theory)\b/iu.test(sentence);
 }
 
 // The candidate's own sentence, or null when it is quoted, prospective,

@@ -164,10 +164,12 @@ function singleQuoteEnd(source, from) {
   return -1;
 }
 
-// A short title-cased quotation inside a sentence is a name ("the "Black Gull" anchors offshore"), not speech.
+// A short title-cased quotation introduced as a name ("the "Black Gull" anchors offshore", "a ship named
+// "Sea Wolf"") is a name, not speech; a shouted word ("The sentry yelled "Bandits"") stays dialogue.
 const NAME_CONNECTORS = new Set(['of', 'the', 'and', 'de', 'la', 'le', 'du', 'von', 'van', 'del', 'da']);
-function nameLikeQuote(text) {
-  if (/[.!?,;:…]/u.test(text)) return false;
+const NAME_INTRODUCER = /(?:^|[^\p{L}])(?:the|a|an|aboard|named|called|dubbed|known as)\s*$/iu;
+function nameLikeQuote(text, before) {
+  if (!NAME_INTRODUCER.test(before) || /[.!?,;:…]/u.test(text)) return false;
   const words = text.trim().split(/\s+/u).filter(Boolean);
   if (!words.length || words.length > 4) return false;
   return words.every(word => /^\p{Lu}/u.test(word) || NAME_CONNECTORS.has(word.toLocaleLowerCase())) && /^\p{Lu}/u.test(words[0]);
@@ -210,7 +212,7 @@ function quotedSpans(sourceText) {
     }
   }
   if (open >= 0) spans.push([open + 1, source.length]);
-  return spans.filter(([from, to]) => to > from && !nameLikeQuote(source.slice(from, to)));
+  return spans.filter(([from, to]) => to > from && !nameLikeQuote(source.slice(from, to), source.slice(Math.max(0, from - 21), from - 1)));
 }
 
 function quotedDialogueSegments(sourceText) {
@@ -317,7 +319,8 @@ function claimInsideReportedComplement(claim, sentence) {
 
 const SENTENCE_SEPARATOR = /((?<=[.!?])[ \t]+|\s*\r?\n\s*)/u;
 // A full stop after a title or an initial does not end the sentence ("Lt. Varro reported that ...").
-const ABBREVIATION_END = /(?:^|[\s(\["“'‘])(?:mr|mrs|ms|dr|st|mt|ft|lt|col|gen|capt|cpt|sgt|cmdr|cdr|adm|maj|prof|rev|fr|sr|jr|hon|gov|pres|sen|rep|no|vol|ch|vs|e\.g|i\.e|\p{Lu})\.$/iu;
+// Titles are capitalized; a lower-case word ("the scout said no.") or a unit ("10 ft.") ends its sentence.
+const ABBREVIATION_END = /(?:^|[\s(\["“'‘])(?:Mr|Mrs|Ms|Dr|St|Mt|Lt|Col|Gen|Capt|Cpt|Sgt|Cmdr|Cdr|Adm|Maj|Prof|Rev|Fr|Sr|Jr|Hon|Gov|Pres|Sen|vs|e\.g|i\.e|\p{Lu})\.$/u;
 
 export function sentencesOf(text) {
   const parts = String(text ?? '').split(SENTENCE_SEPARATOR);
@@ -357,11 +360,6 @@ function claimInsideSpeechActComplement(claim, sentence) {
   });
 }
 
-// Reported (quoted, attributed, a speech act's content), or planned or conditional.
-function sentenceAttributed(claim, sourceText) {
-  return sentenceReported(claim, sourceText) || evidenceClaimProspective(claim, sourceText);
-}
-
 function sentenceReported(claim, sourceText) {
   if (evidenceClaimQuotedOnly(claim, sourceText)) return true;
   if (claimSubstanceQuoted(claim, sourceText)) return true;
@@ -379,16 +377,17 @@ function sentenceReported(claim, sourceText) {
 // An excerpt spanning several sentences is judged by the sentences that carry the change it supports (all
 // of them when none does): it is reported only when every such sentence is, so a cited rumour stays a rumour
 // beside unrelated narration, while narration of the change itself still establishes it.
-function evidenceClaimAttributed(claim, sourceText, focusText = '') {
+// `judge` decides one sentence: reported (sentenceReported) or planned/conditional (evidenceClaimProspective).
+function evidenceClaimAttributed(claim, sourceText, focusText = '', judge = sentenceReported) {
   const parts = sentencesOf(claim).map(part => part.trim())
     .filter(part => canonicalText(part).length >= 8);
-  if (parts.length < 2) return sentenceAttributed(claim, sourceText);
+  if (parts.length < 2) return judge(claim, sourceText);
   const focus = new Set(significantTokens(focusText));
   // A sentence carries the change when it shares two of its content words (one when the change has one):
   // naming the same place is not enough.
   const needed = Math.min(2, focus.size);
   const bearing = needed ? parts.filter(part => new Set(significantTokens(part).filter(token => focus.has(token))).size >= needed) : [];
-  return (bearing.length ? bearing : parts).every(part => sentenceAttributed(part, sourceText));
+  return (bearing.length ? bearing : parts).every(part => judge(part, sourceText));
 }
 
 function anchorSupported(anchor, evidence, existingRecord = null, assertionText = '') {
@@ -416,7 +415,13 @@ function anchorSupported(anchor, evidence, existingRecord = null, assertionText 
 
 export function preservesReportedInformationStatus(summary) {
   const text = String(summary ?? '');
-  return REPORTED_ACCOUNT_RE.test(text) || SPEECH_ACT_SUMMARY_RE.test(text) || PROSPECTIVE_SUMMARY_RE.test(text);
+  return REPORTED_ACCOUNT_RE.test(text) || SPEECH_ACT_SUMMARY_RE.test(text);
+}
+
+// A summary that keeps a plan or condition prospective. It answers only for planned or conditional evidence,
+// never for reported evidence ("The king is dead and the court will choose a successor" is still promotion).
+function preservesProspectiveStatus(summary) {
+  return PROSPECTIVE_SUMMARY_RE.test(String(summary ?? ''));
 }
 
 // A record that is itself a reported account (a rumour, a report): another report may end it. A record of an
@@ -428,8 +433,10 @@ function reportedAccountRecord(summary) {
 // What is planned, expected or conditional has not happened: a claim stating it ("the valley will flood",
 // "the duke plans to march") or standing in a conditional sentence ("If the dam breaks tonight, ...").
 // Modal verbs count in lower case only, so a character named Will or May does not.
-const PROSPECTIVE_CLAIM_RE = /\b(?:will|shall|might|going to|about to)\b|\b(?:plans?|planned|planning|plotting|intends?|intended|intending|aims?|hopes?|expects?|expected|prepares?|preparing)\s+to\b|\b(?:[Tt]omorrow|[Tt]onight|[Nn]ext (?:day|morning|evening|week|month|year|season|spring|summer|autumn|fall|winter))\b/u;
-const CONDITIONAL_START = /^[^\p{L}\p{N}]*(?:even\s+)?(?:if|unless|whether|lest|suppose|supposing|in case|should)\b/iu;
+// A modal followed by its verb, never the noun ("against their will", "with all their might", "the king's
+// will"). Narrated day steps ("the next morning") and "tonight" are narration, not plans.
+const PROSPECTIVE_CLAIM_RE = /(?<!\b(?:their|his|her|its|my|our|your|the|own|free|good|ill|all)\s+)(?<!['’]s\s+)\b(?:will|shall|might)\s+(?:not\s+|never\s+|soon\s+|surely\s+|likely\s+)?\p{Ll}|\b(?:going|about)\s+to\b|\b(?:plans?|planned|planning|plotting|intends?|intended|intending|aims?|hopes?|expects?|expected|prepares?|preparing)\s+to\b|\b[Tt]omorrow\b/u;
+const CONDITIONAL_START = /^[^\p{L}\p{N}]*(?:even\s+)?(?:if|unless|lest|suppose|supposing|in case|should)\b/iu;
 
 function evidenceClaimProspective(claim, sourceText) {
   if (PROSPECTIVE_CLAIM_RE.test(String(claim ?? ''))) return true;
@@ -454,6 +461,14 @@ export function captureExchangeIndex(exchange = []) {
     });
   }
   return map;
+}
+
+// Reported or prospective evidence is `attributed`: it cannot end an established condition, and it may
+// establish only a summary that keeps its status.
+function evidenceStatus(claim, sourceText, focusText) {
+  const reported = evidenceClaimAttributed(claim, sourceText, focusText, sentenceReported);
+  const prospective = !reported && evidenceClaimAttributed(claim, sourceText, focusText, evidenceClaimProspective);
+  return { attributed: reported || prospective, reported };
 }
 
 export function applyCaptureSourceFirewall(mutation, {
@@ -513,7 +528,7 @@ export function applyCaptureSourceFirewall(mutation, {
     evidence.push(normalizedEvidence);
     evidenceSupport.push({
       ...normalizedEvidence,
-      attributed: evidenceClaimAttributed(item.claim, source.text, candidate.summary || stateRecords.get(candidate.recordId)?.summary || ''),
+      ...evidenceStatus(item.claim, source.text, candidate.summary || stateRecords.get(candidate.recordId)?.summary || ''),
     });
   }
 
@@ -578,7 +593,8 @@ export function applyCaptureSourceFirewall(mutation, {
 
   if (supportingEvidence.every(item => item.attributed)) {
     const epistemicSummary = candidate.summary || existing?.summary || '';
-    if (!preservesReportedInformationStatus(epistemicSummary)) {
+    const plansOnly = supportingEvidence.every(item => !item.reported);
+    if (!preservesReportedInformationStatus(epistemicSummary) && !(plansOnly && preservesProspectiveStatus(epistemicSummary))) {
       return {
         ok: false,
         reason: 'quoted dialogue alone, other attributed evidence, or a plan or condition may establish reported information, the speech act or the plan itself, but the mutation summary must preserve reporting/uncertainty, describe the speech act, or keep the plan or condition prospective instead of promoting the underlying claim to fact',

@@ -1,4 +1,5 @@
-import { captureExchangeIndex, containsOnWordBoundaries, evidenceClaimGrounded, evidenceClaimQuotedOnly } from './source-firewall.js';
+// Sentences (or lines) of a text bind a coordinate to the place it describes (shared with the firewall).
+import { captureExchangeIndex, containsOnWordBoundaries, evidenceClaimGrounded, evidenceClaimQuotedOnly, sentencesOf } from './source-firewall.js';
 import {
   baseLocationByName,
   canonicalSpatialDirection,
@@ -112,11 +113,6 @@ function extractExplicitCoordinatesFromText(text) {
     for (const match of text.matchAll(form)) coords.push({ x: Number(match[1]), y: Number(match[2]) });
   }
   return coords;
-}
-
-// Sentences (or lines) of a text, for binding a coordinate to the place it describes.
-function sentencesOf(text) {
-  return String(text || '').split(/(?<=[.!?])\s+|\r?\n+/u).filter(Boolean);
 }
 
 // The sentence names this place: its full name, or every distinctive word of it

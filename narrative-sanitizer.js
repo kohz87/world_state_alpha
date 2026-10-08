@@ -17,7 +17,9 @@ const NON_CANONICAL_ASSISTANT_BLOCKS = Object.freeze([
 // Planning sections of a World_State block (seeds, timers, phases, options, inner chatter, inventory and
 // skills) are never evidence; its Off-Screen and Unresolved entries stay (capture may read them as hints).
 const WORLD_STATE_PLANNING_SECTION = /^[^\p{L}\p{N}]*(?:planted[ _]seeds?|consequence[ _]timers?|arc[ _]phase|scene[ _]phase|cyoa|npc[ _]inner[ _]chatter|inner[ _]chatter|skill[ _]mastery|inventory)\b[^:\n]{0,40}:/iu;
-const WORLD_STATE_SECTION = /^\s*(?:[-*•+]\s+\*\*[^*\n]{1,80}?:\s*\*\*|[^-*•+\s][^:\n]{1,80}:)/u;
+// A section heading: a bold bullet label, or a non-entry line ending its label with a colon. Numbered lines
+// ("1. Duke: ...") are entries like bullets.
+const WORLD_STATE_SECTION = /^\s*(?:[-*•+]\s+\*\*[^*\n]{1,80}?:\s*\*\*|(?![-*•+]|\d+[.)]\s)[^\s][^:\n]{1,80}:)/u;
 
 function stripTaggedBlock(text, tagName) {
   const escaped = String(tagName).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -42,7 +44,8 @@ function stripWorldStatePlanning(text) {
         planning = true;
         continue;
       }
-      if (planning && (/^\s*---+\s*$/u.test(line) || WORLD_STATE_SECTION.test(line))) planning = false;
+      // A bold heading ("**Off-Screen:**") ends the section like a plain one.
+      if (planning && (/^\s*---+\s*$/u.test(line) || WORLD_STATE_SECTION.test(line) || WORLD_STATE_SECTION.test(bare))) planning = false;
       if (!planning) kept.push(line);
     }
     return open + kept.join('') + close;

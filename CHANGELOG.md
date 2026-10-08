@@ -49,10 +49,20 @@ These are wording heuristics. Where they conflict, this release keeps plans and 
 
 ### Validation
 
-- New `tests/audit-alpha56.test.js` (17 tests).
+- New `tests/audit-alpha56.test.js` (17 tests, plus 6 review-hardening tests that fail on the pre-review code).
 - One alpha.45 assertion now expects the older meaningful skip to win over a later short span.
 - Live in SillyTavern (stub provider), alpha.55 against alpha.56: after "I sneak into the Vault of Kings" and `/sys The alarm Bell rings across the Vault.`, the next reply's capture request now holds both. On alpha.55 it held neither.
 - The branch, hide, partial rebuild, Resume and Places scripts give the same results as on alpha.55.
+
+### Code review hardening
+
+- "The next morning", "tonight", "against their will" and "Whether by luck or design" no longer mark narration as a plan; "will" and "might" count only before their verb.
+- Prospective wording keeps only planned or conditional evidence prospective: "The king is dead and the court will choose a successor" no longer promotes a quoted claim.
+- A bold `**Off-Screen:**` heading ends a planning section, and numbered entries (`1. Duke: …`) stay inside it, so seeds no longer leak and Off-Screen lines are no longer dropped.
+- "北門" and "南門" (north and south gate) stay different subjects in the character-pair duplicate check.
+- Only capitalized titles and initials continue a sentence ("the scout said no." and "10 ft." end it). Capitalized "Hypothetically" and "Could" still void a time skip.
+- A short quoted name needs a naming word before it ("the", "a ship named"), so a shouted word stays dialogue.
+- Spatial capture uses the same sentence splitter as the firewall.
 
 ## 0.9.0-alpha.55 - Data loss and wrong state (deep pass on alpha.54)
 
