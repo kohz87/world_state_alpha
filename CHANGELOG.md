@@ -26,7 +26,7 @@
 
 ### Validation
 
-- New `tests/audit-alpha58.test.js` (7 tests, on a small fake DOM that re-creates every panel control on each render). Each fails on 0.9.0-alpha.57.
+- New `tests/audit-alpha58.test.js`, on a small fake DOM that re-creates every panel control on each render: 7 tests, each failing on 0.9.0-alpha.57, plus 4 review-hardening tests that fail on the pre-review code.
 - Live in SillyTavern (Chromium), alpha.57 against alpha.58:
 
 | Check | alpha.57 | alpha.58 |
@@ -37,8 +37,21 @@
 | Escape | Did nothing | Closed the panel |
 | Error toast | Hidden behind the panel | On top |
 | Phone search after clearing | 0 boxes visible | Box visible and focused |
+| Rebuild sheet just opened | — | Has focus; Escape closes the sheet, then the panel |
 
 - The panel (alpha.53), Add place, branch and Places scripts give the same results as on alpha.57.
+
+### Code review hardening
+
+- Saving a place whose free-text relation was stated from the other place keeps the relation's direction. A changed distance no longer flips which place is upstream.
+- Escape never closes a place form or Map settings that holds unsaved edits.
+- A newly opened rebuild sheet takes focus. It used to stay on the opener, now under the sheet's backdrop.
+- A record opened by link beyond the bounded list is found again after positions shift.
+- A click is read against the tab that is actually drawn.
+- A rebuild status that goes away (after a reset) is not announced.
+- Focus also stays on controls without a panel attribute (an Operations summary, a JSON block) across background re-renders.
+- One shared active-place count serves both the rebuild progress and the result.
+- Add place drops its redundant checks.
 
 ## 0.9.0-alpha.57 - Places capture and host (deep pass on alpha.54)
 

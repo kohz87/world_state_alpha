@@ -1864,15 +1864,14 @@ export function createWorldStateUiController({
     return ui.shownModel || model();
   }
 
+  // Keys stay positional (the public model never carries record ids), so after a state change the row is
+  // found again among all records, not only the bounded lists (a record opened by link beyond them).
   function currentKeyOf(row) {
     if (!row?.key) return '';
     if (ui.shownState === getState()) return row.key;
     const fingerprint = rowFingerprint(row);
-    for (const view of Object.values(model().views)) {
-      const match = view.find(item => item.key && rowFingerprint(item) === fingerprint);
-      if (match) return match.key;
-    }
-    return '';
+    const index = normalizeState(getState()).records.findIndex(record => rowFingerprint(projectRecord(record, new Map())) === fingerprint);
+    return index >= 0 ? 'row-' + index : '';
   }
 
   function model() {
@@ -2011,7 +2010,12 @@ export function createWorldStateUiController({
   function focusedControl(active) {
     if (FOCUS_ATTRIBUTES.some(attribute => active.getAttribute(attribute) !== null)) return null;
     const attribute = [...(active.attributes || [])].map(item => item.name).find(name => name.startsWith('data-wsa-'));
-    if (!attribute) return { selector: '', selection: null, radio: null, inside: true };
+    if (!attribute) {
+      // An element without one (an Operations <summary>, a JSON <pre>) is found by its tag and position.
+      const tag = String(active.tagName || '').toLowerCase();
+      const index = tag ? [...(root.querySelectorAll?.(tag) || [])].indexOf(active) : -1;
+      return { selector: index >= 0 ? tag : '', selection: null, radio: null, index, inside: true };
+    }
     const value = active.getAttribute(attribute);
     const selector = '[' + attribute + (value ? '="' + value.replace(/["\\]/gu, '\\$&') + '"' : '') + ']';
     const index = [...(root.querySelectorAll?.(selector) || [])].indexOf(active);
@@ -2105,9 +2109,21 @@ export function createWorldStateUiController({
     });
     ui.shownModel = next;
     ui.shownState = ui.modelState;
+    ui.renderedTab = ui.activeTab;
     restoreDrafts();
     restoreScroll();
     announce(next);
+    // A rebuild sheet that just opened takes focus (its opener now lies under the sheet's backdrop).
+    const sheetOpened = ui.rebuildOpen && !ui.sheetWasOpen;
+    ui.sheetWasOpen = ui.rebuildOpen;
+    if (sheetOpened) {
+      const first = tabStops()[0];
+      if (first?.focus) {
+        first.focus({ preventScroll: true });
+        ui.focusTaken = true;
+        return next;
+      }
+    }
     if (restoreFocusedField(focus)) return next;
     // The first render takes focus into the dialog; a later one returns it there when its control is gone.
     if ((!ui.focusTaken || focus?.inside) && !restoreSearchFocus && !restoreSpatialFocus) focusDialog();
@@ -2137,12 +2153,12 @@ export function createWorldStateUiController({
     return target && typeof target.closest === 'function' ? target.closest(selector) : null;
   }
 
-  function selectedRecordRows(currentModel) {
-    return ui.activeTab === 'recent'
+  function selectedRecordRows(currentModel, tab = ui.activeTab) {
+    return tab === 'recent'
       ? currentModel.views.recent
-      : ui.activeTab === 'resolved'
+      : tab === 'resolved'
         ? currentModel.views.resolved
-        : ui.activeTab === 'search'
+        : tab === 'search'
           ? currentModel.views.search
           : currentModel.views.current;
   }
@@ -2446,7 +2462,8 @@ export function createWorldStateUiController({
     const record = closest(event.target, '[data-wsa-record-index]');
     if (record) {
       const index = Number(record.dataset?.wsaRecordIndex);
-      const rows = selectedRecordRows(renderedModel());
+      // The list on screen: a tab changed while a refresh was deferred is not drawn yet.
+      const rows = selectedRecordRows(renderedModel(), ui.renderedTab ?? ui.activeTab);
       const row = Number.isInteger(index) && index >= 0 ? rows[index] : null;
       const key = currentKeyOf(row);
       if (ui.bulk.active && WORLD_RECORD_TABS.includes(ui.activeTab) && ui.activeTab !== 'resolved') {
@@ -2693,7 +2710,8 @@ export function createWorldStateUiController({
   function announce(next) {
     const status = next.maintenance.rebuild.status;
     const rebuildKey = status ? (status.operationId || '') + ':' + (status.phase || '') : '';
-    if (rebuildKey !== (ui.announcedRebuild ?? rebuildKey)) say(rebuildStateLabel(status) + (status?.phase === 'failed' && status.detail ? ' ' + status.detail : ''));
+    // A status that went away (a reset, a cleared cache) has nothing to say.
+    if (status && rebuildKey !== (ui.announcedRebuild ?? rebuildKey)) say(rebuildStateLabel(status) + (status?.phase === 'failed' && status.detail ? ' ' + status.detail : ''));
     ui.announcedRebuild = rebuildKey;
     const bootstrap = Boolean(next.maintenance.bootstrapRequired);
     if (bootstrap && ui.announcedBootstrap === false) say('Durable World State not found. Automatic continuity is paused.');
@@ -2724,10 +2742,12 @@ export function createWorldStateUiController({
         ui.mobileMoreOpen = false;
       } else if (ui.rebuildOpen) {
         ui.rebuildOpen = false;
-      } else if (ui.spatialEditing) {
-        ui.spatialEditing = false;
-      } else if (ui.mapSettingsOpen) {
-        ui.mapSettingsOpen = false;
+      } else if (ui.spatialEditing || ui.mapSettingsOpen) {
+        // A form with unsaved edits is closed only by its own Cancel: Escape never drops what was typed
+        // (and never closes the panel behind it).
+        if (ui.drafts.get(draftScope(ui.spatialEditing ? 'place' : 'profile'))?.size) return;
+        if (ui.spatialEditing) ui.spatialEditing = false;
+        else ui.mapSettingsOpen = false;
       } else {
         if (typeof onClose === 'function') onClose();
         return;

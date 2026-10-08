@@ -198,7 +198,72 @@ test('67: a click after a state change without a re-render acts on the record th
 });
 
 test('68: the rebuild reports active campaign places', () => {
-  assert.match(source, /places: activeCampaignPlaces\(state\.spatial\),/);
-  assert.match(source, /const placeCount = activeCampaignPlaces\(result\.state\.spatial\);/);
-  assert.match(fs.readFileSync('rebuild.js', 'utf8'), /places: \(candidate\.spatial\?\.locations \|\| \[\]\)\.filter\(location => location\?\.status === 'active'\)\.length,/);
+  assert.match(source, /places: activeCampaignPlaceCount\(state\.spatial\),/);
+  assert.match(source, /const placeCount = activeCampaignPlaceCount\(result\.state\.spatial\);/);
+  assert.match(fs.readFileSync('rebuild.js', 'utf8'), /places: activeCampaignPlaceCount\(candidate\.spatial\),/);
+});
+
+// Code review hardening.
+
+test('review: Escape keeps a place form with unsaved edits open', async () => {
+  await withDom(async ({ root, key }) => {
+    const state = { ...createState('a58'), spatial: normalizeSpatialState({ locations: [{ id: 'mill', name: 'Old Mill', type: 'mill', status: 'active', coordinate: { x: null, y: null, authority: 'unknown', locked: false } }] }) };
+    let closed = 0;
+    const controller = createWorldStateUiController({ root, getState: () => state, initialTab: 'spatial', onClose: () => { closed += 1; } });
+    await root.listeners.click({ target: root.querySelector('[data-wsa-spatial-key]') });
+    await root.listeners.click({ target: root.querySelector('[data-wsa-spatial-edit]') });
+    const name = root.querySelector('[data-wsa-field="name"]');
+    name.value = 'Old Mill Ruins';
+    root.listeners.input({ target: name });
+    key({ key: 'Escape' });
+    // Before: the form closed and the typed name was dropped.
+    assert.equal(controller.getUiState().spatialEditing, true);
+    assert.equal(closed, 0);
+    controller.destroy();
+  });
+});
+
+test('review: a record opened beyond the bounded list is still found after positions shift', async () => {
+  await withDom(async ({ root }) => {
+    const summaries = Array.from({ length: 130 }, (_, index) => 'Condition number ' + index + ' holds');
+    let state = stateWith(summaries);
+    const calls = [];
+    createWorldStateUiController({ root, getState: () => state, onRecordAction: async (action, payload) => { calls.push(payload.record); } });
+    // A record the bounded Current list leaves out, in the state after the shift too.
+    const next = stateWith(['A new first condition holds', ...summaries]);
+    const listed = new Set(buildWorldStateUiModel(next).views.current.map(row => row.summary));
+    const hidden = summaries.findIndex(summary => !listed.has(summary));
+    assert.ok(hidden >= 0);
+    const link = { dataset: { wsaOpenRecord: 'row-' + hidden }, closest: selector => (selector === '[data-wsa-open-record]' ? link : null) };
+    await root.listeners.click({ target: link });
+    state = next;
+    await root.listeners.click({ target: root.querySelector('[data-wsa-record-action="resolve"]') });
+    // Before: the record was in no bounded view of the new state, so the click did nothing.
+    assert.equal(calls[0]?.summary, summaries[hidden]);
+    assert.equal(calls[0]?.key, 'row-' + (hidden + 1));
+  });
+});
+
+test('review: a rebuild status that goes away is not announced', () => {
+  const said = [];
+  withDom(({ root, doc }) => {
+    doc.createElement = () => ({ setAttribute() {}, set textContent(value) { said.push(value); }, isConnected: true, remove() {} });
+    let status = { operationId: 'op1', phase: 'running', totalBoundaries: 2, processedBoundaries: 0, providerCalls: 0, currentRecords: 0, places: 0 };
+    const controller = createWorldStateUiController({ root, getState: () => createState('a58'), getRuntimeInfo: () => ({ rebuildStatus: status }) });
+    status = { ...status, phase: 'completed' };
+    controller.refresh();
+    status = null;
+    controller.refresh();
+    // Before: "Rebuild status" was announced for the status that went away.
+    assert.deepEqual(said, ['Rebuild completed']);
+    controller.destroy();
+  });
+});
+
+test('review: free-text orientation, sheet focus, rendered tab and untagged controls', () => {
+  assert.match(source, /fromId: statedFromAnchorSide \? selectedEffectiveId : anchor\.id,/);
+  const ui = fs.readFileSync('ui.js', 'utf8');
+  assert.match(ui, /const sheetOpened = ui\.rebuildOpen && !ui\.sheetWasOpen;/);
+  assert.match(ui, /selectedRecordRows\(renderedModel\(\), ui\.renderedTab \?\? ui\.activeTab\)/);
+  assert.match(ui, /return \{ selector: index >= 0 \? tag : '', selection: null, radio: null, index, inside: true \};/);
 });
