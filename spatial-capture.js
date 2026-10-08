@@ -77,11 +77,17 @@ function mergeTargetByName(spatial, name) {
   const key = placeNameKey(name);
   const locations = Array.isArray(spatial?.locations) ? spatial.locations : [];
   if (!key || locations.some(loc => loc.status === 'active' && placeNameKey(loc.name) === key)) return null;
-  let current = locations.find(loc => loc.status === 'archived' && loc.mergedInto && placeNameKey(loc.name) === key);
+  return followMerges(spatial, locations.find(loc => loc.status === 'archived' && loc.mergedInto && placeNameKey(loc.name) === key));
+}
+
+// The active place a merged-away place ended up in, following chained merges (at most 8), or null.
+function followMerges(spatial, start) {
+  const locations = Array.isArray(spatial?.locations) ? spatial.locations : [];
+  let current = start;
   for (let hops = 0; current && current.status !== 'active' && hops < 8; hops += 1) {
     current = current.mergedInto ? locations.find(loc => loc.id === current.mergedInto) : null;
   }
-  return current?.status === 'active' ? current : null;
+  return current?.status === 'active' && current !== start ? current : null;
 }
 
 function groundEvidence(items, exchangeById, evidenceSourceClass = '') {
@@ -106,10 +112,6 @@ function groundEvidence(items, exchangeById, evidenceSourceClass = '') {
 
 function coordKnown(coord) {
   return Number.isFinite(coord?.x) && Number.isFinite(coord?.y);
-}
-
-function directionsCompatible(stated, actual) {
-  return canonicalSpatialDirection(stated) === canonicalSpatialDirection(actual);
 }
 
 // The written coordinate forms: [x, y]; (x, y); and x=12.4, y=45.0 (signed values, Markdown axis labels,
@@ -162,12 +164,13 @@ function narratedCoordinateFor(coord, evidence, exchangeById, decimalStep = 0.1,
     if (evidenceClaimQuotedOnly(item.claim, source.text)) continue;
     // Narration only: a pair spoken in dialogue is hearsay wherever the cited claim sits. Only a cited
     // sentence counts: one the claim lies in, or one inside a claim that spans several.
-    const sentences = sentencesOf(withoutSpokenDialogue(source.text));
-    sentences.forEach((sentence, at) => {
+    const parts = claimParts(item.claim);
+    const sentences = narrationSentences(source.text);
+    sentences.forEach(({ sentence, text }, at) => {
       // "The Old Mill stands by the river. It sits at [12, 4]." refers straight back to a cited sentence naming it.
-      const refersBack = at > 0 && REFERS_BACK.test(sentence) && sentenceCited(sentences[at - 1], item.claim)
-        && (!name || sentenceNamesPlace(sentences[at - 1], name));
-      if (!refersBack && !sentenceCited(sentence, item.claim)) return;
+      const refersBack = at > 0 && REFERS_BACK.test(sentence) && sentenceCited(sentences[at - 1].text, parts)
+        && (!name || sentenceNamesPlace(sentences[at - 1].sentence, name));
+      if (!refersBack && !sentenceCited(text, parts)) return;
       if (name && !refersBack && !sentenceNamesPlace(sentence, name)) return;
       matches(sentence);
     });
@@ -183,26 +186,34 @@ function withoutSpokenDialogue(text) {
   const source = String(text || '');
   let out = '';
   let at = 0;
-  for (const [from, to] of quotedDialogueRanges(source).sort((a, b) => a[0] - b[0])) {
-    if (from < at || !/\s/u.test(source.slice(from, to).trim())) continue;
+  for (const [from, to] of quotedDialogueRanges(source)) {
+    if (!/\s/u.test(source.slice(from, to).trim())) continue;
     out += source.slice(at, from) + source.slice(from, to).replace(/[^\n]/gu, ' ');
     at = to;
   }
   return out + source.slice(at);
 }
 
-// A sentence is cited by a claim when the claim lies in it, it lies in the claim (a claim spanning several
-// sentences), or they share a run of three words (a claim cut short, or a sentence with dialogue blanked out).
-function sentenceCited(sentence, claim) {
-  const text = norm(sentence);
-  const cited = norm(claim);
-  if (!text || !cited) return false;
-  if (containsOnWordBoundaries(text, cited) || containsOnWordBoundaries(cited, text)) return true;
-  const words = cited.split(' ');
-  for (let index = 0; index + 3 <= words.length; index += 1) {
-    if (containsOnWordBoundaries(text, words.slice(index, index + 3).join(' '))) return true;
+// The narration sentences of a message (dialogue blanked), computed once per message text.
+const narrationSentenceCache = new Map();
+function narrationSentences(text) {
+  const key = String(text || '');
+  if (!narrationSentenceCache.has(key)) {
+    if (narrationSentenceCache.size >= 8) narrationSentenceCache.delete(narrationSentenceCache.keys().next().value);
+    narrationSentenceCache.set(key, sentencesOf(withoutSpokenDialogue(key)).map(sentence => ({ sentence, text: norm(sentence) })));
   }
-  return false;
+  return narrationSentenceCache.get(key);
+}
+
+// The canonical parts of a claim, one per sentence it spans (its dialogue blanked like the message's).
+function claimParts(claim) {
+  return sentencesOf(withoutSpokenDialogue(claim)).map(norm).filter(part => part.split(' ').length >= 2);
+}
+
+// A sentence is cited by a claim when a part of the claim lies in it, or it lies in the claim (a claim
+// spanning several sentences). Sharing a few words with the claim is not citing it.
+function sentenceCited(text, parts) {
+  return Boolean(text) && parts.some(part => containsOnWordBoundaries(text, part) || containsOnWordBoundaries(part, text));
 }
 
 const REFERS_BACK = /^\s*it\s+(?:sits|stands|lies|rests|is located|is found|is set|is situated)\b/iu;
@@ -244,14 +255,15 @@ const canonicalDirection = canonicalSpatialDirection;
 // anywhere in the message ("the north wind" in another sentence grounds nothing).
 function relationSentences(evidence, exchangeById, names = []) {
   const out = new Set();
+  const named = sentence => names.some(name => name && sentenceNamesPlace(sentence, name));
   for (const item of evidence || []) {
     const source = exchangeById.get(item.sourceMessageId);
     if (!source?.text) continue;
-    const sentences = sentencesOf(withoutSpokenDialogue(source.text));
-    sentences.forEach((sentence, at) => {
-      if (!sentenceCited(sentence, item.claim)) return;
-      const named = sentence => names.some(name => name && sentenceNamesPlace(sentence, name));
-      if (!named(sentence) && !(at > 0 && /^\s*it\b/iu.test(sentence) && named(sentences[at - 1]))) return;
+    const parts = claimParts(item.claim);
+    const sentences = narrationSentences(source.text);
+    sentences.forEach(({ sentence, text }, at) => {
+      if (!sentenceCited(text, parts)) return;
+      if (!named(sentence) && !(at > 0 && /^\s*it\b/iu.test(sentence) && named(sentences[at - 1].sentence))) return;
       out.add(sentence);
     });
   }
@@ -260,14 +272,15 @@ function relationSentences(evidence, exchangeById, names = []) {
 
 // A compass word states a direction only where it is used as one: "north of", "lies north", "due north",
 // "12 km north", "northward"; "the north wind" or "the north gate" names something else.
-const DIRECTION_FOLLOWERS = new Set(['of', 'from', 'by', 'along', 'across', 'beyond', 'past', 'and', 'or', 'then', 'at',
-  'as', 'toward', 'towards', 'into', 'to', 'over', 'through', 'on', 'in', 'for', 'about', 'some']);
+// The word after it (or punctuation, or the sentence end) decides: a clause boundary ("lies to the north,
+// where ...") or a preposition or conjunction of position keeps it a direction; a noun it modifies does not.
+const DIRECTION_FOLLOWERS = new Set(['of', 'from', 'by', 'along', 'across', 'beyond', 'past', 'then', 'at', 'as',
+  'toward', 'towards', 'into', 'to', 'over', 'through', 'on', 'in', 'for', 'about', 'some', 'while', 'where',
+  'when', 'but', 'so', 'until', 'before', 'after', 'whereas', 'yet']);
 function directionStated(sentence, form) {
-  const words = norm(sentence).split(' ');
-  const formWords = form.split(' ');
-  for (let index = 0; index + formWords.length <= words.length; index += 1) {
-    if (formWords.some((word, offset) => words[index + offset] !== word)) continue;
-    const next = words[index + formWords.length];
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${form.replace(' ', '[\\s-]+')}(?![\\p{L}\\p{N}])(\\s*[,.;:!?)\\]—–]|\\s*$|\\s+([\\p{L}\\p{N}]+))`, 'giu');
+  for (const match of String(sentence).toLocaleLowerCase().matchAll(pattern)) {
+    const next = match[2];
     if (/wards?$/u.test(form) || next === undefined || DIRECTION_FOLLOWERS.has(next) || /^\d/u.test(next)) return true;
   }
   return false;
@@ -282,10 +295,6 @@ function directionGroundedInNarration(direction, sentences) {
 const DISTANCE_PATTERN = /(?<![\d.,])(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)\s*(?:km\b|kilomet(?:er|re)s?\b)/giu;
 function narratedDistances(text) {
   return [...String(text || '').matchAll(DISTANCE_PATTERN)].map(match => Number(match[1].replace(/,/gu, '')));
-}
-
-function distanceGroundedInNarration(distanceKm, sentences) {
-  return distanceSentences(distanceKm, sentences).length > 0;
 }
 
 // The sentences that state this distance: what qualifies a distance is read there, not anywhere in the
@@ -323,7 +332,7 @@ function groundDirectRelationProposal(proposal, from, to, evidence, exchangeById
     ? canonicalDirection(proposal.direction)
     : null;
   const distanceGrounded = Number.isFinite(proposal.distanceKm)
-    && distanceGroundedInNarration(proposal.distanceKm, sentences);
+    && distanceSentences(proposal.distanceKm, sentences).length > 0;
   const distanceKm = distanceGrounded ? proposal.distanceKm : null;
   const distanceMode = distanceGrounded ? distanceModeFor(proposal.distanceMode, distanceKm, sentences) : 'unspecified';
 
@@ -353,7 +362,7 @@ function groundRelativeProposal(relative, anchor, evidence, exchangeById, placeN
   }
 
   const hasDistance = Number.isFinite(relative.distanceKm);
-  const distanceGrounded = hasDistance && distanceGroundedInNarration(relative.distanceKm, sentences);
+  const distanceGrounded = hasDistance && distanceSentences(relative.distanceKm, sentences).length > 0;
   const distanceKm = distanceGrounded ? relative.distanceKm : null;
   const distanceMode = distanceGrounded ? distanceModeFor(relative.distanceMode, distanceKm, sentences) : 'unspecified';
 
@@ -540,6 +549,10 @@ export function processSpatialCapture({
   // Base-map places named by the narration but outside the visible set (looked up by name, never scanned).
   const namedBase = [];
   const activeProfile = baseMap ? resolveSpatialProfile(spatial, baseMap) : (profile || resolveSpatialProfile(spatial));
+  // Places this reply gives a position: a relation to one of them is judged after they are saved.
+  const movedThisReply = new Set(supplemented.mutations
+    .filter(item => item?.action === 'upsert_location' && item.locationId && coordKnown(item.coordinate))
+    .map(item => item.locationId));
 
   for (let index = 0; index < supplemented.mutations.length; index += 1) {
     const proposal = structuredClone(supplemented.mutations[index]);
@@ -604,8 +617,12 @@ export function processSpatialCapture({
           continue;
         }
         const effective = base ? resolveEffectiveLocations(spatial, baseMap, { onlyIds: new Set([base.id]) })[0] : null;
-        // A merged-away duplicate's old name is the place it was merged into (its name kept).
-        const mergedTarget = !visibleMatch && !effective ? mergeTargetByName(spatial, proposal.name) : null;
+        // A merged-away duplicate's old name is the place it was merged into (its name kept); so is a base
+        // place whose override was merged away.
+        const override = effective?.overrideId ? (spatial?.locations || []).find(loc => loc.id === effective.overrideId) : null;
+        const mergedTarget = !visibleMatch
+          ? (override?.mergedInto ? followMerges(spatial, override) : (!effective ? mergeTargetByName(spatial, proposal.name) : null))
+          : null;
         const known = mergedTarget || effective;
         if (known?.id && (known.status || 'active') !== 'active' && !mergedTarget) {
           // An archived override is a base place the operator retired: narration neither updates it nor
@@ -721,14 +738,17 @@ export function processSpatialCapture({
             finalCoord = { x: null, y: null, authority: 'relative', locked: false };
           }
 
-          // True North Lock verification
-          if (coordKnown(finalCoord) && coordKnown(anchor.coordinate) && activeProfile?.trueNorthLocked === true) {
+          // A narrated position that contradicts its own stated direction under a locked True North rejects the
+          // place. When this reply also moves the anchor, the reducer judges the relation against the anchor's
+          // new position instead (as for direct relations).
+          if (coordKnown(finalCoord) && coordKnown(anchor.coordinate) && activeProfile?.trueNorthLocked === true
+            && !movedThisReply.has(anchor.id)) {
             const actual = directionFromDelta(
               finalCoord.x - anchor.coordinate.x,
               finalCoord.y - anchor.coordinate.y,
               activeProfile,
             );
-            if (actual && !directionsCompatible(proposal.relative.direction, actual)) {
+            if (actual && canonicalDirection(actual) !== canonicalDirection(proposal.relative.direction)) {
               rejected.push({
                 stage: 'spatial-true-north',
                 index: rowIndex,
@@ -748,6 +768,7 @@ export function processSpatialCapture({
             notes: '',
             evidence: proposal.evidence,
             __deferredTargetName: proposal.locationId ? '' : proposal.name,
+            __row: rowIndex,
           });
         }
       }

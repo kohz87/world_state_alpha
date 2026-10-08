@@ -102,7 +102,7 @@ test('A28: Resume refuses when the same profile now runs a different model', asy
   const rebuild = source.slice(source.indexOf("if (actionId === 'rebuild')"), source.indexOf('async function applySpatialAction('));
   assert.match(rebuild, /const routeFingerprint = worldStateRouteFingerprint\(getContext\(\), routeSettings\(\)\);/);
   // alpha.57: the host connection is pinned the same way.
-  assert.match(rebuild, /route: routeFingerprint\.signature\s*\? \{ \.\.\.routeSettings\(\), signature: routeFingerprint\.signature \}\s*: pinnedHostRoute\(\),/);
+  assert.match(rebuild, /route: routeFingerprint\.signature\s*\? \{ \.\.\.routeSettings\(\), signature: routeFingerprint\.signature \}\s*: pinnedHostRoute\(routeFingerprint\),/);
   assert.match(rebuild, /routeKey,\n\s*totalBoundaries/);
 });
 

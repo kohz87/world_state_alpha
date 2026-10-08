@@ -100,6 +100,20 @@ export function worldStateRouteFingerprint(ctx, route = {}) {
     }
     return { profileId, signature: profile ? profileSignature(profile) : null, maxOutputTokens };
   }
+  const host = hostRouteParts(ctx);
+  return {
+    profileId: '',
+    mainApi: host.mainApi,
+    source: host.source,
+    // A model that cannot be read never matches, so Resume fails closed instead of guessing.
+    model: host.model || 'unknown:' + (++fingerprintSequence),
+    maxOutputTokens,
+    // What a run pins each boundary to (null when the model cannot be read): taken from this same snapshot.
+    hostKey: host.model ? JSON.stringify([host.mainApi, host.source, host.model]) : null,
+  };
+}
+
+function hostRouteParts(ctx) {
   const chatCompletion = ctx?.mainApi === 'openai';
   let model = null;
   try {
@@ -110,30 +124,17 @@ export function worldStateRouteFingerprint(ctx, route = {}) {
     model = null;
   }
   return {
-    profileId: '',
     mainApi: ctx?.mainApi ?? null,
     source: chatCompletion ? ctx?.chatCompletionSettings?.chat_completion_source ?? null : ctx?.textCompletionSettings?.type ?? null,
-    // A model that cannot be read never matches, so Resume fails closed instead of guessing.
-    model: typeof model === 'string' && model ? model : 'unknown:' + (++fingerprintSequence),
-    maxOutputTokens,
+    model: typeof model === 'string' && model ? model : null,
   };
 }
 
 // The host connection a request goes to (API, source or type, model), or null when the model cannot be read.
 // A run pinned to it (a rebuild) fails closed when the operator switches model mid-run, like a changed profile.
 export function worldStateHostRouteKey(ctx) {
-  const chatCompletion = ctx?.mainApi === 'openai';
-  let model = null;
-  try {
-    model = chatCompletion
-      ? (typeof ctx?.getChatCompletionModel === 'function' ? ctx.getChatCompletionModel() : null)
-      : ctx?.onlineStatus;
-  } catch {
-    model = null;
-  }
-  if (typeof model !== 'string' || !model) return null;
-  const source = chatCompletion ? ctx?.chatCompletionSettings?.chat_completion_source ?? null : ctx?.textCompletionSettings?.type ?? null;
-  return JSON.stringify([ctx?.mainApi ?? null, source, model]);
+  const host = hostRouteParts(ctx);
+  return host.model ? JSON.stringify([host.mainApi, host.source, host.model]) : null;
 }
 
 function profileSignature(profile) {

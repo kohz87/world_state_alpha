@@ -36,12 +36,22 @@
 
 ### Validation
 
-- New `tests/audit-alpha57.test.js` (11 tests).
-- Two older source checks were updated: the rebuild route expression is now `pinnedHostRoute()`, and the base-map registry write is now inside the saved attach.
+- New `tests/audit-alpha57.test.js` (11 tests, plus 4 review-hardening tests that fail on the pre-review code).
+- Two older source checks were updated: the rebuild route expression is now `pinnedHostRoute(routeFingerprint)`, and the base-map registry write is now inside the saved attach.
 - Live in SillyTavern (stub provider), alpha.56 against alpha.57:
   - a "north" relation cited from "The north wind howls … Oakvale stands near Millbrook, some 1,200 km away" was stored as north/200 on alpha.56; alpha.57 stores no relation;
   - a reply with nine Places rows kept none of them on alpha.56 and keeps the first eight on alpha.57.
 - The branch, Places, Add place, narrator and Resume scripts give the same results as on alpha.56.
+
+### Code review hardening
+
+- A base place whose override was merged away now maps to the merge target instead of being rejected as archived.
+- Sharing a few words with the cited claim no longer makes a sentence cited, so a distance, direction or coordinate from an uncited sentence is not borrowed.
+- A direction before a comma clause or a conjunction ("to the north, where …", "north while …") is grounded again. "The north and south gates" no longer is.
+- A rebuild's host-model pin comes from the same route snapshot Resume compares, and the model reading is shared with the fingerprint.
+- A missed-capture row moved by a rename is stamped, so another session's older copy no longer reverts it on save.
+- A relative relation from a place moved in the same reply is judged after the move, and its rejection carries the row number. A narrated position that contradicts its own stated direction is still rejected.
+- Narration sentences are computed once per message, and the claim is normalized once per evidence item.
 
 ## 0.9.0-alpha.56 - Hearsay, plans and time passing (deep pass on alpha.54)
 

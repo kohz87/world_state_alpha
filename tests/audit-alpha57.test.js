@@ -153,3 +153,50 @@ test('52, 57-60: host lifecycle and settings', () => {
   // 60: detach reports success only after the save.
   assert.match(source, /if \(await persistSpatialState\(res\.state\)\) notify\('info', 'Base map detached\./);
 });
+
+// Code review hardening.
+
+test('review: a base place whose override was merged away maps to the merge target', () => {
+  const baseMap = parseBaseMap({ id: 'realm', locations: [{ id: 'b_keep', name: 'Greywatch Keep', coord: [1, 1] }] });
+  let spatial = normalizeSpatialState({ baseMapRef: { id: 'realm' }, locations: [place('ov_keep', 'Greywatch Keep', unknown, { baseRefId: 'b_keep' }), place('fort', 'Greywatch Fortress')] });
+  spatial = reduceSpatialMutations(spatial, { chatKey: 'a57', messageId: 1, lineageKey: 'l1', operation: 'manual', mutations: [{ action: 'merge_locations', sourceId: 'ov_keep', targetId: 'fort' }] }, baseMap, { allowBaseScan: true }).spatial;
+  const out = spatialCapture('Greywatch Keep looms over the pass.', [location('Greywatch Keep', 'Greywatch Keep looms over the pass')], spatial, { baseMap });
+  assert.ok(!out.rejected.some(item => /archived/.test(item.reason)), JSON.stringify(out.rejected));
+  assert.deepEqual(out.spatial.locations.filter(item => item.status === 'active').map(item => item.name), ['Greywatch Fortress']);
+});
+
+test('review: sharing words is not citing; directions before a clause or conjunction count, gate names do not', () => {
+  const borrowed = spatialCapture('Millbrook lies by the river. Oakvale sits by the river 12 km north of Millbrook.', [relation('Millbrook lies by the river', { direction: 'north', distanceKm: 12 })], twoPlaces());
+  assert.equal(borrowed.spatial.relations.length, 0);
+  const clause = spatialCapture('From Millbrook, Oakvale lies to the north, where the river bends.', [relation('From Millbrook, Oakvale lies to the north, where the river bends', { direction: 'north' })], twoPlaces());
+  assert.equal(clause.spatial.relations[0]?.direction, 'north');
+  const conjunction = spatialCapture('Oakvale lies north while Millbrook sleeps.', [relation('Oakvale lies north while Millbrook sleeps', { direction: 'north' })], twoPlaces());
+  assert.equal(conjunction.spatial.relations[0]?.direction, 'north');
+  const gates = spatialCapture('Between the north and south gates, Oakvale meets Millbrook.', [relation('Between the north and south gates, Oakvale meets Millbrook', { direction: 'north' })], twoPlaces());
+  assert.equal(gates.spatial.relations.length, 0);
+});
+
+test('review: a relative relation is judged after a same-reply anchor move and its rejection keeps its row', () => {
+  const spatial = normalizeSpatialState({ profile, locations: [place('mill', 'Millbrook', { x: 0, y: 0, authority: 'narrative_explicit', locked: false })] });
+  const text = 'Millbrook now stands at [0, 20]. Oakvale stands at [0, 10], north of Millbrook.';
+  const out = spatialCapture(text, [
+    { action: 'upsert_location', locationId: 'mill', name: 'Millbrook', coordinate: { x: 0, y: 20 }, admissionReason: 'explicit_coordinate', evidence: [{ sourceMessageId: 2, claim: 'Millbrook now stands at [0, 20]' }] },
+    location('Oakvale', 'Oakvale stands at [0, 10], north of Millbrook', { coordinate: { x: 0, y: 10 }, relative: { toLocationId: 'mill', direction: 'north' } }),
+  ], spatial);
+  assert.ok(out.spatial.locations.some(item => item.name === 'Oakvale'));
+  const row = out.rejected.find(item => item.stage === 'spatial-reducer');
+  assert.equal(row?.index, 1, JSON.stringify(out.rejected));
+});
+
+test('review: the rebuild pin comes from the route snapshot; relinked rows survive merges', async () => {
+  const { worldStateRouteFingerprint } = await import('../provider-routing.js');
+  const host = { mainApi: 'textgenerationwebui', onlineStatus: 'model-a', extensionSettings: {} };
+  assert.equal(worldStateRouteFingerprint(host, {}).hostKey, worldStateHostRouteKey(host));
+  assert.match(source, /: pinnedHostRoute\(routeFingerprint\),/);
+  const { mergeOperationRows } = await import('../diagnostics.js');
+  const base = { operationId: 'capture:3:1:1', label: 'capture', at: 5, sourceMessageId: 3, outcome: 'invalid-response' };
+  const stale = { ...base, lineageKey: 'old-l' };
+  const moved = { ...base, lineageKey: 'new-l', relinkedAt: 9 };
+  assert.equal(mergeOperationRows([moved], [stale])[0].lineageKey, 'new-l');
+  assert.equal(mergeOperationRows([stale], [moved])[0].lineageKey, 'new-l');
+});

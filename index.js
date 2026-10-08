@@ -31,7 +31,7 @@ import {
   previewWorldStateImport,
   previewWorldStateReset,
 } from './manual.js';
-import { cancelWorldStateRequests, worldStateHostRouteKey, worldStateProfileOptions, worldStateRouteFingerprint } from './provider-routing.js';
+import { cancelWorldStateRequests, worldStateProfileOptions, worldStateRouteFingerprint } from './provider-routing.js';
 import { planChronologicalRebuild, REBUILD_LIMITS, rebuildSnapshotToken, runManualRebuild } from './rebuild.js';
 import { buildRelevanceIndex, selectLifecycleCandidates, selectRelevantRecords, selectRelevantTombstones, updateRelevanceIndex } from './relevance.js';
 import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelevanceIndex } from './spatial-relevance.js';
@@ -2148,11 +2148,11 @@ function recentText(exchange) {
   return boundedExchangeText((Array.isArray(exchange) ? exchange : []).map(row => row?.content));
 }
 
-// The host route pinned to the connection and model in use now (unpinned when the model cannot be read).
-function pinnedHostRoute() {
+// The host route pinned to the connection and model of the run's route snapshot (the one Resume compares),
+// unpinned when the model cannot be read.
+function pinnedHostRoute(fingerprint) {
   const route = routeSettings();
-  const hostKey = route.profileId ? null : worldStateHostRouteKey(getContext());
-  return hostKey ? { ...route, hostKey } : route;
+  return !route.profileId && fingerprint?.hostKey ? { ...route, hostKey: fingerprint.hostKey } : route;
 }
 
 function routeSettings() {
@@ -3734,7 +3734,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         // host connection is pinned the same way, so switching model mid-run never mixes two models.
         route: routeFingerprint.signature
           ? { ...routeSettings(), signature: routeFingerprint.signature }
-          : pinnedHostRoute(),
+          : pinnedHostRoute(routeFingerprint),
         operationId,
         signal: rebuildController.signal,
         isCurrent,
