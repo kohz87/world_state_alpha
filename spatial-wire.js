@@ -159,14 +159,15 @@ export function validateSpatialMutation(raw) {
 
 export function validateSpatialEnvelope(raw) {
   const source = Array.isArray(raw) ? raw : [];
-  if (source.length > SPATIAL_WIRE_LIMITS.mutations) {
-    throw new SpatialWireError('spatial mutation count exceeds limit');
-  }
   const mutations = [];
   // The model's own row number for each valid mutation, so later rejections name the row the model wrote.
   const rowIndexes = [];
   const rejected = [];
-  for (let index = 0; index < source.length; index += 1) {
+  // Rows past the cap are rejected one by one; they never fail the response (and its Reality records).
+  for (let index = SPATIAL_WIRE_LIMITS.mutations; index < source.length; index += 1) {
+    rejected.push({ index, code: 'WORLD_STATE_SPATIAL_WIRE_LIMIT', reason: 'spatial mutation beyond the limit of ' + SPATIAL_WIRE_LIMITS.mutations + ' per response' });
+  }
+  for (let index = 0; index < Math.min(source.length, SPATIAL_WIRE_LIMITS.mutations); index += 1) {
     try {
       mutations.push(validateSpatialMutation(source[index]));
       rowIndexes.push(index);

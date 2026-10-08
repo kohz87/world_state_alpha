@@ -43,7 +43,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.56';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.57';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -1370,6 +1370,24 @@ async function handleCharacterRenamedInPastChat(messages, oldAvatar, newAvatar) 
       setCachedState(chatKey, rebased);
       loadedChats.add(chatKey);
     }
+    // Operations-log rows (missed captures) follow the renamed messages to their new keys.
+    const keyMap = new Map();
+    for (let index = 0; index < previousLineage.length; index += 1) {
+      const before = previousLineage[index]?.lineageKey;
+      const after = nextLineage[index]?.lineageKey;
+      if (before && after && before !== after) keyMap.set(before, after);
+    }
+    const ids = previousLineage.map((_entry, index) => index);
+    const beforeContent = contentLineageKeys(previousMessages, ids);
+    const afterContent = contentLineageKeys(renamedMessages, ids);
+    for (const id of ids) {
+      const before = beforeContent.get(id);
+      const after = afterContent.get(id);
+      if (before && after && before !== after) keyMap.set(before, after);
+    }
+    // A chat not open here has its saved log loaded first, so every saved row moves too.
+    if (keyMap.size) await hydrateOperationLog(chatKey);
+    if (diagnosticStore.relink(chatKey, keyMap)) scheduleOperationLogSave(chatKey, { now: true });
     if (currentChatKey() === chatKey) {
       updatePrivateInjection();
       refreshPanel();
@@ -2128,6 +2146,13 @@ function boundedExchange(chat, endMessageId, limit = CAPTURE_LIMITS.exchangeMess
 // The relevance view of an exchange: bounded like capture's exchange, never a per-message prefix.
 function recentText(exchange) {
   return boundedExchangeText((Array.isArray(exchange) ? exchange : []).map(row => row?.content));
+}
+
+// The host route pinned to the connection and model of the run's route snapshot (the one Resume compares),
+// unpinned when the model cannot be read.
+function pinnedHostRoute(fingerprint) {
+  const route = routeSettings();
+  return !route.profileId && fingerprint?.hostKey ? { ...route, hostKey: fingerprint.hostKey } : route;
 }
 
 function routeSettings() {
@@ -3007,6 +3032,8 @@ async function activateCurrentChat() {
   if (panelChatKey !== 'no-chat' && panelChatKey !== chatKey) closeWorldStatePanel();
   if (previousKey && previousKey !== 'no-chat' && previousKey !== chatKey) {
     cancelWorldStateRequests({ chatKey: previousKey });
+    // Leaving the chat discards a failed rebuild's resume point (core contract C19).
+    rebuildResumes.delete(previousKey);
   }
 
   if (!hostHydrationReady || !identity.ready || chatKey === 'no-chat') {
@@ -3221,8 +3248,10 @@ function bindSettingsEvents() {
       const state = stateCache.get(chatKey);
       if (chatKey !== 'no-chat' && state?.spatial?.baseMapRef?.id) {
         void getChatBaseMap(chatKey, state).then(baseMap => {
-          if (baseMap && currentChatKey() === chatKey) {
-            resetSpatialRelevanceIndex(chatKey, state.spatial, baseMap);
+          // Index the state cached now: a place captured while the map loaded must not be left out.
+          const current = stateCache.get(chatKey);
+          if (baseMap && currentChatKey() === chatKey && current?.spatial?.baseMapRef?.id === state.spatial.baseMapRef.id) {
+            resetSpatialRelevanceIndex(chatKey, current.spatial, baseMap);
           }
           updatePrivateInjection();
           refreshPanel();
@@ -3633,7 +3662,11 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const isCurrentExact = () => rangeCurrent(true);
     const settings = getWorldStateSettings();
     const baseMap = await getChatBaseMap(chatKey, state);
-    if (!isCurrentExact()) return;
+    if (!isCurrentExact()) {
+      notify('error', 'The rebuild did not start: the chat or World State changed while the base map loaded. Try again.');
+      refreshPanel();
+      return;
+    }
     if (settings.spatialEnabled && state.spatial?.baseMapRef?.id && !baseMap) {
       notify('error', 'Rebuild paused because the attached Spatial base map is unavailable. Reattach or restore the base map first.');
       return;
@@ -3697,8 +3730,11 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         state,
         chat,
         chatKey,
-        // A profile edited after this check still fails closed: every boundary must match this signature.
-        route: routeFingerprint.signature ? { ...routeSettings(), signature: routeFingerprint.signature } : routeSettings(),
+        // A profile edited after this check still fails closed: every boundary must match this signature. The
+        // host connection is pinned the same way, so switching model mid-run never mixes two models.
+        route: routeFingerprint.signature
+          ? { ...routeSettings(), signature: routeFingerprint.signature }
+          : pinnedHostRoute(routeFingerprint),
         operationId,
         signal: rebuildController.signal,
         isCurrent,
@@ -4766,11 +4802,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     // Uploading an immutable source may finish after navigation. In that case
     // leave the harmless source file unattached and mutate no campaign/settings state.
     if (currentChatKey() !== chatKey || epoch(chatKey) !== startEpoch) return;
-    const settings = getWorldStateSettings();
-    const sourceKey = stored.pointer.digest || baseMapCacheKey(stored.pointer);
-    settings.spatialBaseMaps[sourceKey] = stored.pointer;
-    settings.spatialBaseMaps[stored.pointer.id] = stored.pointer;
-    persistHostSettings();
+    // The map is cached for this session now, but registered for other chats only once it is attached: a
+    // declined or failed import never changes which map another chat resolves.
     cacheBaseMap(baseMapCacheKey(stored.pointer), stored.baseMap);
 
     const priorProfile = resolveSpatialProfile(state.spatial, null);
@@ -4799,7 +4832,13 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     ];
     const res = applySequence(state, steps, stored.baseMap);
     if (res.outcome === 'applied') {
-      await persistSpatialState(res.state, 'Base map attached: ' + stored.baseMap.name);
+      if (await persistSpatialState(res.state, 'Base map attached: ' + stored.baseMap.name)) {
+        const settings = getWorldStateSettings();
+        const sourceKey = stored.pointer.digest || baseMapCacheKey(stored.pointer);
+        settings.spatialBaseMaps[sourceKey] = stored.pointer;
+        settings.spatialBaseMaps[stored.pointer.id] = stored.pointer;
+        persistHostSettings();
+      }
     } else {
       notify('error', 'Base map was not attached: ' + (res.rejected?.[0]?.reason || 'rejected'));
     }
@@ -4821,8 +4860,8 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     });
     const res = applySequence(state, steps);
     if (res.outcome === 'applied') {
-      await persistSpatialState(res.state);
-      notify('info', 'Base map detached. Coordinate Profile is now manual.');
+      // A save cancelled by a branch change already said so; only a saved detach reports success.
+      if (await persistSpatialState(res.state)) notify('info', 'Base map detached. Coordinate Profile is now manual.');
     } else {
       notify('error', 'Base map was not detached: ' + (res.rejected?.[0]?.reason || 'rejected'));
     }

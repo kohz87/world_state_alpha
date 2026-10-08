@@ -175,6 +175,9 @@ function nameLikeQuote(text, before) {
   return words.every(word => /^\p{Lu}/u.test(word) || NAME_CONNECTORS.has(word.toLocaleLowerCase())) && /^\p{Lu}/u.test(words[0]);
 }
 
+// Inner ranges [from, to) of the quoted spans, in reading order and never overlapping (also exported for
+// callers that blank dialogue out themselves).
+export { quotedSpans as quotedDialogueRanges };
 function quotedSpans(sourceText) {
   const source = String(sourceText ?? '');
   const spans = [];

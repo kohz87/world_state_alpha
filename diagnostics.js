@@ -46,6 +46,8 @@ export function sanitizeCaptureDiagnostic(raw = {}) {
     durationMs: int(raw.durationMs),
     responseJson: clean(raw.responseJson, 16000),
     rejectionsJson: clean(raw.rejectionsJson, 12000),
+    // When a host rewrite moved the row to new message keys: that version wins every later merge.
+    ...(int(raw.relinkedAt) > 0 ? { relinkedAt: int(raw.relinkedAt) } : {}),
   };
 }
 
@@ -60,7 +62,10 @@ export function mergeOperationRows(left = [], right = [], limit = DEFAULT_LIMIT)
   for (const raw of [...(Array.isArray(left) ? left : []), ...(Array.isArray(right) ? right : [])]) {
     if (!raw || typeof raw !== 'object') continue;
     const row = sanitizeCaptureDiagnostic(raw);
-    byKey.set(operationKey(row), row);
+    const key = operationKey(row);
+    // A row moved to new message keys (a rename) is never put back by another session's older copy.
+    if ((byKey.get(key)?.relinkedAt || 0) > (row.relinkedAt || 0)) continue;
+    byKey.set(key, row);
   }
   const rows = [...byKey.values()].sort((a, b) => a.at - b.at);
   return trimOperationRows(rows, Math.max(1, int(limit, DEFAULT_LIMIT)));
@@ -108,6 +113,23 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     return (byChat.get(clean(chatKey, 500)) || []).map(recoveryView);
   }
 
+  // Rows keyed to message versions a host rewrite renamed (a character rename rewrites message names) move to
+  // the new keys, so a missed capture stays listed and clearable. Returns how many rows changed.
+  function relink(chatKey, keyMap) {
+    const rows = byChat.get(clean(chatKey, 500));
+    if (!rows || !(keyMap instanceof Map) || !keyMap.size) return 0;
+    let changed = 0;
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const lineageKey = row.lineageKey && keyMap.get(row.lineageKey);
+      const contentKey = row.contentLineageKey && keyMap.get(row.contentLineageKey);
+      if (!lineageKey && !contentKey) continue;
+      rows[index] = { ...row, ...(lineageKey ? { lineageKey } : {}), ...(contentKey ? { contentLineageKey: contentKey } : {}), relinkedAt: now() };
+      changed += 1;
+    }
+    return changed;
+  }
+
   function clear(chatKey) {
     const key = clean(chatKey, 500);
     const count = byChat.get(key)?.length || 0;
@@ -126,7 +148,7 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     };
   }
 
-  return Object.freeze({ record, records, allRecords, recoveryRows, merge, clear, bundle });
+  return Object.freeze({ record, records, allRecords, recoveryRows, merge, relink, clear, bundle });
 }
 
 // A rebuild operation id is `rebuild:<sourceMessageId>:<epoch>:<startMessageId>[:resume-…]`.

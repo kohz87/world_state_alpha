@@ -240,6 +240,8 @@ export function normalizeSpatialLocation(raw, { strict = false } = {}) {
     evidenceIds,
     notes,
     ...(raw.operatorOwned === true ? { operatorOwned: true } : {}),
+    // The place a merged-away duplicate was merged into: narration of its old name means that place.
+    ...(boundedText(raw.mergedInto, 120) ? { mergedInto: boundedText(raw.mergedInto, 120) } : {}),
   };
 }
 
@@ -501,7 +503,8 @@ export function canonicalSpatialDirection(value) {
     w: 'west',
     nw: 'northwest',
   };
-  return aliases[raw] || raw;
+  // Own keys only: "constructor" or "tostring" is no alias (and no compass point).
+  return Object.hasOwn(aliases, raw) ? aliases[raw] : raw;
 }
 
 // Null prototype: a stored direction such as 'constructor' or 'tostring' is never mistaken for a compass point.
@@ -616,6 +619,24 @@ export function baseLocationByName(baseMap, name) {
       if (itemKey) index.set(itemKey, index.has(itemKey) ? { ambiguous: true } : item);
     }
     baseNameIndexes.set(locations, index);
+  }
+  return index.get(key) || null;
+}
+
+// name -> base route with that name, built once per base map (no scan on a turn).
+const baseRouteNameIndexes = new WeakMap();
+export function baseRouteByName(baseMap, name) {
+  const routes = baseMap && Array.isArray(baseMap.routes) ? baseMap.routes : null;
+  const key = placeNameKey(name);
+  if (!routes || !key) return null;
+  let index = baseRouteNameIndexes.get(routes);
+  if (!index) {
+    index = new Map();
+    for (const item of routes) {
+      const itemKey = item?.id ? placeNameKey(item.name) : '';
+      if (itemKey && !index.has(itemKey)) index.set(itemKey, item);
+    }
+    baseRouteNameIndexes.set(routes, index);
   }
   return index.get(key) || null;
 }
@@ -1264,6 +1285,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         }
 
         sourceLoc.status = 'archived';
+        sourceLoc.mergedInto = targetId;
         sourceLoc.lastChangedMessage = context.messageId;
         targetLoc.lastChangedMessage = context.messageId;
         applied.push({ action: 'merge_locations', sourceId, targetId });
