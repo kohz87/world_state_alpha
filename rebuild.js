@@ -650,7 +650,7 @@ export async function runManualRebuild({
         providerCalls,
         ...boundary,
         currentRecords: (candidate.records || []).filter(record => record?.status === 'active').length,
-        places: (candidate.spatial?.locations || []).filter(location => location?.status !== 'archived').length,
+        places: (candidate.spatial?.locations || []).filter(location => location?.status === 'active').length,
       });
     } catch {
       // Progress reporting is presentation-only and must never fail an atomic rebuild.

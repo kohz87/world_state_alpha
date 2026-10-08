@@ -2148,6 +2148,12 @@ function recentText(exchange) {
   return boundedExchangeText((Array.isArray(exchange) ? exchange : []).map(row => row?.content));
 }
 
+// The places a rebuild reports: active campaign places, as its progress counts them (archived places and
+// read-only base-map places are not what it rebuilt).
+function activeCampaignPlaces(spatial) {
+  return (spatial?.locations || []).filter(location => location?.status === 'active').length;
+}
+
 // The host route pinned to the connection and model of the run's route snapshot (the one Resume compares),
 // unpinned when the model cannot be read.
 function pinnedHostRoute(fingerprint) {
@@ -3302,6 +3308,7 @@ function closeWorldStatePanel() {
   panelController = null;
   panelRoot?.remove?.();
   panelRoot = null;
+  globalThis.document?.body?.classList?.remove('wsa-panel-open');
   panelChatKey = 'no-chat';
 }
 
@@ -3699,7 +3706,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       applied: priorTotals.applied,
       rejected: priorTotals.rejected,
       currentRecords: (state.records || []).filter(record => record?.status === 'active').length,
-      places: resolveEffectiveLocations(state.spatial, baseMap).length,
+      places: activeCampaignPlaces(state.spatial),
       startedAt: Date.now(),
       detail: 'Rebuilding ' + rangeLabel
         + (includeHiddenMessages
@@ -4058,7 +4065,7 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     passiveCaptureRebaseCandidates.delete(chatKey);
     forgetBranchContinuations(chatKey);
     const currentCount = (result.state.records || []).filter(record => record?.status === 'active').length;
-    const placeCount = resolveEffectiveLocations(result.state.spatial, baseMap).length;
+    const placeCount = activeCampaignPlaces(result.state.spatial);
     rebuildStatuses.set(chatKey, {
       ...(rebuildStatuses.get(chatKey) || {}),
       phase: 'completed',
@@ -4493,10 +4500,17 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       notify('warning', 'A place named ' + existingPlace.name + ' already exists. Open it in Places to edit it instead.');
       return;
     }
-    const type = window.prompt('Location type (e.g. inn, hamlet, ford, ruin):', 'landmark') || 'landmark';
+    // Cancel at any prompt cancels the whole add (an empty answer is still a blank field).
+    const typeRaw = window.prompt('Location type (e.g. inn, hamlet, ford, ruin):', 'landmark');
+    if (typeRaw === null) return;
+    const type = typeRaw.trim() || 'landmark';
     const xRaw = window.prompt('Coordinate X (leave blank if unknown):', '');
+    if (xRaw === null) return;
     const yRaw = window.prompt('Coordinate Y (leave blank if unknown):', '');
-    const context = window.prompt('Region / context (optional):', '') || '';
+    if (yRaw === null) return;
+    const contextRaw = window.prompt('Region / context (optional):', '');
+    if (contextRaw === null) return;
+    const context = contextRaw;
     const x = xRaw !== null && xRaw.trim() !== '' ? Number(xRaw) : null;
     const y = yRaw !== null && yRaw.trim() !== '' ? Number(yRaw) : null;
     if ((x !== null) !== (y !== null) || (x !== null && (!Number.isFinite(x) || !Number.isFinite(y)))) {
@@ -4711,8 +4725,9 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       note: 'Archived campaign location',
       baseMap,
     });
+    // True only once saved: the panel closes the edit form (and its unsaved edits) only then.
     if (res.outcome === 'applied') {
-      await persistSpatialState(res.state, 'Archived location ' + payload.location.name);
+      return persistSpatialState(res.state, 'Archived location ' + payload.location.name);
     } else {
       notify('error', 'Archive rejected: ' + (res.rejected?.[0]?.reason || 'invalid archive'));
     }
@@ -4756,7 +4771,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       baseMap,
     });
     if (res.outcome === 'applied') {
-      await persistSpatialState(res.state, 'Merged duplicate into ' + target.name);
+      return persistSpatialState(res.state, 'Merged duplicate into ' + target.name);
     } else {
       notify('error', 'Merge rejected: ' + (res.rejected?.[0]?.reason || 'invalid merge'));
     }
@@ -4779,7 +4794,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       baseMap,
     });
     if (res.outcome === 'applied') {
-      await persistSpatialState(res.state, 'Deleted location ' + payload.location.name);
+      return persistSpatialState(res.state, 'Deleted location ' + payload.location.name);
     } else {
       notify('error', 'Delete rejected: ' + (res.rejected?.[0]?.reason || 'invalid delete'));
     }
@@ -4900,6 +4915,8 @@ export async function openWorldStatePanel() {
   panelRoot = document.createElement('div');
   panelRoot.id = WORLD_STATE_PANEL_ROOT_ID;
   document.body.appendChild(panelRoot);
+  // Lets SillyTavern's toasts (panel errors included) show above the panel while it is open.
+  document.body.classList.add('wsa-panel-open');
   panelController = createWorldStateUiController({
     root: panelRoot,
     // The panel only reads it (its model is built from a private copy), so the cached state is passed as is.

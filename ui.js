@@ -296,16 +296,26 @@ function projectSpatialDetail(spatialState, loc, key, { resolvedLocations, liste
       const selectedIsTarget = rel.toId === loc.id || rel.toId === campaignId;
       const otherId = selectedIsTarget ? rel.fromId : rel.toId;
       const other = locMap.get(otherId);
-      const selectedDirection = selectedIsTarget ? canonicalSpatialDirection(rel.direction) : inverseDirection(rel.direction);
+      const otherName = other?.name || 'known place';
+      // A free-text direction ("upstream", "across the bay") cannot be reversed: it is shown and kept as
+      // stated, read from the place it was stated for (the relation's target).
+      const freeText = Boolean(rel.direction) && !OPPOSITE_DIRECTION[canonicalSpatialDirection(rel.direction)];
+      const selectedDirection = freeText
+        ? clean(rel.direction, 30)
+        : selectedIsTarget ? canonicalSpatialDirection(rel.direction) : inverseDirection(rel.direction);
       const distText = Number.isFinite(rel.distanceKm) ? ` (${rel.distanceKm} km)` : '';
       return {
         id: clean(rel.id, 140),
         anchorId: clean(otherId, 120),
         anchorName: clean(other?.name, 120) || 'known place',
         direction: clean(selectedDirection, 30),
+        freeText,
+        selectedIsTarget,
         distanceKm: Number.isFinite(rel.distanceKm) ? rel.distanceKm : null,
         distanceMode: clean(rel.distanceMode, 30) || 'unspecified',
-        summary: `${selectedDirection || 'connected'} relative to ${other?.name || 'known place'}${distText}`,
+        summary: freeText && !selectedIsTarget
+          ? `${otherName} is ${selectedDirection} of this place${distText}`
+          : `${selectedDirection || 'connected'} relative to ${otherName}${distText}`,
         notes: clean(rel.notes, 200),
       };
     });
@@ -987,7 +997,9 @@ function placeSection(title, body) {
 // reads from the selected place, so show the other place's bearing instead.
 function relationDistanceText(item) {
   const parts = [];
-  if (item.direction) parts.push(inverseDirection(item.direction));
+  // A free-text direction is read as stated: the target place is that way from the other one.
+  if (item.direction && item.freeText) parts.push(item.selectedIsTarget ? 'this place is ' + item.direction + ' of it' : item.direction + ' of this place');
+  else if (item.direction) parts.push(inverseDirection(item.direction));
   if (Number.isFinite(item.distanceKm)) {
     parts.push(item.distanceKm + ' km' + (item.distanceMode === 'route' ? ' by route' : item.distanceMode === 'straight_line' ? ' straight-line' : ''));
   } else if (item.distanceMode === 'route') {
@@ -1083,9 +1095,13 @@ function spatialEditHtml(detail) {
     escapeHtml(authorityLabel(value, false)) + '</option>'
   ).join('');
   const directionChoices = ['', 'north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
-  const directionOptions = directionChoices.map(value =>
-    '<option value="' + value + '"' + (detail.primaryRelation.direction === value ? ' selected' : '') + '>' +
-    escapeHtml(value ? titleWords(value) : 'Unspecified') + '</option>'
+  // A stated free-text direction stays a choice (and selected), so saving the form never erases it.
+  const statedDirection = detail.primaryRelation.direction && !directionChoices.includes(detail.primaryRelation.direction)
+    ? detail.primaryRelation.direction
+    : '';
+  const directionOptions = [...directionChoices, ...(statedDirection ? [statedDirection] : [])].map(value =>
+    '<option value="' + escapeHtml(value) + '"' + (detail.primaryRelation.direction === value ? ' selected' : '') + '>' +
+    escapeHtml(value === statedDirection ? value + ' (as stated)' : value ? titleWords(value) : 'Unspecified') + '</option>'
   ).join('');
   const distanceModes = ['unspecified', 'straight_line', 'route'];
   const distanceOptions = distanceModes.map(value =>
@@ -1517,6 +1533,16 @@ function resumeRebuildButtonHtml(resume) {
     escapeHtml(String(resume.messageId)) + '</button>';
 }
 
+function rebuildStateLabel(status) {
+  const phase = status?.phase;
+  if (phase === 'committing') return 'Saving rebuilt state…';
+  if (phase === 'cancelling') return 'Cancelling rebuild…';
+  if (phase === 'running') return 'Rebuilding chat…';
+  if (phase === 'completed') return 'Rebuild completed';
+  if (phase === 'failed') return 'Rebuild failed';
+  return 'Rebuild ' + (phase || 'status');
+}
+
 function rebuildStatusHtml(status, { dismissible = true, resume = null } = {}) {
   if (!status) return '';
   const total = Math.max(0, Number(status.totalBoundaries) || 0);
@@ -1525,14 +1551,8 @@ function rebuildStatusHtml(status, { dismissible = true, resume = null } = {}) {
   const cancellable = status.phase === 'running' || status.phase === 'cancelling';
   const tone = status.phase === 'failed' || status.phase === 'cancelled' ? ' error'
     : status.phase === 'completed' ? ' success' : ' running';
-  const stateLabel = status.phase === 'committing'
-    ? 'Saving rebuilt state…'
-    : cancellable
-      ? (status.phase === 'cancelling' ? 'Cancelling rebuild…' : 'Rebuilding chat…')
-      : status.phase === 'completed' ? 'Rebuild completed'
-        : status.phase === 'failed' ? 'Rebuild failed'
-          : 'Rebuild ' + (status.phase || 'status');
-  return '<aside class="wsa-rebuild-toast' + tone + '" aria-live="polite">' +
+  const stateLabel = rebuildStateLabel(status);
+  return '<aside class="wsa-rebuild-toast' + tone + '">' +
     '<div class="wsa-rebuild-toast-icon" aria-hidden="true">' + icon(tone === ' success' ? 'resolved' : tone === ' error' ? 'warn' : 'refresh') + '</div>' +
     '<div class="wsa-rebuild-toast-content"><div class="wsa-rebuild-toast-head"><strong>' + escapeHtml(stateLabel) + '</strong>' +
     (dismissible ? '<button type="button" class="wsa-icon-btn" data-wsa-dismiss-rebuild aria-label="Dismiss rebuild status">' + icon('close') + '</button>' : '') +
@@ -1654,7 +1674,7 @@ function bootstrapRecoveryBannerHtml(model) {
   const source = model.maintenance.hydrationSource
     ? ' Hydration source: ' + model.maintenance.hydrationSource + '.'
     : '';
-  return '<aside class="wsa-bootstrap-warning" aria-live="polite">' +
+  return '<aside class="wsa-bootstrap-warning">' +
     '<div><strong>Durable World State not found</strong><span>Automatic continuity is paused so this session cannot silently start from scratch.' +
     escapeHtml(source) + '</span></div>' +
     '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-accent" data-wsa-open-rebuild>Full rebuild</button>' +
@@ -1718,7 +1738,7 @@ export function renderWorldStatePanel(model, {
   const historical = model.counts.resolved + model.counts.superseded;
   return '<div class="wsa-shell" data-world-state-alpha-ui>' +
     '<div class="wsa-backdrop" data-wsa-close aria-hidden="true"></div>' +
-    '<section class="wsa-panel" role="dialog" aria-modal="true" aria-label="World State">' +
+    '<section class="wsa-panel" role="dialog" aria-modal="true" aria-label="World State" tabindex="-1">' +
     '<header class="wsa-header"><div class="wsa-brand">' + continuityIconHtml() + '<div class="wsa-brand-copy"><h1>World continuity</h1>' +
     '<span><b>' + model.counts.current + '</b> active · <b>' + historical + '</b> resolved · <b>' + model.counts.spatialLocations + '</b> places</span></div></div>' +
     '<div class="wsa-header-actions">' +
@@ -1837,6 +1857,24 @@ export function createWorldStateUiController({
     return ui.shownModel && ui.shownState === getState() ? ui.shownModel : model();
   }
 
+  // Record rows are keyed by position, so a click is read against the rows the operator actually sees (the
+  // last render), and that row is then found in the current state by its content. After a state change with
+  // no re-render (an input method composing) the same position may hold another record: it is never used.
+  function renderedModel() {
+    return ui.shownModel || model();
+  }
+
+  function currentKeyOf(row) {
+    if (!row?.key) return '';
+    if (ui.shownState === getState()) return row.key;
+    const fingerprint = rowFingerprint(row);
+    for (const view of Object.values(model().views)) {
+      const match = view.find(item => item.key && rowFingerprint(item) === fingerprint);
+      if (match) return match.key;
+    }
+    return '';
+  }
+
   function model() {
     const state = getState();
     ui.modelState = state;
@@ -1951,6 +1989,8 @@ export function createWorldStateUiController({
     const active = globalThis.document?.activeElement;
     if (!active || typeof active.getAttribute !== 'function') return null;
     if (typeof root.contains === 'function' && !root.contains(active)) return null;
+    const control = focusedControl(active);
+    if (control) return control;
     for (const attribute of FOCUS_ATTRIBUTES) {
       const value = active.getAttribute(attribute);
       if (value === null) continue;
@@ -1961,13 +2001,38 @@ export function createWorldStateUiController({
         selection = null;
       }
       const radio = active.type === 'radio' ? active.value : null;
-      return { selector: '[' + attribute + (value ? '="' + value + '"' : '') + ']', selection, radio };
+      return { selector: '[' + attribute + (value ? '="' + value + '"' : '') + ']', selection, radio, inside: true };
     }
     return null;
   }
 
+  // Any other panel control (a button, a tab, a row) is found again by its first data-wsa attribute and its
+  // position among the controls carrying the same one, so a click or key press keeps focus on its control.
+  function focusedControl(active) {
+    if (FOCUS_ATTRIBUTES.some(attribute => active.getAttribute(attribute) !== null)) return null;
+    const attribute = [...(active.attributes || [])].map(item => item.name).find(name => name.startsWith('data-wsa-'));
+    if (!attribute) return { selector: '', selection: null, radio: null, inside: true };
+    const value = active.getAttribute(attribute);
+    const selector = '[' + attribute + (value ? '="' + value.replace(/["\\]/gu, '\\$&') + '"' : '') + ']';
+    const index = [...(root.querySelectorAll?.(selector) || [])].indexOf(active);
+    return { selector, selection: null, radio: null, index, inside: true };
+  }
+
+  // The dialog itself takes focus when the control that had it is gone (a closed sheet, a removed row), so
+  // focus never falls back to the page behind the modal.
+  function focusDialog() {
+    const dialog = root.querySelector?.('.wsa-panel');
+    if (dialog && typeof dialog.focus === 'function') dialog.focus({ preventScroll: true });
+  }
+
   function restoreFocusedField(focus) {
-    if (!focus) return false;
+    if (!focus?.selector) return false;
+    if (Number.isInteger(focus.index) && focus.index >= 0) {
+      const element = [...(root.querySelectorAll?.(focus.selector) || [])][focus.index];
+      if (!element || typeof element.focus !== 'function') return false;
+      element.focus({ preventScroll: true });
+      return !globalThis.document || globalThis.document.activeElement === element;
+    }
     const candidates = [...(root.querySelectorAll?.(focus.selector) || [])]
       .filter(item => focus.radio === null || item.value === focus.radio);
     const element = candidates.find(item => typeof item.getClientRects !== 'function' || item.getClientRects().length > 0) || candidates[0];
@@ -2042,7 +2107,11 @@ export function createWorldStateUiController({
     ui.shownState = ui.modelState;
     restoreDrafts();
     restoreScroll();
+    announce(next);
     if (restoreFocusedField(focus)) return next;
+    // The first render takes focus into the dialog; a later one returns it there when its control is gone.
+    if ((!ui.focusTaken || focus?.inside) && !restoreSearchFocus && !restoreSpatialFocus) focusDialog();
+    ui.focusTaken = true;
 
     if (restoreSearchFocus) {
       const inputs = [...(root.querySelectorAll?.('[data-wsa-search]') || [])];
@@ -2377,24 +2446,25 @@ export function createWorldStateUiController({
     const record = closest(event.target, '[data-wsa-record-index]');
     if (record) {
       const index = Number(record.dataset?.wsaRecordIndex);
-      const currentModel = shownModel();
-      const rows = selectedRecordRows(currentModel);
+      const rows = selectedRecordRows(renderedModel());
+      const row = Number.isInteger(index) && index >= 0 ? rows[index] : null;
+      const key = currentKeyOf(row);
       if (ui.bulk.active && WORLD_RECORD_TABS.includes(ui.activeTab) && ui.activeTab !== 'resolved') {
         event.preventDefault?.();
-        const row = Number.isInteger(index) && index >= 0 ? rows[index] : null;
-        if (row?.key && row.status === 'active') {
-          if (ui.bulk.keys.has(row.key)) ui.bulk.keys.delete(row.key);
-          else if (ui.bulk.keys.size < WORLD_STATE_UI_LIMITS.bulkSelection) ui.bulk.keys.set(row.key, rowFingerprint(row));
+        if (key && row.status === 'active') {
+          if (ui.bulk.keys.has(key)) ui.bulk.keys.delete(key);
+          else if (ui.bulk.keys.size < WORLD_STATE_UI_LIMITS.bulkSelection) ui.bulk.keys.set(key, rowFingerprint(row));
         }
         refresh();
         return;
       }
-      if (Number.isInteger(index) && index >= 0 && rows[index]?.key) {
-        const same = ui.selectedRecordId === rows[index].key;
-        ui.selectedRecordId = rows[index].key;
+      if (key) {
+        const same = ui.selectedRecordId === key;
+        ui.selectedRecordId = key;
         ui.detailOpen = same ? !ui.detailOpen : true;
-        refresh();
       }
+      // A row no longer in the state (it changed meanwhile) is not opened; the list is redrawn.
+      refresh();
       return;
     }
 
@@ -2402,12 +2472,17 @@ export function createWorldStateUiController({
     if (recordAction && typeof onRecordAction === 'function') {
       const action = clean(recordAction.dataset?.wsaRecordAction, 24);
       if (!['resolve', 'supersede'].includes(action)) return;
-      const currentModel = shownModel();
-      const currentRecord = currentModel.detail;
+      // The record the operator sees in the open detail, located in the current state by its content.
+      const currentRecord = renderedModel().detail;
       if (!currentRecord || currentRecord.status !== 'active') return;
+      const key = currentKeyOf(currentRecord);
+      if (!key) {
+        refresh();
+        return;
+      }
       await onRecordAction(action, {
         record: {
-          key: currentRecord.key,
+          key,
           kind: currentRecord.kind,
           status: currentRecord.status,
           summary: currentRecord.summary,
@@ -2498,8 +2573,9 @@ export function createWorldStateUiController({
         mergeSuggestions: action === 'merge_location' ? (currentLoc?.mergeSuggestions || []).map(item => ({ ...item })) : [],
         spatialModel: currentModel.spatial,
       });
-      // A rejected or failed save keeps the form and its draft open, so nothing typed is lost.
-      if (action === 'save_location' ? result === true : ['archive_location', 'merge_location', 'delete_location'].includes(action)) {
+      // A rejected, failed or declined save, archive, merge or delete keeps the form and its draft open, so
+      // nothing typed is lost; only a saved one closes it.
+      if (['save_location', 'archive_location', 'merge_location', 'delete_location'].includes(action) && result === true) {
         ui.spatialEditing = false;
       }
       refresh();
@@ -2533,7 +2609,9 @@ export function createWorldStateUiController({
       if (typed && ui.activeTab !== 'search') {
         ui.activeTab = 'search';
         ui.detailOpen = false;
-      } else if (!typed && ui.activeTab === 'search') {
+      } else if (!typed && ui.activeTab === 'search' && !closest(search, '.wsa-search-inline')) {
+        // Emptying the search view's own box keeps the view (on phones it is the only search box, and leaving
+        // would take it and the keyboard away); emptying the navigation box returns to the records.
         ui.activeTab = 'current';
         ui.detailOpen = false;
       }
@@ -2595,6 +2673,80 @@ export function createWorldStateUiController({
     }
   }
 
+  // One live region for the whole panel life, outside the re-rendered markup: a region recreated on every
+  // render is announced unreliably. It says what changed (a rebuild's phase, a missing baseline), once.
+  let liveRegion = null;
+  function say(text) {
+    const document = globalThis.document;
+    if (!text || !document?.createElement || !document.body) return;
+    if (!liveRegion?.isConnected) {
+      liveRegion = document.createElement('div');
+      liveRegion.id = 'world_state_alpha_live';
+      liveRegion.className = 'wsa-sr-only';
+      liveRegion.setAttribute('role', 'status');
+      liveRegion.setAttribute('aria-live', 'polite');
+      document.body.appendChild(liveRegion);
+    }
+    liveRegion.textContent = text;
+  }
+
+  function announce(next) {
+    const status = next.maintenance.rebuild.status;
+    const rebuildKey = status ? (status.operationId || '') + ':' + (status.phase || '') : '';
+    if (rebuildKey !== (ui.announcedRebuild ?? rebuildKey)) say(rebuildStateLabel(status) + (status?.phase === 'failed' && status.detail ? ' ' + status.detail : ''));
+    ui.announcedRebuild = rebuildKey;
+    const bootstrap = Boolean(next.maintenance.bootstrapRequired);
+    if (bootstrap && ui.announcedBootstrap === false) say('Durable World State not found. Automatic continuity is paused.');
+    ui.announcedBootstrap = bootstrap;
+  }
+
+  // The controls a Tab key can reach in the top layer (the rebuild sheet over the panel).
+  function tabStops() {
+    const layer = root.querySelector?.('.wsa-sheet-layer') || root.querySelector?.('.wsa-panel');
+    return [...(layer?.querySelectorAll?.('button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])') || [])]
+      // Inside a closed <details> only its summary is reachable (its content still reports layout boxes).
+      .filter(item => !item.disabled
+        && !(item.tagName !== 'SUMMARY' && item.closest?.('details:not([open])'))
+        && (typeof item.checkVisibility === 'function' ? item.checkVisibility() : typeof item.getClientRects !== 'function' || item.getClientRects().length > 0));
+  }
+
+  // Escape closes the innermost layer (a menu, the rebuild sheet, the place form, Map settings), then the
+  // panel; Tab and Shift+Tab stay inside the modal. Listened for on the window in the capture phase while
+  // the panel is open: the host page's own key handlers run later and may stop the event, and focus
+  // that strayed outside the modal is brought back.
+  function keydown(event) {
+    if (ui.destroyed || event.isComposing || composing()) return;
+    if (event.key === 'Escape') {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      if (ui.menuOpen || ui.mobileMoreOpen) {
+        ui.menuOpen = false;
+        ui.mobileMoreOpen = false;
+      } else if (ui.rebuildOpen) {
+        ui.rebuildOpen = false;
+      } else if (ui.spatialEditing) {
+        ui.spatialEditing = false;
+      } else if (ui.mapSettingsOpen) {
+        ui.mapSettingsOpen = false;
+      } else {
+        if (typeof onClose === 'function') onClose();
+        return;
+      }
+      refresh();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const stops = tabStops();
+    if (!stops.length) return;
+    const active = globalThis.document?.activeElement;
+    const at = stops.indexOf(active);
+    const wrapTo = event.shiftKey ? (at <= 0 ? stops[stops.length - 1] : null) : (at < 0 || at === stops.length - 1 ? stops[0] : null);
+    if (wrapTo) {
+      event.preventDefault?.();
+      wrapTo.focus?.();
+    }
+  }
+
   function compositionStart(event) {
     ui.composingTarget = event.target || null;
   }
@@ -2617,6 +2769,7 @@ export function createWorldStateUiController({
   }
 
   root.addEventListener('click', click);
+  globalThis.addEventListener?.('keydown', keydown, true);
   root.addEventListener('input', input);
   root.addEventListener('compositionstart', compositionStart);
   root.addEventListener('compositionend', compositionEnd);
@@ -2650,7 +2803,10 @@ export function createWorldStateUiController({
       if (ui.destroyed) return;
       ui.destroyed = true;
       root.removeEventListener('click', click);
+      globalThis.removeEventListener?.('keydown', keydown, true);
       root.removeEventListener('input', input);
+      liveRegion?.remove?.();
+      liveRegion = null;
       root.removeEventListener('compositionstart', compositionStart);
       root.removeEventListener('compositionend', compositionEnd);
       root.removeEventListener('focusout', focusOut);

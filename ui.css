@@ -2889,3 +2889,25 @@
     transform: translateY(-50%);
   }
 }
+
+/* Screen-reader-only live region (kept outside the re-rendered panel markup). */
+.wsa-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* SillyTavern's toasts (errors and confirmations from panel actions) stay above the open panel. */
+body.wsa-panel-open #toast-container {
+  z-index: 2147483200 !important;
+}
+
+.wsa-panel:focus {
+  outline: none;
+}
