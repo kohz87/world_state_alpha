@@ -46,7 +46,7 @@
 
 - New `tests/audit-alpha62.test.js` (26 tests). The first 22 each fail on 0.9.0-alpha.61, and the 4 review-hardening tests fail on the pre-review code.
 - `npm test` (686) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
-- Live in SillyTavern, these behave as on alpha.61: the branch, rebuild, resume, hide, forfeit, alpha.59 and alpha.57 Places scripts.
+- Live in SillyTavern, these behave as on alpha.61: the branch, rebuild, resume, hide, forfeit, alpha.59 and alpha.57 Places scripts. They were run again after the review hardening.
 
 ### Code review hardening
 
