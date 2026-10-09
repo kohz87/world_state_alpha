@@ -1,4 +1,5 @@
-import { canonicalText as normalizeText } from './hash.js';
+import { compareText } from './common.js';
+import { SPACELESS_SCRIPT, canonicalText as normalizeText } from './hash.js';
 
 function tokens(value) {
   return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];
@@ -84,12 +85,14 @@ function anchorStrength(anchor, normalizedHaystack, haystackTokens, haystackName
   if (!normalized) return 0;
 
   const anchorTokens = normalized.split(' ').filter(Boolean);
-  const hasNonAscii = /[^\x00-\x7F]/u.test(normalized);
+  // Inside a run of letters only for scripts written without spaces ("王都" in "王都の"); a one-word anchor in
+  // any spaced script, accented Latin and Cyrillic included, matches whole words ("été" is not in "société").
+  const spaceless = SPACELESS_SCRIPT.test(normalized);
   const exactPhrase = anchorTokens.length > 1
     ? ` ${normalizedHaystack} `.includes(` ${normalized} `)
     : RELEVANCE_STOPWORDS.has(normalized)
       ? haystackNames.has(normalized)
-      : haystackTokens.has(normalized) || (hasNonAscii && normalized.length >= 2 && normalizedHaystack.includes(normalized));
+      : haystackTokens.has(normalized) || (spaceless && normalized.length >= 2 && normalizedHaystack.includes(normalized));
 
   if (exactPhrase) {
     const lengthBonus = Math.min(1.5, normalized.length / 24);
@@ -114,12 +117,14 @@ function recordRecency(record, currentMessageId) {
 const RELEVANCE_RECENT_PHRASE_TOKENS = 160;
 const RELEVANCE_LOOKUP_TOKENS = 192;
 
-function lookupTokens(list, { newestFirst = false, keepStopwords = false } = {}) {
+// `names`: function words used as names in the text ("Will"), the only function words kept (anchor lookups);
+// any other function word would only use up the lookup budget.
+function lookupTokens(list, { newestFirst = false, names = null } = {}) {
   const out = [];
   const seen = new Set();
   const ordered = newestFirst ? [...list].reverse() : list;
   for (const token of ordered) {
-    if (seen.has(token) || (!keepStopwords && RELEVANCE_STOPWORDS.has(token))) continue;
+    if (seen.has(token) || (RELEVANCE_STOPWORDS.has(token) && !names?.has(token))) continue;
     seen.add(token);
     out.push(token);
     if (out.length >= RELEVANCE_LOOKUP_TOKENS) break;
@@ -136,6 +141,8 @@ function prepareContext({ recentText = '', loreText = '', currentMessageId = nul
   // still sees every token. Candidate token lookups walk newest-first and skip function words.
   const recentTokenList = recentAll.slice(-RELEVANCE_RECENT_PHRASE_TOKENS);
   const loreTokenList = loreAll.slice(0, 64);
+  const recentNames = functionWordNames(recentText);
+  const loreNames = functionWordNames(loreText);
   return {
     recentNorm,
     loreNorm,
@@ -143,13 +150,13 @@ function prepareContext({ recentText = '', loreText = '', currentMessageId = nul
     loreTokenList,
     recentTokens: new Set(recentAll),
     loreTokens: new Set(loreAll),
-    recentNames: functionWordNames(recentText),
-    loreNames: functionWordNames(loreText),
+    recentNames,
+    loreNames,
     recentLookupTokens: lookupTokens(recentAll, { newestFirst: true }),
     loreLookupTokens: lookupTokens(loreAll.slice(0, 64)),
-    // An anchor may itself be a function word used as a name ('Will', 'May'); anchor lookups keep them.
-    recentAnchorTokens: lookupTokens(recentAll, { newestFirst: true, keepStopwords: true }),
-    loreAnchorTokens: lookupTokens(loreAll.slice(0, 64), { keepStopwords: true }),
+    // An anchor may itself be a function word used as a name ('Will', 'May'); anchor lookups keep those.
+    recentAnchorTokens: lookupTokens(recentAll, { newestFirst: true, names: recentNames }),
+    loreAnchorTokens: lookupTokens(loreAll.slice(0, 64), { names: loreNames }),
     currentMessageId,
   };
 }
@@ -583,7 +590,7 @@ export function selectBackgroundDevelopments(index, {
   index.backgroundCursor = (start + examined) % ids.length;
   index.backgroundElapsedBoundary = currentMessageId;
   candidates.sort((left, right) =>
-    left.boundary - right.boundary || String(left.record.id).localeCompare(String(right.record.id)));
+    left.boundary - right.boundary || compareText(left.record.id, right.record.id));
 
   const selected = candidates.slice(0, limit).map(({ record }) => ({
     record,

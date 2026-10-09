@@ -1,11 +1,11 @@
 import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, firstStoryChange, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, isNarratorMessage, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
-import { hashText, stableStringify } from './hash.js';
+import { SPACELESS_SCRIPT, hashText, sharedSpacelessBigrams, stableStringify } from './hash.js';
 import { RELEVANCE_STOPWORDS, extractContextTerms, functionWordNames, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { SUPPORT_STOPWORDS, significantTokens } from './source-firewall.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
 import { activeCampaignPlaceCount, applySpatialUndoPatch, compactSpatialEvidence, createSpatialState, normalizeSpatialState, placeNameKey } from './spatial-core.js';
-import { clone, hostMessageText, messageRole as roleOf } from './common.js';
+import { clone, compareText, hostMessageText, messageRole as roleOf } from './common.js';
 import { canonicalDomain, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
@@ -145,16 +145,24 @@ function rebuildMatchContext(recentText) {
   };
 }
 
+// A one-word anchor in a script written without spaces ("王都") is found inside the exchange's runs of letters.
+function spacelessAnchorIn(normalized, haystack) {
+  return normalized.length >= 2 && SPACELESS_SCRIPT.test(normalized) && haystack.includes(normalized);
+}
+
 function exchangeOverlap(record, context) {
   const anchorHit = (record?.anchors || []).some(anchor => {
     const normalized = normalizeAnchor(anchor);
     if (!normalized) return false;
     if (normalized.includes(' ')) return ` ${context.haystack} `.includes(` ${normalized} `);
+    if (spacelessAnchorIn(normalized, context.haystack)) return true;
     return RELEVANCE_STOPWORDS.has(normalized) ? context.names.has(normalized) : context.terms.has(normalized);
   });
   let shared = 0;
   for (const term of extractContextTerms(record?.summary || '')) if (context.terms.has(term)) shared += 1;
-  return { relevant: anchorHit || shared >= 2, touched: anchorHit || shared >= 1 };
+  // Chinese or Japanese summaries share character pairs, not words (as the firewall compares them).
+  const pairs = shared < 2 ? sharedSpacelessBigrams(record?.summary || '', context.haystack) : 0;
+  return { relevant: anchorHit || shared >= 2 || pairs >= 3, touched: anchorHit || shared >= 1 || pairs >= 2 };
 }
 
 // The firewall's support stopwords plus counting and status words: sharing "two" or "remains" is no topic.
@@ -171,12 +179,15 @@ function rebuildDirectlyAddresses(record, context) {
     .map(normalizeAnchor)
     .filter(Boolean);
   if (anchors.some(anchor => anchor.includes(' ') && ` ${context.haystack} `.includes(` ${anchor} `))) return true;
-  if (anchors.length === 1 && anchors[0].length >= 5 && ` ${context.haystack} `.includes(` ${anchors[0]} `)) return true;
+  // Any specific one-word anchor (five letters, not a function word, or one in a spaceless script) names the
+  // record, however many anchors it has.
+  if (anchors.some(anchor => !anchor.includes(' ') && ((anchor.length >= 5 && !RELEVANCE_STOPWORDS.has(anchor)
+    && ` ${context.haystack} `.includes(` ${anchor} `)) || spacelessAnchorIn(anchor, context.haystack)))) return true;
 
   const left = new Set(significantTokens(record?.summary || '', REBUILD_DIRECT_STOPWORDS));
   let shared = 0;
   for (const token of left) if (context.directTerms.has(token)) shared += 1;
-  return shared >= 2;
+  return shared >= 2 || sharedSpacelessBigrams(record?.summary || '', context.haystack) >= 3;
 }
 
 function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessageId) {
@@ -216,11 +227,11 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
     if (left.overlapsExchange !== right.overlapsExchange) return left.overlapsExchange ? -1 : 1;
     if (left.touched !== right.touched) return left.touched ? -1 : 1;
     if (right.lastChanged !== left.lastChanged) return right.lastChanged - left.lastChanged;
-    return String(left.record?.id || '').localeCompare(String(right.record?.id || ''));
+    return compareText(left.record?.id, right.record?.id);
   });
   historical.sort((left, right) => {
     if (right.lastChanged !== left.lastChanged) return right.lastChanged - left.lastChanged;
-    return String(left.record?.id || '').localeCompare(String(right.record?.id || ''));
+    return compareText(left.record?.id, right.record?.id);
   });
 
   const selectedLifecycle = lifecycle.slice(0, REBUILD_LIMITS.lifecycleVisibleRecords);
@@ -292,7 +303,7 @@ function semanticSnapshot(state) {
         causedBy: [...(record.causedBy || [])],
         affects: [...(record.affects || [])],
       }))
-      .sort((a, b) => String(a.id).localeCompare(String(b.id))),
+      .sort((a, b) => compareText(a.id, b.id)),
     links: normalized.links
       .map(link => ({
         id: link.id,
@@ -300,7 +311,7 @@ function semanticSnapshot(state) {
         to: link.to,
         type: link.type,
       }))
-      .sort((a, b) => String(a.id).localeCompare(String(b.id))),
+      .sort((a, b) => compareText(a.id, b.id)),
     lastCaptureMessage: normalized.lastCaptureMessage,
   };
 }
@@ -688,7 +699,12 @@ export async function runManualRebuild({
     // reply, or only <writer_state>/tracker blocks) has nothing to capture. Live capture skips it with the
     // same captureDue rule, so the rebuild advances past it without a provider call instead of failing.
     if (!captureDue({ exchange: window.exchange, sourceMessageId: window.messageId })) {
-      candidate = commitMutationBoundary(candidate, spatialAtBoundary(candidate, window.messageId), chat.slice(0, window.messageId + 1), window.messageId, 'rebuild', { lineage: plan.lineage.slice(0, window.messageId + 1) });
+      // Committed only when replayed Places change there: a no-op commit would add a checkpoint and evict a
+      // real one.
+      const atBoundary = spatialAtBoundary(candidate, window.messageId);
+      if (atBoundary !== candidate && stableStringify(atBoundary.spatial) !== stableStringify(candidate.spatial)) {
+        candidate = commitMutationBoundary(candidate, atBoundary, chat.slice(0, window.messageId + 1), window.messageId, 'rebuild', { lineage: plan.lineage.slice(0, window.messageId + 1) });
+      }
       receipts.push({ messageId: window.messageId, outcome: 'empty-boundary', providerCalls: 0, applied: 0, rejected: 0, aliasRepairs: 0, completenessHints: 0, rejections: [] });
       processedBoundaries += 1;
       await reportProgress(window.messageId, { boundaryApplied: 0, boundaryRejected: 0, aliasRepairs: 0, completenessHints: 0 });

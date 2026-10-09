@@ -3526,9 +3526,11 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
     payload = { ...payload, file };
   }
 
+  // Forfeit reads and writes only the Operations log (under its own lock), so it never waits behind the
+  // chat's provider-backed work: the confirmation follows the click at once.
   if (actionId === 'forfeit_capture') {
     if (rebuildRunning(chatKey)) return refuseForfeitDuringRebuild();
-    return queueChatWork(chatKey, () => forfeitMissedCapture(chatKey, payload))
+    return forfeitMissedCapture(chatKey, payload)
       .catch(error => actionFailed('Forfeit missed capture', error, chatKey));
   }
 
@@ -3575,7 +3577,8 @@ async function forfeitMissedCapture(chatKey, payload) {
   if (currentChatKey() !== chatKey) return false;
   if (rebuildRunning(chatKey)) return refuseForfeitDuringRebuild();
   if (!await mergeSavedOperationLog(chatKey)) return false;
-  const messageId = Number(payload?.messageId);
+  // Only an integer names a message (Number(null) would be message 0).
+  const messageId = typeof payload?.messageId === 'number' ? payload.messageId : NaN;
   const chat = getContext().chat || [];
   const cached = stateCache.get(chatKey)?.lineage || [];
   if (!Number.isInteger(messageId) || messageId < 0 || messageId >= chat.length || !pendingCaptureFailures(chatKey).includes(messageId)) {
@@ -4019,7 +4022,9 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const aliasRepairs = priorTotals.aliasRepairs + receipts.reduce((sum, item) => sum + (Number(item?.aliasRepairs) || 0), 0);
     const failedReceipt = receipts.slice().reverse().find(item => item?.messageId === result.failedBoundary) || receipts.at(-1) || null;
     const firstRejection = failedReceipt?.rejections?.[0];
-    const failureDetail = String(
+    const failureDetail = result.outcome === 'completed'
+      ? 'The rebuilt messages changed while the rebuild ran, so nothing was replaced. Run it again.'
+      : String(
       result.errorMessage
       || firstRejection?.reason
       || result.errorCode
@@ -4027,12 +4032,15 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       || 'rebuild did not complete',
     ).slice(0, 320);
 
-    const cancelledOutcome = result.outcome === 'stale'
-      || result.outcome === 'cancelled'
-      || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED';
     // One exact range check for this synchronous stretch (each one re-fingerprints the whole range); the
     // check after the save's await is made again.
     const currentAtEnd = isCurrentExact();
+    // A run that completed over messages changed meanwhile is stale, not failed: nothing went wrong in it.
+    const staleAtEnd = result.outcome === 'completed' && !currentAtEnd;
+    const cancelledOutcome = result.outcome === 'stale'
+      || result.outcome === 'cancelled'
+      || result.errorCode === 'WORLD_STATE_ROUTE_CANCELLED'
+      || staleAtEnd;
     const resumable = result.outcome === 'failure' && !cancelledOutcome && result.resume && currentAtEnd;
     if (resumable) {
       rebuildResumes.set(chatKey, {

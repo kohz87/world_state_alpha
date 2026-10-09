@@ -7,7 +7,7 @@ import { dispatchWorldStateRequest } from './provider-routing.js';
 import { selectBackgroundDevelopments, updateRelevanceIndex } from './relevance.js';
 import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.js';
 import { clipMiddle } from './common.js';
-import { cloneState, reduceMutations } from './state-core.js';
+import { reduceMutations } from './state-core.js';
 
 export const EVOLUTION_RESPONSE_TOKENS = 2600;
 export const EVOLUTION_LIMITS = Object.freeze({
@@ -625,10 +625,12 @@ export async function runLazyEvolution({
     maxTargets,
   });
 
+  // A run that changes nothing (skipped, stale, failed or invalid) returns the state it was given: no copy,
+  // and a host compares it by identity.
   if (!plan.targets.length) {
     return {
       outcome: 'skipped',
-      state: cloneState(state),
+      state,
       providerCalls: 0,
       plan,
       applied: [],
@@ -653,7 +655,7 @@ export async function runLazyEvolution({
   if (!current()) {
     return {
       outcome: 'stale',
-      state: cloneState(state),
+      state,
       providerCalls: 0,
       plan,
       applied: [],
@@ -696,7 +698,7 @@ export async function runLazyEvolution({
     });
     return {
       outcome: stale ? 'stale' : 'failure',
-      state: cloneState(state),
+      state,
       providerCalls: receipt.dispatched ? 1 : 0,
       plan,
       applied: [],
@@ -725,7 +727,7 @@ export async function runLazyEvolution({
     });
     return {
       outcome: 'stale',
-      state: cloneState(state),
+      state,
       providerCalls: 1,
       plan,
       applied: [],
@@ -792,7 +794,7 @@ export async function runLazyEvolution({
     });
     return {
       outcome: 'invalid-response',
-      state: cloneState(state),
+      state,
       providerCalls: 1,
       plan,
       applied: [],
@@ -834,7 +836,8 @@ export async function prepareWorldStateContinuity({
   // post-evolution injection, so a host publishes evolution.indexDelta with the
   // state only once it is saved. Background selection still advances the
   // index's catch-up cursor/boundary, so a host must rebuild the index from its
-  // cached state when the save does not happen.
+  // cached state when the save does not happen. (With true, a run that does not
+  // complete puts the cursor back itself.)
   publishIndex = true,
 } = {}) {
   const beforeInjection = buildWorldStateInjection(state, {
@@ -854,11 +857,27 @@ export async function prepareWorldStateContinuity({
     sourceMessageId,
     sourceLineageKey,
   );
-  const relevantEvolutionEntries = beforeInjection.selected
+  const relevantDevelopments = beforeInjection.selected
     .filter(entry => {
       const record = recordFromEntry(entry);
       return record?.kind === 'development' && record?.status === 'active';
-    })
+    });
+  // Due first, then the cap: a relevant development evaluated since the skip (or untouched by new evidence) is
+  // never due, and must not crowd a due one out of the four relevant slots.
+  const dueIds = relevantDevelopments.length > EVOLUTION_LIMITS.relevantTargets
+    ? new Set(planLazyEvolution(state, {
+      selectedEntries: relevantDevelopments,
+      exchange,
+      elapsedHint: resolvedElapsedHint,
+      affectingEvidence,
+      sourceMessageId,
+      sourceLineageKey,
+      maxTargets: EVOLUTION_LIMITS.targets,
+    }).targets.map(target => target.record?.id).filter(Boolean))
+    : null;
+  const relevantEvolutionEntries = (dueIds
+    ? relevantDevelopments.filter(entry => dueIds.has(recordFromEntry(entry)?.id))
+    : relevantDevelopments)
     .slice(0, EVOLUTION_LIMITS.relevantTargets);
   const relevantIds = new Set(
     relevantEvolutionEntries
@@ -880,6 +899,9 @@ export async function prepareWorldStateContinuity({
       sourceLineageKey,
     }).targets.length
     : relevantEvolutionEntries.length;
+  // The catch-up cursor before this selection: a run that does not complete gives the slots back, so the same
+  // developments are tried again on a later turn.
+  const cursorBefore = index ? { cursor: index.backgroundCursor, boundary: index.backgroundElapsedBoundary } : null;
   const backgroundSelection = resolvedElapsedHint?.meaningful && index
     ? selectBackgroundDevelopments(index, {
         excludeIds: relevantIds,
@@ -936,6 +958,10 @@ export async function prepareWorldStateContinuity({
     dispatcher,
   });
   evolution.backgroundSelection = backgroundSelection.metrics;
+  if (publishIndex && cursorBefore && backgroundSelection.selected.length && !['evolved', 'stable'].includes(evolution.outcome)) {
+    index.backgroundCursor = cursorBefore.cursor;
+    index.backgroundElapsedBoundary = cursorBefore.boundary;
+  }
 
   const nextState = evolution.state || state;
   if (!publishIndex) {

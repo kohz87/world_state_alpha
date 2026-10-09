@@ -145,9 +145,13 @@ test('forfeiting in the host clears the notice without a rebuild, changes no Wor
 test('review hardening: Forfeit reaches more messages than the notice names, and says a later rebuild still re-reads it', () => {
   const state = createState('chat:test:forfeit-many');
   const ids = n => Array.from({ length: n }, (_, i) => 10 + i * 2);
-  const fifteen = renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 200, earliestPartialStart: 1, captureFailures: ids(15) } }), {});
+  // alpha.64: six buttons show at first, and "Show all" expands them (a phone screen is not filled).
+  const collapsed = renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 200, earliestPartialStart: 1, captureFailures: ids(15) } }), {});
+  assert.equal((collapsed.match(/data-wsa-forfeit-capture=/g) || []).length, 6);
+  assert.match(collapsed, /data-wsa-forfeit-more[^>]*>Show all 15</);
+  const fifteen = renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 200, earliestPartialStart: 1, captureFailures: ids(15) } }), { forfeitExpanded: true });
   assert.equal((fifteen.match(/data-wsa-forfeit-capture=/g) || []).length, 15);
-  const many = renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 200, earliestPartialStart: 1, captureFailures: ids(45) } }), {});
+  const many = renderWorldStatePanel(buildWorldStateUiModel(state, { runtimeInfo: { chatMessages: 200, earliestPartialStart: 1, captureFailures: ids(45) } }), { forfeitExpanded: true });
   assert.equal((many.match(/data-wsa-forfeit-capture=/g) || []).length, 40);
   assert.match(many, /and 5 more \(shown once these are forfeited or recovered\)/);
 

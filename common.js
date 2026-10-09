@@ -29,6 +29,13 @@ export function uniqueStrings(value, maxItems, maxChars = 120, bound = boundedTe
   return out;
 }
 
+// Code-unit order: the same on every device (localeCompare depends on the device's locale and ICU data).
+export function compareText(left, right) {
+  const a = String(left ?? '');
+  const b = String(right ?? '');
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 // The text of a chat row: a normalized row's `content`, a host message's `mes`, or `text`.
 export function messageText(message) {
   if (typeof message?.content === 'string') return message.content;

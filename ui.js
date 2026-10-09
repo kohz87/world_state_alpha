@@ -3,7 +3,7 @@ import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { hashText } from './hash.js';
 import { clone } from './common.js';
 import { normalizeState } from './state-core.js';
-import { canonicalSpatialDirection, OPPOSITE_DIRECTION, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
+import { canonicalSpatialDirection, OPPOSITE_DIRECTION, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 
 export const WORLD_STATE_UI_NAMESPACE = 'world_state_alpha_ui';
 
@@ -238,10 +238,15 @@ function projectDiagnostics(rows) {
         promptChars: item.promptChars,
         responseChars: item.responseChars,
         durationMs: item.durationMs,
-        responseJson: clean(item.responseJson, 16000),
-        rejectionsJson: clean(item.rejectionsJson, 12000),
+        // The model's text as it came (line breaks and indentation kept), only bounded.
+        responseJson: boundedRaw(item.responseJson, 16000),
+        rejectionsJson: boundedRaw(item.rejectionsJson, 12000),
       };
     });
+}
+
+function boundedRaw(value, max) {
+  return typeof value === 'string' ? value.slice(0, max) : '';
 }
 
 function projectSpatialLocation(loc, key) {
@@ -286,7 +291,10 @@ function projectSpatialDetail(spatialState, loc, key, { resolvedLocations, liste
       claim: clean(item?.claim, 500),
     }));
 
+  // A place answers to its effective id and, for an override, to its own stored id (a relation saved before
+  // the base map was attached, or after it was detached, uses that one).
   const locMap = new Map(resolvedLocations.map(item => [item.id, item]));
+  for (const item of resolvedLocations) if (item.overrideId && !locMap.has(item.overrideId)) locMap.set(item.overrideId, item);
   const campaignId = loc.overrideId || loc.id;
 
   const relations = (spatialState?.relations || [])
@@ -355,14 +363,15 @@ const PLACE_MENTION_LIMIT = 6;
 function placeParentKeys(locations) {
   const keyByName = new Map();
   for (const loc of locations) {
-    const name = loc.name.toLocaleLowerCase();
+    // Names fold like the Places core folds them (case, punctuation, locale-free).
+    const name = placeNameKey(loc.name);
     if (name && !keyByName.has(name)) keyByName.set(name, loc.key);
   }
   const parents = new Map();
   for (const loc of locations) {
-    const words = loc.name.split(/\s+/u).filter(Boolean);
+    const words = placeNameKey(loc.name).split(' ').filter(Boolean);
     for (let size = words.length - 1; size >= 1; size -= 1) {
-      const parentKey = keyByName.get(words.slice(0, size).join(' ').toLocaleLowerCase());
+      const parentKey = keyByName.get(words.slice(0, size).join(' '));
       if (parentKey && parentKey !== loc.key) {
         parents.set(loc.key, parentKey);
         break;
@@ -373,7 +382,7 @@ function placeParentKeys(locations) {
 }
 
 function placeNameTokens(name) {
-  return new Set(name.toLocaleLowerCase()
+  return new Set(placeNameKey(name)
     .split(/[^\p{L}\p{N}]+/u)
     .filter(word => word.length >= 3 && !PLACE_NAME_STOPWORDS.has(word)));
 }
@@ -389,7 +398,7 @@ function isPlaceAncestor(parents, ancestorKey, key) {
 function possibleDuplicatePlaceKeys(locations, parents) {
   const rows = locations.map(loc => ({
     loc,
-    normalizedName: loc.name.toLocaleLowerCase().replace(/\s+/gu, ' ').trim(),
+    normalizedName: placeNameKey(loc.name),
     tokens: placeNameTokens(loc.name),
   }));
   const flagged = new Map();
@@ -457,14 +466,14 @@ function escapeRegExp(value) {
 }
 
 function placeMentions(records, name) {
-  const needle = clean(name, 120).toLocaleLowerCase();
+  const needle = placeNameKey(clean(name, 120));
   if (needle.length < 3) return { rows: [], total: 0 };
   const pattern = needle.length >= 4
     ? new RegExp('(^|[^\\p{L}\\p{N}])' + escapeRegExp(needle) + '($|[^\\p{L}\\p{N}])', 'iu')
     : null;
   const matches = records.filter(record =>
-    record.anchors.some(anchor => anchor.toLocaleLowerCase() === needle)
-      || (pattern && pattern.test(record.summary)))
+    record.anchors.some(anchor => placeNameKey(anchor) === needle)
+      || (pattern && pattern.test(placeNameKey(record.summary))))
     .sort((left, right) => {
       const leftActive = left.status === 'active' ? 0 : 1;
       const rightActive = right.status === 'active' ? 0 : 1;
@@ -477,6 +486,9 @@ function placeMentions(records, name) {
       status: record.status,
       trend: record.trend,
       summary: record.summary,
+      // What a click needs to find the record again if the state changed since this render.
+      createdAtMessage: record.createdAtMessage ?? null,
+      lastChangedMessage: record.lastChangedMessage ?? null,
     })),
     total: matches.length,
   };
@@ -612,11 +624,11 @@ export function buildWorldStateUiModel(state, {
     spatialDetail.mentions = placeMentions(projected, spatialDetail.name);
   }
 
-  const placeNames = new Set(allSpatialProjected.map(loc => loc.name.toLocaleLowerCase()).filter(Boolean));
+  const placeNames = new Set(allSpatialProjected.map(loc => placeNameKey(loc.name)).filter(Boolean));
   for (const row of [...projected, ...searched]) {
-    row.anchorTags = row.anchors.map(label => ({ label, isPlace: placeNames.has(label.toLocaleLowerCase()) }));
+    row.anchorTags = row.anchors.map(label => ({ label, isPlace: placeNames.has(placeNameKey(label)) }));
   }
-  if (detail) detail.anchorTags = detail.anchors.map(label => ({ label, isPlace: placeNames.has(label.toLocaleLowerCase()) }));
+  if (detail) detail.anchorTags = detail.anchors.map(label => ({ label, isPlace: placeNames.has(placeNameKey(label)) }));
   const latestMessage = Math.max(
     (integer(runtimeInfo?.chatMessages) ?? 0) - 1,
     integer(normalized.lastCaptureMessage) ?? -1,
@@ -1312,7 +1324,7 @@ function bulkToolbarHtml(records, bulk) {
     '</div>';
 }
 
-function recordsViewHtml(model, tab, { detailOpen = false, bulk = null } = {}) {
+function recordsViewHtml(model, tab, { detailOpen = false, bulk = null, forfeitExpanded = false } = {}) {
   let records = model.views.current;
   let title = 'Current world state';
   let emptyTitle = 'No current world state';
@@ -1363,6 +1375,7 @@ function recordsViewHtml(model, tab, { detailOpen = false, bulk = null } = {}) {
   const failures = tab === 'current'
     ? captureFailuresHtml(model.maintenance.rebuild.captureFailures, {
       running: ['running', 'cancelling', 'committing'].includes(rebuildPhase),
+      forfeitExpanded,
     })
     : '';
   return '<section class="wsa-view wsa-records-view' + (bulkState ? ' is-bulk' : '') + '" aria-label="' + escapeHtml(title) + '">' +
@@ -1389,9 +1402,15 @@ function jsonInspector(title, textValue, kind) {
     '<pre tabindex="0">' + escapeHtml(textValue) + '</pre></section>';
 }
 
-function diagnosticsHtml(model) {
+// A row's key across renders (its expanded state follows it).
+function operationKey(item) {
+  return hashText([item.at, item.operationId, item.label, item.outcome, item.code, item.sourceMessageId].join('|'));
+}
+
+// Newest first: the model's rows already are (projectDiagnostics reverses the log's time order).
+function diagnosticsHtml(model, { openOperations = null } = {}) {
   const rows = model.diagnostics.length
-    ? model.diagnostics.map((item, index) => ({ item, index })).reverse().map(({ item, index }) => {
+    ? model.diagnostics.map(item => {
       const code = item.code ? '<span class="wsa-op-code">' + escapeHtml(item.code) + '</span>' : '';
       const message = item.sourceMessageId === null ? 'n/a' : item.sourceMessageId;
       const progress = item.totalBoundaries > 0
@@ -1411,7 +1430,9 @@ function diagnosticsHtml(model) {
         '<span class="wsa-op-name">' + escapeHtml(titleWords(item.label || 'operation')) + ' · Msg ' + message + '</span>' +
         '<strong class="wsa-op-outcome">' + escapeHtml(item.outcome) + '</strong>' +
         '<span class="wsa-op-quick">+' + item.applied + ' / −' + item.rejected + ' · ' + item.durationMs + ' ms</span>';
-      return '<details class="wsa-operation' + (/failed|invalid|timeout|cancel/i.test(item.outcome) ? ' has-error' : '') + '">' +
+      const key = operationKey(item);
+      return '<details class="wsa-operation' + (/failed|invalid|timeout|cancel/i.test(item.outcome) ? ' has-error' : '') +
+        '" data-wsa-operation="' + escapeHtml(key) + '"' + (openOperations?.has(key) ? ' open' : '') + '>' +
         '<summary>' + summary + '</summary>' +
         '<div class="wsa-operation-body">' +
         (item.detail ? '<p class="wsa-diagnostic-detail">' + escapeHtml(item.detail) + '</p>' : '') +
@@ -1505,9 +1526,19 @@ function tabLabel(tab) {
   return 'Data';
 }
 
-const FORFEIT_BUTTON_LIMIT = 40;
+// A number field's integer value, or null when it is blank or not a number.
+function numberInput(value) {
+  const textValue = String(value ?? '').trim();
+  if (!textValue) return null;
+  const number = Number(textValue);
+  return Number.isFinite(number) ? Math.trunc(number) : null;
+}
 
-function captureFailuresHtml(failures, { running = false, inSheet = false } = {}) {
+const FORFEIT_BUTTON_LIMIT = 40;
+// Forfeit buttons shown before "Show all": a phone screen is not filled by up to 40 of them.
+const FORFEIT_BUTTONS_SHOWN = 6;
+
+function captureFailuresHtml(failures, { running = false, inSheet = false, forfeitExpanded = false } = {}) {
   if (!failures) return '';
   const count = failures.count;
   const listed = failures.messageIds.join(', ') + (count > failures.messageIds.length ? ', …' : '');
@@ -1530,15 +1561,20 @@ function captureFailuresHtml(failures, { running = false, inSheet = false } = {}
   // Forfeit gives a listed capture up without a rebuild (not offered inside the rebuild sheet or while one runs).
   const forfeitIds = Array.isArray(failures.forfeitIds) ? failures.forfeitIds : failures.messageIds;
   const unlisted = count - forfeitIds.length;
+  const shownIds = forfeitExpanded ? forfeitIds : forfeitIds.slice(0, FORFEIT_BUTTONS_SHOWN);
+  const more = forfeitIds.length - shownIds.length;
   const forfeit = running || inSheet
     ? ''
     : '<div class="wsa-forfeit-captures"><span>Forfeit without recovering:</span>' +
-      forfeitIds.map(messageId => '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-forfeit-capture="' +
+      shownIds.map(messageId => '<button type="button" class="wsa-btn wsa-btn-sm" data-wsa-forfeit-capture="' +
         escapeHtml(String(messageId)) + '" aria-label="Forfeit the missed capture of message ' + escapeHtml(String(messageId)) +
         '" title="Stop listing this missed capture. World State does not change.">Message ' +
         escapeHtml(String(messageId)) + '</button>').join('') +
+      (more > 0 ? '<button type="button" class="wsa-btn wsa-btn-sm wsa-btn-ghost" data-wsa-forfeit-more aria-expanded="false">Show all ' + forfeitIds.length + '</button>' : '') +
       (unlisted > 0 ? '<span>and ' + unlisted + ' more (shown once these are forfeited or recovered)</span>' : '') + '</div>';
-  return '<div class="wsa-rebuild-safety wsa-capture-failures" role="status"><strong>Missed captures</strong><p>' +
+  // A group, not a live region: it is re-rendered with its buttons, and the panel's one persistent live region
+  // announces changes.
+  return '<div class="wsa-rebuild-safety wsa-capture-failures" role="group" aria-label="Missed captures"><strong>Missed captures</strong><p>' +
     escapeHtml(lead) + ' ' + escapeHtml(body) + '</p>' + action + forfeit + '</div>';
 }
 
@@ -1736,6 +1772,8 @@ export function renderWorldStatePanel(model, {
   rebuildForm = {},
   dismissedRebuildOperationId = '',
   bulk = null,
+  forfeitExpanded = false,
+  openOperations = null,
 } = {}) {
   const tab = WORLD_STATE_UI_TABS.includes(activeTab) ? activeTab : 'current';
   const isWorld = WORLD_RECORD_TABS.includes(tab);
@@ -1745,9 +1783,9 @@ export function renderWorldStatePanel(model, {
 
   let body;
   if (tab === 'spatial') body = spatialViewHtml(model, { detailOpen: spatialDetailOpen, editing: spatialEditing, mapSettingsOpen });
-  else if (tab === 'diagnostics') body = diagnosticsHtml(model);
+  else if (tab === 'diagnostics') body = diagnosticsHtml(model, { openOperations });
   else if (tab === 'maintenance') body = maintenanceHtml(model);
-  else body = recordsViewHtml(model, tab, { detailOpen, bulk });
+  else body = recordsViewHtml(model, tab, { detailOpen, bulk, forfeitExpanded });
 
   const rebuildStatus = model.maintenance.rebuild.status;
   const showStatus = rebuildStatus && rebuildStatus.operationId !== dismissedRebuildOperationId;
@@ -1819,6 +1857,8 @@ export function createWorldStateUiController({
   if (typeof getState !== 'function') throw new Error('getState function is required');
 
   const ui = {
+    // Expanded Operations rows (by row key), kept open across re-renders.
+    openOperations: new Set(),
     activeTab: WORLD_STATE_UI_TABS.includes(initialTab) ? initialTab : 'current',
     query: '',
     selectedRecordId: '',
@@ -1961,6 +2001,16 @@ export function createWorldStateUiController({
     return ui.mapSettingsOpen ? 'profile|' + chatKey : '';
   }
 
+  // Leaving a place form with unsaved edits (another place, another tab, the list) asks first; a declined
+  // leave keeps the form and what was typed.
+  function placeDraftMayGo() {
+    const scope = draftScope('place');
+    if (!scope || !ui.drafts.get(scope)?.size) return true;
+    if (!globalThis.window?.confirm?.('Discard the unsaved edits to this place?')) return false;
+    ui.drafts.delete(scope);
+    return true;
+  }
+
   function rememberDraft(element) {
     for (const [kind, attr] of DRAFT_FIELDS) {
       const name = element?.getAttribute?.(attr);
@@ -2087,6 +2137,9 @@ export function createWorldStateUiController({
     if (ui.dismissedRebuildOperationId && liveOperationId && liveOperationId !== ui.dismissedRebuildOperationId) {
       ui.dismissedRebuildOperationId = '';
     }
+    // The selected record left the view (resolved elsewhere, filtered out): the fallback row is selected but
+    // not expanded, so another record never opens on its own.
+    if (ui.selectedRecordId && next.selectedRecordId !== ui.selectedRecordId) ui.detailOpen = false;
     ui.selectedRecordId = next.selectedRecordId;
     // Bulk mode belongs to one list: changing tab or search text ends it, so a selection can never
     // include rows the operator can no longer see.
@@ -2097,6 +2150,11 @@ export function createWorldStateUiController({
       ui.bulk.keys.clear();
     }
     pruneBulkSelection(next);
+    // With no active row left to select, Select mode ends instead of hiding its own toolbar and staying on.
+    if (ui.bulk.active && !activeRowsByKey(next).size) {
+      ui.bulk.active = false;
+      ui.bulk.keys.clear();
+    }
     // The place being edited disappeared (archived, deleted or rolled back elsewhere): close the form
     // rather than let it edit whichever place the list now selects.
     if (ui.spatialEditing && ui.selectedSpatialKey && next.spatial.selectedKey !== ui.selectedSpatialKey) {
@@ -2128,6 +2186,8 @@ export function createWorldStateUiController({
       rebuildForm: ui.rebuildForm,
       dismissedRebuildOperationId: ui.dismissedRebuildOperationId,
       bulk: ui.bulk,
+      forfeitExpanded: ui.forfeitExpanded === true,
+      openOperations: ui.openOperations,
     });
     ui.shownModel = next;
     ui.shownState = ui.modelState;
@@ -2139,7 +2199,9 @@ export function createWorldStateUiController({
     const sheetOpened = ui.rebuildOpen && !ui.sheetWasOpen;
     ui.sheetWasOpen = ui.rebuildOpen;
     if (sheetOpened) {
-      const first = tabStops()[0];
+      // The sheet's first control, not its full-screen backdrop button (a click target, not a place to start).
+      const first = tabStops().find(item => !item.classList?.contains?.('wsa-sheet-backdrop')
+        && !String(item.className || '').includes('wsa-sheet-backdrop'));
       if (first?.focus) {
         first.focus({ preventScroll: true });
         ui.focusTaken = true;
@@ -2209,26 +2271,50 @@ export function createWorldStateUiController({
     // The JSON shown beside the button: a row recorded since the last render cannot shift it.
     const value = String(button?.closest?.('.wsa-operation-json')?.querySelector?.('pre')?.textContent || '');
     if (!value) return;
+    // The clipboard API may be missing or refuse (an insecure page, a denied permission): the selection
+    // fallback is tried then, inside the dialog, and focus returns to the button either way.
     if (globalThis.navigator?.clipboard?.writeText) {
-      await globalThis.navigator.clipboard.writeText(value);
-      button.textContent = 'Copied';
-      return;
+      try {
+        await globalThis.navigator.clipboard.writeText(value);
+        button.textContent = 'Copied';
+        return;
+      } catch {
+        // fall through to the selection copy
+      }
     }
     const textarea = globalThis.document?.createElement?.('textarea');
-    if (!textarea) return;
-    textarea.value = value;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    globalThis.document.body.appendChild(textarea);
-    textarea.select();
-    globalThis.document.execCommand?.('copy');
-    textarea.remove();
-    button.textContent = 'Copied';
+    let copied = false;
+    if (textarea) {
+      textarea.value = value;
+      textarea.setAttribute?.('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      (root.querySelector?.('.wsa-panel') || globalThis.document.body).appendChild(textarea);
+      textarea.select?.();
+      try {
+        copied = globalThis.document.execCommand?.('copy') === true;
+      } catch {
+        copied = false;
+      }
+      textarea.remove();
+    }
+    button.textContent = copied ? 'Copied' : 'Copy failed';
+    button.focus?.({ preventScroll: true });
   }
 
   async function click(event) {
     // A click on another control ends the typing the composition guard protected.
     if (ui.composingTarget && event.target !== ui.composingTarget) ui.composingTarget = null;
+    // An Operations row's summary: the browser toggles it after this click; its new state is remembered.
+    const operation = closest(event.target, 'summary')?.closest?.('[data-wsa-operation]');
+    if (operation) {
+      const key = String(operation.getAttribute?.('data-wsa-operation') || '');
+      if (operation.open) ui.openOperations.delete(key);
+      else if (key) {
+        ui.openOperations.add(key);
+        if (ui.openOperations.size > 40) ui.openOperations.delete(ui.openOperations.values().next().value);
+      }
+    }
     if (closest(event.target, '[data-wsa-menu-toggle]')) {
       ui.menuOpen = !ui.menuOpen;
       ui.mobileMoreOpen = false;
@@ -2291,6 +2377,7 @@ export function createWorldStateUiController({
     }
 
     if (closest(event.target, '[data-wsa-spatial-dups]')) {
+      if (!placeDraftMayGo()) return;
       ui.spatialDuplicatesOnly = !ui.spatialDuplicatesOnly;
       ui.spatialEditing = false;
       refresh();
@@ -2313,7 +2400,14 @@ export function createWorldStateUiController({
 
     const openRecord = closest(event.target, '[data-wsa-open-record]');
     if (openRecord) {
-      const key = clean(openRecord.dataset?.wsaOpenRecord, 120);
+      const shownKey = clean(openRecord.dataset?.wsaOpenRecord, 120);
+      // A place mention's key is positional: remapped to the same record in the current state.
+      const mention = renderedModel().spatial?.detail?.mentions?.rows?.find(row => row.key === shownKey);
+      const key = mention ? currentKeyOf(mention) : shownKey;
+      if (!key) {
+        refresh();
+        return;
+      }
       // Its own status decides the tab, not whether it is among the first rows of Current.
       ui.activeTab = recordStatusOfKey(key) === 'active' ? 'current' : 'resolved';
       ui.selectedRecordId = key;
@@ -2330,6 +2424,7 @@ export function createWorldStateUiController({
     }
 
     if (closest(event.target, '[data-wsa-back-list]')) {
+      if (ui.activeTab === 'spatial' && !placeDraftMayGo()) return;
       if (ui.activeTab === 'spatial') {
         ui.spatialDetailOpen = false;
         ui.spatialEditing = false;
@@ -2364,12 +2459,19 @@ export function createWorldStateUiController({
       const messageId = Number.parseInt(forfeitButton.dataset?.wsaForfeitCapture ?? forfeitButton.getAttribute?.('data-wsa-forfeit-capture'), 10);
       if (!Number.isInteger(messageId) || ui.forfeitPending) return;
       ui.forfeitPending = true;
-      // The host re-renders the panel when a forfeit is refused or saved; a declined one changes nothing.
+      ui.menuOpen = false;
       try {
         if (typeof onMaintenanceAction === 'function') await onMaintenanceAction('forfeit_capture', { messageId });
       } finally {
         ui.forfeitPending = false;
       }
+      // Redrawn here too: a declined or refused forfeit still closes the menu and shows the current list.
+      refresh();
+      return;
+    }
+    if (closest(event.target, '[data-wsa-forfeit-more]')) {
+      ui.forfeitExpanded = true;
+      refresh();
       return;
     }
 
@@ -2398,6 +2500,8 @@ export function createWorldStateUiController({
     }
 
     if (closest(event.target, '[data-wsa-start-rebuild]')) {
+      // A double-click starts one rebuild: the second click is ignored while the first is being started.
+      if (ui.rebuildStarting) return;
       const form = root.querySelector?.('.wsa-rebuild-form');
       const checkedMode = form?.querySelector?.('[data-wsa-rebuild-mode]:checked')?.value;
       const startInput = form?.querySelector?.('[data-wsa-rebuild-start]');
@@ -2408,24 +2512,28 @@ export function createWorldStateUiController({
       const maxAllowed = currentModel.maintenance.rebuild.maxAllowedBoundaries;
       const chatMessages = currentModel.maintenance.rebuild.chatMessages;
       const mode = ['full', 'last', 'from'].includes(checkedMode) ? checkedMode : ui.rebuildForm.mode;
+      // A blank field is its default, never Number('') = 0 clamped to 1.
       const startMessageId = Math.max(0, Math.min(
         Math.max(0, chatMessages - 1),
-        Number.isFinite(Number(startInput?.value)) ? Math.trunc(Number(startInput.value)) : 0,
+        numberInput(startInput?.value) ?? 0,
       ));
       const lastMessages = Math.max(1, Math.min(
         Math.max(1, chatMessages),
-        Number.isFinite(Number(lastInput?.value)) ? Math.trunc(Number(lastInput.value)) : 20,
+        numberInput(lastInput?.value) ?? 20,
       ));
       const maxBoundaries = Math.max(1, Math.min(
         maxAllowed,
-        Number.isFinite(Number(maxInput?.value))
-          ? Math.trunc(Number(maxInput.value))
-          : currentModel.maintenance.rebuild.defaultMaxBoundaries,
+        numberInput(maxInput?.value) ?? currentModel.maintenance.rebuild.defaultMaxBoundaries,
       ));
       const includeHiddenMessages = hiddenInput ? Boolean(hiddenInput.checked) : ui.rebuildForm.includeHiddenMessages !== false;
       ui.rebuildForm = { mode, startMessageId, lastMessages, maxBoundaries, includeHiddenMessages };
-      if (typeof onMaintenanceAction === 'function') {
-        await onMaintenanceAction('rebuild', { rebuild: { ...ui.rebuildForm } });
+      ui.rebuildStarting = true;
+      try {
+        if (typeof onMaintenanceAction === 'function') {
+          await onMaintenanceAction('rebuild', { rebuild: { ...ui.rebuildForm } });
+        }
+      } finally {
+        ui.rebuildStarting = false;
       }
       refresh();
       return;
@@ -2435,6 +2543,7 @@ export function createWorldStateUiController({
     if (tab) {
       const nextTab = clean(tab.dataset?.wsaTab, 20);
       if (WORLD_STATE_UI_TABS.includes(nextTab)) {
+        if (nextTab !== ui.activeTab && !placeDraftMayGo()) return;
         ui.activeTab = nextTab;
         ui.menuOpen = false;
         ui.mobileMoreOpen = false;
@@ -2552,6 +2661,7 @@ export function createWorldStateUiController({
     if (spatialBtn) {
       const key = spatialBtn.dataset?.wsaSpatialKey;
       if (key) {
+        if (key !== ui.selectedSpatialKey && !placeDraftMayGo()) return;
         if (key !== ui.selectedSpatialKey) ui.spatialEditing = false;
         ui.selectedSpatialKey = key;
         ui.spatialDetailOpen = true;
@@ -2705,19 +2815,23 @@ export function createWorldStateUiController({
       return;
     }
 
+    // While a field is blank (being retyped) the form keeps its last value.
     const startInput = closest(event.target, '[data-wsa-rebuild-start]');
     if (startInput) {
-      ui.rebuildForm.startMessageId = Math.max(0, Math.trunc(Number(startInput.value) || 0));
+      const value = numberInput(startInput.value);
+      if (value !== null) ui.rebuildForm.startMessageId = Math.max(0, value);
       return;
     }
     const lastInput = closest(event.target, '[data-wsa-rebuild-last]');
     if (lastInput) {
-      ui.rebuildForm.lastMessages = Math.max(1, Math.trunc(Number(lastInput.value) || 1));
+      const value = numberInput(lastInput.value);
+      if (value !== null) ui.rebuildForm.lastMessages = Math.max(1, value);
       return;
     }
     const maxInput = closest(event.target, '[data-wsa-rebuild-max]');
     if (maxInput) {
-      ui.rebuildForm.maxBoundaries = Math.max(1, Math.trunc(Number(maxInput.value) || 1));
+      const value = numberInput(maxInput.value);
+      if (value !== null) ui.rebuildForm.maxBoundaries = Math.max(1, value);
       return;
     }
 
@@ -2779,7 +2893,8 @@ export function createWorldStateUiController({
         ui.mobileMoreOpen = false;
       } else if (ui.rebuildOpen) {
         ui.rebuildOpen = false;
-      } else if (ui.spatialEditing || ui.mapSettingsOpen) {
+      } else if (ui.activeTab === 'spatial' && (ui.spatialEditing || ui.mapSettingsOpen)) {
+        // Only on the Places tab, where those layers are shown: from another tab Escape closes the panel.
         // A form with unsaved edits is closed only by its own Cancel: Escape never drops what was typed
         // (and never closes the panel behind it).
         if (ui.drafts.get(draftScope(ui.spatialEditing ? 'place' : 'profile'))?.size) return;
