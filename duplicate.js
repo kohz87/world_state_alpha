@@ -101,11 +101,51 @@ function distinctSpacelessSubjects(left, right) {
     && CJK_DISTINGUISHING.test(leftDiff) && CJK_DISTINGUISHING.test(rightDiff));
 }
 
+// Capitalized words that open a sentence without naming anything ("The", "Their", "Some").
+const LEADING_DETERMINERS = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those', 'its', 'his', 'her', 'their', 'our', 'my', 'your',
+  'some', 'many', 'several', 'all', 'most', 'few', 'no', 'every', 'each', 'both', 'another', 'other', 'any',
+  'there', 'it', 'they', 'he', 'she', 'we', 'one', 'now', 'still', 'after', 'before', 'since', 'during',
+]);
+
+// The capitalized words of a summary that may name someone or something, folded like canonicalText: any
+// capitalized word inside a sentence, and the summary's own first word (its subject: "Ravenford is besieged
+// ..."). A later sentence's first word is usually a common noun ("... sealed. Guards patrol the docks").
+function nameWords(summary) {
+  const out = new Set();
+  const sentences = String(summary ?? '').normalize('NFKC').split(/[.!?;]+/u);
+  sentences.forEach((sentence, sentenceIndex) => {
+    const words = sentence.split(/[^\p{L}\p{N}'’-]+/u).filter(Boolean);
+    words.forEach((word, index) => {
+      if (!/^\p{Lu}/u.test(word) || (index === 0 && sentenceIndex > 0)) return;
+      const folded = canonicalText(word);
+      if (folded.length < 2 || STOP.has(folded) || LEADING_DETERMINERS.has(folded) || folded.includes(' ')) return;
+      out.add(folded);
+    });
+  });
+  return out;
+}
+
+// Each summary names someone or something the other never mentions (in its summary or anchors):
+// "Ravenford is besieged by the Iron Legion" and "Stonehaven is besieged by the Iron Legion" share a faction
+// and a predicate, not a subject. A name on one side only ("Bandits hold the pass" / "the bandits hold the
+// pass") is no conflict; uncertain identity keeps the records apart.
+function differentNamedSubjects(left, right, leftAnchors = [], rightAnchors = []) {
+  const vocabulary = (summary, anchors) => new Set([summary, ...anchors].flatMap(text => canonicalText(text).split(' ')).filter(Boolean));
+  const leftWords = vocabulary(left, leftAnchors);
+  const rightWords = vocabulary(right, rightAnchors);
+  const exclusive = (names, other) => [...names].some(name => !other.has(name));
+  return exclusive(nameWords(left), rightWords) && exclusive(nameWords(right), leftWords);
+}
+
 // Two summaries name different subjects when the same noun carries different
-// distinguishing modifiers in each; such conditions are never merged or
-// treated as one, however much else they share.
-export function distinctSubjects(left, right) {
-  if (SPACELESS_SCRIPT.test(String(left ?? '')) && SPACELESS_SCRIPT.test(String(right ?? '')) && distinctSpacelessSubjects(left, right)) return true;
+// distinguishing modifiers in each, or when each names someone or something the other does not; such
+// conditions are never merged or treated as one, however much else they share.
+export function distinctSubjects(left, right, { leftAnchors = [], rightAnchors = [] } = {}) {
+  const leftSpaceless = SPACELESS_SCRIPT.test(String(left ?? ''));
+  const rightSpaceless = SPACELESS_SCRIPT.test(String(right ?? ''));
+  if (leftSpaceless && rightSpaceless && distinctSpacelessSubjects(left, right)) return true;
+  if (!leftSpaceless && !rightSpaceless && differentNamedSubjects(left, right, leftAnchors, rightAnchors)) return true;
   const leftTokens = new Set(canonicalText(left).split(' ').filter(Boolean));
   const rightTokens = new Set(canonicalText(right).split(' ').filter(Boolean));
   const leftModifiers = subjectModifiers(left, rightTokens);
@@ -120,7 +160,7 @@ export function distinctSubjects(left, right) {
 
 export function duplicateSimilarity(candidate, record) {
   if (!candidate || !record || candidate.kind !== record.kind) return 0;
-  if (distinctSubjects(candidate.summary, record.summary)) return 0;
+  if (distinctSubjects(candidate.summary, record.summary, { leftAnchors: candidate.anchors || [], rightAnchors: record.anchors || [] })) return 0;
   const leftSummary = canonicalText(candidate.summary);
   const rightSummary = canonicalText(record.summary);
   if (leftSummary && leftSummary === rightSummary) return 1;
@@ -148,7 +188,7 @@ export function mergeAnchors(existing = [], incoming = [], max = 20) {
 
 function explicitNewEpisodeRelated(candidate, prior, score, threshold, { beyondAnchorWords = false } = {}) {
   // The anchor fallback below must not merge different subjects (north/south gate) that the score keeps apart.
-  if (distinctSubjects(candidate?.summary, prior?.summary)) return false;
+  if (distinctSubjects(candidate?.summary, prior?.summary, { leftAnchors: candidate?.anchors || [], rightAnchors: prior?.anchors || [] })) return false;
   if (score >= threshold) return true;
   const candidateAnchors = anchorSet(candidate);
   const priorAnchors = anchorSet(prior);

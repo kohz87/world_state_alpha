@@ -1,6 +1,6 @@
 import { chatLineage, commitMutationBoundary, firstLineageDivergence } from './branch.js';
 import { consolidateCreateCandidate } from './duplicate.js';
-import { clone } from './common.js';
+import { clone, ownEntry } from './common.js';
 import { cloneState, normalizeState, readableState, reduceMutations } from './state-core.js';
 import { exportBundle, importBundle, resetState } from './transfer.js';
 import { SPACELESS_SCRIPT, canonicalText as normalizeText } from './hash.js';
@@ -91,7 +91,7 @@ export function inspectWorldStateRecord(state, recordId) {
   if (!record) return null;
 
   const evidence = (record.evidenceIds || [])
-    .map(evidenceId => normalized.evidence[evidenceId])
+    .map(evidenceId => ownEntry(normalized.evidence, evidenceId))
     .filter(Boolean)
     .map(item => clone(item));
 

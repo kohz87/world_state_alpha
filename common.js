@@ -7,6 +7,18 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+// The entry a plain-object map holds under `key` itself, never one inherited from Object.prototype
+// ("constructor", "toString"): evidence maps are plain objects keyed by ids that come from saved data.
+export function ownEntry(map, key) {
+  return map && typeof map === 'object' && Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
+// An id that cannot key a plain-object map: assigning "__proto__" changes the map's prototype instead of
+// storing an entry.
+export function reservedMapKey(id) {
+  return id === '__proto__';
+}
+
 // Idempotent: a value cut right after a space, or between the halves of an astral character, is tidied, so
 // bounding it again (each normalization does) changes nothing.
 export function boundedText(value, max) {

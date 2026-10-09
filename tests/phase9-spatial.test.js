@@ -2000,7 +2000,7 @@ test('Host Spatial lifecycle preloads base authority and fails closed when attac
   );
   assert.match(
     source,
-    /const coordinateChanged = fd\.x !== priorX[\s\S]*nextAuthority !== String\(priorCoord\.authority \|\| 'unknown'\)/,
+    /const coordinateChanged = coordinateTouched && \(fd\.x !== priorX[\s\S]*nextAuthority !== String\(priorCoord\.authority \|\| 'unknown'\)/,
   );
 });
 

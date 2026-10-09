@@ -174,7 +174,7 @@ for (const required of [
   'await getChatBaseMap(chatKey, loadedState)',
   'spatialCaptureEnabled = false',
   'if (!baseRef?.id || baseMap)',
-  'const coordinateChanged = fd.x !== priorX',
+  'const coordinateChanged = coordinateTouched && (fd.x !== priorX',
 ]) {
   if (!indexSource.includes(required)) {
     throw new Error('Phase 9 host Spatial lifecycle guard missing: ' + required);

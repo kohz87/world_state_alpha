@@ -1,7 +1,7 @@
 import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { hashText, withoutSplitSurrogate } from './hash.js';
-import { clone } from './common.js';
+import { clone, ownEntry } from './common.js';
 import { CONTINUITY_ICON_SVG } from './constants.js';
 import { readableState } from './state-core.js';
 import { canonicalSpatialDirection, OPPOSITE_DIRECTION, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
@@ -282,7 +282,7 @@ function projectSpatialLocation(loc, key) {
 function projectSpatialDetail(spatialState, loc, key, { resolvedLocations, listedLocations, editRelationId = null }) {
   const base = projectSpatialLocation(loc, key);
   const evidence = (loc.evidenceIds || [])
-    .map(evId => spatialState?.evidence?.[evId])
+    .map(evId => ownEntry(spatialState?.evidence, evId))
     .filter(Boolean)
     .slice(-WORLD_STATE_UI_LIMITS.evidence)
     .reverse()
@@ -344,6 +344,21 @@ function projectSpatialDetail(spatialState, loc, key, { resolvedLocations, liste
 
   return {
     ...base,
+    // The canonical values this form was rendered from: the host saves only the fields the operator changed
+    // from what was shown, and refuses a changed field that another device changed meanwhile.
+    editBase: {
+      name: loc.name ?? '',
+      type: loc.type ?? '',
+      context: loc.context ?? '',
+      notes: loc.notes ?? '',
+      routeRefs: Array.isArray(loc.routeRefs) ? [...loc.routeRefs] : [],
+      coordinate: {
+        x: Number.isFinite(loc.coordinate?.x) ? loc.coordinate.x : null,
+        y: Number.isFinite(loc.coordinate?.y) ? loc.coordinate.y : null,
+        authority: loc.coordinate?.authority || 'unknown',
+        locked: Boolean(loc.coordinate?.locked),
+      },
+    },
     evidence,
     relations,
     primaryRelation,
@@ -689,6 +704,8 @@ export function buildWorldStateUiModel(state, {
       baseMapVersion: baseMap?.version || normalized.spatial.baseMapRef?.version || '',
       hasBaseMap,
       profile: displaySpatialProfile,
+      // The canonical profile the Map settings form was rendered from (null when none is set).
+      profileBase: activeSpatialProfile ? clone(activeSpatialProfile) : null,
       profileConfigured: Boolean(activeSpatialProfile),
       profileSource: hasBaseMap ? 'base_map' : 'manual',
       profileEditable: !hasBaseMap,
@@ -2730,6 +2747,7 @@ export function createWorldStateUiController({
 
         const result = await onSpatialAction(action, {
           profileData,
+          profileBase: currentModel.spatial.profileBase ?? null,
           spatialModel: currentModel.spatial,
         });
         // A saved or reset profile is the new canonical value; a rejected save keeps what was typed.

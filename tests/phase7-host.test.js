@@ -1207,8 +1207,8 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return false;/);
   assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);
   assert.match(source, /void hydrateOperationLog\(chatKey\);\s*if \(!hydratedNow\) await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation', retryDeterministicMiss: true \}\);/);
-  assert.match(source, /await retireOperationLog\(oldKey, newKey\);\s*clearChatRuntimeState\(oldKey\);/);
-  assert.match(source, /await retireOperationLog\(chatKey\);\s*clearChatRuntimeState\(chatKey\);/);
+  assert.match(source, /await retireOperationLog\(oldKey, newKey\);(?:\s*\/\/[^\n]*)*(?:\s*assertOwnershipEpoch\((?:old|new)Key, (?:old|new)OwnerEpoch\);)*\s*clearChatRuntimeState\(oldKey\);/);
+  assert.match(source, /await retireOperationLog\(chatKey\);\s*assertOwnershipEpoch\(chatKey, ownerEpoch\);\s*clearChatRuntimeState\(chatKey\);/);
   // Operation telemetry never enters the canonical sidecar payload.
   const storage = fs.readFileSync('storage.js', 'utf8');
   assert.doesNotMatch(storage, /diagnostic|operations/i);
@@ -1295,7 +1295,7 @@ test('batch-1 host guards: file pickers before the queue, Places edits from cano
   assert.match(source, /if \(actionId === 'import_base_map'\) \{\s*const startEpoch = epoch\(chatKey\);\s*const file = payload\?\.file;/);
 
   // Lock and Save read the place's coordinate from canonical state, not the display projection.
-  assert.match(source, /const currentLocationCoordinate = location => \{[\s\S]{0,120}effectiveLocations\(state\)/);
+  assert.match(source, /const currentEffectiveLocation = location => effectiveLocations\(state\)[\s\S]{0,300}const currentLocationCoordinate = location => \{\s*const effective = currentEffectiveLocation\(location\);/);
   assert.equal((source.match(/const effectiveLocations = currentState =>/g) || []).length, 1);
   assert.match(source, /const priorCoord = currentLocationCoordinate\(payload\.location\);/);
   assert.match(source, /const curCoord = currentLocationCoordinate\(payload\.location\);\s*if \(!Number\.isFinite\(curCoord\.x\) \|\| !Number\.isFinite\(curCoord\.y\)\)/);
@@ -1306,7 +1306,7 @@ test('batch-1 host guards: file pickers before the queue, Places edits from cano
   assert.match(source, /const existingPlace = \(state\.spatial\?\.locations \|\| \[\]\)\s*\.find\(item => item\.status === 'active'/);
 
   // Rename carries the server's (authoritative) source state and may reuse a still-retired destination.
-  const migration = source.slice(source.indexOf('async function migrateWorldStateChatKey('), source.indexOf('async function migrateWorldStateChatKey(') + 6000);
+  const migration = source.slice(source.indexOf('async function migrateWorldStateChatKey('), source.indexOf('async function migrateWorldStateChatKey(') + 9000);
   assert.match(migration, /sourceState = recoveredSource\.payload\.state;/);
   assert.doesNotMatch(migration, /if \(!sourceState\) sourceState = recoveredSource\.payload\.state;/);
   assert.match(migration, /const unchangedSinceRetired = Boolean\(destinationTombstone\) && !newPointer/);

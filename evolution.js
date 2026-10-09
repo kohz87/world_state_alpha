@@ -6,7 +6,7 @@ import { buildWorldStateInjection } from './injection.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
 import { evaluationBoundary, selectBackgroundDevelopments, updateRelevanceIndex } from './relevance.js';
 import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.js';
-import { clipMiddle } from './common.js';
+import { clipMiddle, ownEntry } from './common.js';
 import { reduceMutations } from './state-core.js';
 
 export const EVOLUTION_RESPONSE_TOKENS = 2600;
@@ -159,7 +159,7 @@ function allowedHistoricalEvidence(state, record) {
   const allowedClasses = new Set(['user_narration', 'assistant_narration', 'recent_history', 'manual', 'rebuild']);
   const ids = Array.isArray(record?.evidenceIds) ? record.evidenceIds : [];
   for (let index = ids.length - 1; index >= 0 && out.length < EVOLUTION_LIMITS.historicalEvidencePerTarget; index -= 1) {
-    const evidence = state?.evidence?.[ids[index]];
+    const evidence = ownEntry(state?.evidence, ids[index]);
     if (!evidence?.claim || !allowedClasses.has(evidence.sourceClass)) continue;
     out.push(evidence);
   }
