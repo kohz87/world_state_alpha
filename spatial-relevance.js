@@ -96,7 +96,7 @@ export function buildSpatialRelevanceIndex(spatialState, baseMap = null) {
     routeNameById: new Map(),
     relationsByLoc: new Map(),
     relationsById: new Map(),
-    corpusCount: locations.length,
+    corpusCount: 0,
   };
 
   for (const loc of locations) {
@@ -104,6 +104,9 @@ export function buildSpatialRelevanceIndex(spatialState, baseMap = null) {
     index.byId.set(loc.id, loc);
     indexLocationTerms(loc, index);
   }
+
+  // The active places indexed, as an incremental update counts them.
+  index.corpusCount = index.byId.size;
 
   for (const rt of routes) {
     const nameNorm = normalizeText(rt.name);
@@ -265,12 +268,21 @@ export function selectRelevantLocations(spatialState, {
     candidateScores.set(id, (candidateScores.get(id) || 0) + score);
   };
 
-  const visitPosting = (posting, score) => {
+  // Whole-name phrases seed a place on their own; single words (name or description) count per distinct word.
+  const phraseHits = new Set();
+  const wordHits = new Map();
+  const visitPosting = (posting, score, word = '') => {
     if (!posting || postingVisits >= visitBudget) return;
     for (const id of posting) {
       if (postingVisits >= visitBudget) break;
       postingVisits += 1;
       addScore(id, score);
+      if (!candidateScores.has(id)) continue;
+      if (!word) phraseHits.add(id);
+      else {
+        if (!wordHits.has(id)) wordHits.set(id, new Set());
+        wordHits.get(id).add(word);
+      }
     }
   };
 
@@ -288,15 +300,15 @@ export function selectRelevantLocations(spatialState, {
 
   // 3. Name bigrams and tokens
   for (const gram of nonAsciiBigrams(recentNorm, 64, { newestFirst: true })) {
-    visitPosting(spatialIndex.nameBigrams.get(gram), 50);
+    visitPosting(spatialIndex.nameBigrams.get(gram), 50, gram);
   }
   for (const token of rarestFirst(recentLookup, spatialIndex.nameTokens, spatialIndex.contextTokens)) {
-    visitPosting(spatialIndex.nameTokens.get(token), 30);
-    visitPosting(spatialIndex.contextTokens.get(token), 12);
+    visitPosting(spatialIndex.nameTokens.get(token), 30, token);
+    visitPosting(spatialIndex.contextTokens.get(token), 12, token);
   }
   for (const token of rarestFirst(loreLookup, spatialIndex.nameTokens, spatialIndex.contextTokens)) {
-    visitPosting(spatialIndex.nameTokens.get(token), 15);
-    visitPosting(spatialIndex.contextTokens.get(token), 6);
+    visitPosting(spatialIndex.nameTokens.get(token), 15, token);
+    visitPosting(spatialIndex.contextTokens.get(token), 6, token);
   }
 
   // Score candidate records
@@ -311,8 +323,11 @@ export function selectRelevantLocations(spatialState, {
 
     if (recentMatch > 0) score += recentMatch * 10;
     if (loreMatch > 0) score += loreMatch * 4;
-    // Without a name match, one shared description word (seed 12) is too weak to inject a place.
-    if (recentMatch <= 0 && loreMatch <= 0 && seedScore < 24) continue;
+    // Without a name match, one shared word is too weak to inject a place: a description word (seed 12), and
+    // one word of a longer name too ("old man" is not the Old Mill). Two distinct words, or a whole-name or
+    // route-name phrase, may.
+    if (recentMatch <= 0 && loreMatch <= 0
+      && (seedScore < 24 || (!phraseHits.has(id) && (wordHits.get(id)?.size || 0) < 2))) continue;
 
     candidates.push({ location: loc, score, source: 'seed' });
   }

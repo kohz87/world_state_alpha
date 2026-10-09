@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.9.0-alpha.63 - Places (deep pass on alpha.60)
+
+### Fixed
+
+- **Capture**
+  - A base-map route is never replaced, even when the model names its id. An invented route id is dropped.
+  - A direction such as "constructor" is rejected instead of failing the whole capture.
+  - A campaign place the operator archived (not merged) is no longer re-created by narration.
+  - A relative position is no longer computed from an anchor's old position when the same reply moves the anchor.
+  - Directions are read the way the narration states them. "Millbrook lies north of Oakvale" stored as Oakvale-north-of-Millbrook is turned around (south).
+  - An update to a place now needs evidence that names the place.
+  - Naming a base-map place without an override changes nothing and no longer logs a rejection every turn.
+  - A World_State header coordinate must be in the Loc part or a position field. "Date: (3, 12)" is no longer a position.
+  - A long header line is cut on a word, so it still grounds.
+  - A relative relation dropped because its place was not saved keeps the model's row number.
+  - An empty `relative` placeholder no longer fails the whole capture.
+- **Reducer and panel**
+  - A free-text relation ("upriver") between two positioned places is kept under a locked True North, so the place save no longer fails.
+  - The True North check uses where an override is now, not where it was before the reply.
+  - Route names match like place names ("North-Road" is "North Road").
+  - A plain upsert at a base-map place id is refused instead of creating a shadowing campaign place.
+  - A relation id is honoured only between its own two places.
+  - Merging into an archived place is refused.
+- **Relevance, injection and base maps**
+  - One word of a longer name no longer selects a place ("an old man" is not the Old Mill).
+  - The Places corpus count means active places after a rebuild and after an update alike.
+  - An injection line cut to fit the budget ends on a word, never inside a number or a coordinate pair (Reality and Places).
+  - Base-map numeric strings count in `{x, y}` coordinates as they already did in `[x, y]`.
+
+### Architecture
+
+- No durable format change (schema 2; envelopes 1).
+- The Reality and Places injections share one `fitLine`.
+- Core contract C24 records the rules (items 105, 106 and 112 included).
+
+### Validation
+
+- New `tests/audit-alpha63.test.js` (26 tests). The first 20 each fail on 0.9.0-alpha.62, and the 6 review-hardening tests fail on the pre-review code.
+- One older test changed: it expected the per-turn base-place rejection, which is now intentionally silent.
+- `npm test` (712) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
+- Live in SillyTavern, these behave as on alpha.62: the branch, rebuild, resume, hide, forfeit, alpha.59 (including the place save) and alpha.57 Places scripts. They were run again after the review hardening.
+
+### Code review hardening
+
+- A line whose only space is near its start (for example Japanese text) is cut where it is instead of being dropped from the injection.
+- A relation addressed through its id from the other side keeps its own direction.
+- Only a narrated coordinate that differs from the anchor's own counts as moving it. A restated or invented coordinate no longer blocks deriving a place's position from it.
+- An archived duplicate gives way to a base-map place of the same name. A World_State header naming an archived place is no longer logged every turn.
+- An update must be named by its evidence under the place's own name. Evidence about another place can no longer update or rename it.
+- When one place name starts another ("Mill" and "Mill Town"), the longer name after "of" is the one meant.
+- A position field before the Loc part of a header line counts.
+- The True North check uses one per-batch index of current places instead of scanning all places, and the direction-form lookup lives once.
+
 ## 0.9.0-alpha.62 - Capture firewall, wire and elapsed time (deep pass on alpha.60)
 
 ### Fixed

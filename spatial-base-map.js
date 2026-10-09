@@ -8,13 +8,15 @@ import {
   normalizeSpatialRoute,
 } from './spatial-core.js';
 
+// A numeric string is a number in either form ("12" in [x, y] or in {x, y}); null, '' and other non-numbers
+// mean unknown (Number(null) and Number('') would be 0, the origin).
+const axis = value => (typeof value === 'number' || (typeof value === 'string' && value.trim()) ? Number(value) : NaN);
+
 function normalizeBaseCoordinate(item) {
   if (item?.coordinate && typeof item.coordinate === 'object' && !Array.isArray(item.coordinate)) {
-    return normalizeCoordinate(item.coordinate);
+    return normalizeCoordinate({ ...item.coordinate, x: axis(item.coordinate.x), y: axis(item.coordinate.y) });
   }
   if (Array.isArray(item?.coord) && item.coord.length >= 2) {
-    // null, '' and other non-numbers mean unknown (Number(null) and Number('') would be 0, the origin).
-    const axis = value => (typeof value === 'number' || (typeof value === 'string' && value.trim()) ? Number(value) : NaN);
     return normalizeCoordinate({ x: axis(item.coord[0]), y: axis(item.coord[1]) });
   }
   return normalizeCoordinate(null);

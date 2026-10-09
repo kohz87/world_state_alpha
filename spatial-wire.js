@@ -53,6 +53,8 @@ function relative(raw) {
   const direction = text(raw.direction, 30).toLowerCase();
   const distanceKm = Number.isFinite(raw.distanceKm) && raw.distanceKm >= 0 ? raw.distanceKm : null;
   const distanceMode = SPATIAL_DISTANCE_MODES.includes(raw.distanceMode) ? raw.distanceMode : 'unspecified';
+  // An empty placeholder ({} or blank fields, as the output shape shows them) states no relative position.
+  if (!toLocationId && !direction) return null;
   if (!toLocationId || !direction) throw new SpatialWireError('relative requires toLocationId and direction');
   return { toLocationId, direction, distanceKm, distanceMode };
 }

@@ -1,5 +1,5 @@
 import { selectRelevantLocations } from './spatial-relevance.js';
-import { estimateInjectionTokens } from './injection.js';
+import { estimateInjectionTokens, fitLine } from './injection.js';
 import { SPATIAL_LIMITS } from './constants.js';
 import { resolveSpatialProfile } from './spatial-core.js';
 
@@ -55,38 +55,6 @@ function routeLine(route, locMap) {
   const between = ends.length >= 2 ? ` between ${ends.join(' and ')}` : ends.length ? ` from ${ends[0]}` : '';
   const context = singleLine(route.context);
   return `- Route: ${name} (${type})${between}${context ? ` - ${context}` : ''}`;
-}
-
-function fitLine(line, currentText, budgetTokens) {
-  if (!line) return '';
-  const proposed = `${currentText}\n${line}`;
-  if (estimateInjectionTokens(proposed) <= budgetTokens) return line;
-
-  const prefix = '- ';
-  const raw = line.startsWith(prefix) ? line.slice(prefix.length) : line;
-  const chars = [...raw];
-  let low = 0;
-  let high = chars.length;
-  let best = '';
-
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const candidateBody = mid < chars.length
-      ? `${chars.slice(0, mid).join('').trimEnd()}…`
-      : raw;
-    const candidate = `${prefix}${candidateBody}`;
-    const next = `${currentText}\n${candidate}`;
-    const meaningfulChars = [...candidateBody.replace(/…$/u, '')].length;
-    if (candidateBody
-      && (mid === chars.length || meaningfulChars >= 8)
-      && estimateInjectionTokens(next) <= budgetTokens) {
-      best = candidate;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-  return best;
 }
 
 export function renderSpatialInjection(selectedLocations = [], relations = [], routes = [], {
