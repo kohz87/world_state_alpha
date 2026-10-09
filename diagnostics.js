@@ -51,7 +51,13 @@ export function sanitizeCaptureDiagnostic(raw = {}) {
   };
 }
 
-const MAX_CLEARS = 50;
+const MAX_CLEARS = 400;
+
+// A failure as a recovery names it: its session, operation id and time together (an operation id alone repeats
+// after a reload and across devices). Rows written before sessions were recorded cannot be named.
+function failureRef(row) {
+  return row?.session ? row.session + '|' + (row.operationId || '') + '|' + int(row.at) : '';
+}
 
 function operationKey(row) {
   return [row.at, row.operationId, row.label, row.outcome, row.code, row.sourceMessageId].join('|');
@@ -87,16 +93,16 @@ export function createDiagnosticStore({
     if (!key) return null;
     const rows = byChat.get(key) || [];
     let value = sanitizeCaptureDiagnostic({ ...raw, at: raw.at ?? now(), session });
-    // A recovery names the failures it clears, as this session knows them now.
+    // A recovery names the failures it clears, as this session knows them now; the same walk tells whether a
+    // failure was listed before this row (judged before the trim below can drop the failure it clears), and
+    // the host saves such a recovery at once.
+    let failuresListed = false;
     if (isCaptureRecovery(value)) {
-      const cleared = failuresClearedBy(value, unrecoveredFailureLists(rows.map(recoveryView)).flat());
-      value = sanitizeCaptureDiagnostic({ ...value, clears: cleared.map(row => row.operationId).filter(Boolean) });
+      const listed = unrecoveredFailureLists(rows.map(recoveryView));
+      failuresListed = typeof onRecord === 'function' && listed.length > 0;
+      const cleared = failuresClearedBy(value, listed.flat());
+      value = sanitizeCaptureDiagnostic({ ...value, clears: cleared.map(failureRef).filter(Boolean) });
     }
-    // Whether a failure was listed before this row, judged before the trim below can drop the failure it
-    // clears: the host saves such a recovery at once.
-    const failuresListed = typeof onRecord === 'function' && isCaptureRecovery(value)
-      ? unrecoveredFailureLists(rows.map(recoveryView)).length > 0
-      : false;
     rows.push(value);
     byChat.set(key, rows.length > max ? trimOperationRows(rows, max) : rows);
     if (typeof onRecord === 'function') {
@@ -281,10 +287,12 @@ function unrecoveredFailureLists(rows = [], clearing = null) {
     if (!Array.isArray(row.clears) || !isCaptureRecovery(row)) continue;
     for (const id of row.clears) if (!namedBy.has(id)) namedBy.set(id, row);
   }
-  // A recovery that names what it clears (recorded since alpha.68) clears, besides those, only failures its
-  // own session recorded before it (one clock) and failures written before sessions were recorded. One
-  // without names (older rows) clears every earlier failure of its scope.
-  const inScope = (row, failure) => !Array.isArray(row.clears) || !failure.session
+  // A capture recovery that names what it clears (recorded since alpha.68) clears, besides those, only failures
+  // its own session recorded before it (one clock) and failures written before sessions were recorded: another
+  // device's unnamed failure may be newer than it, whatever the clocks say, so it stays listed. A rebuild,
+  // import or reset replaced a whole range, and an older row names nothing: those clear every earlier failure
+  // of their scope.
+  const inScope = (row, failure) => !Array.isArray(row.clears) || row.label !== 'capture' || !failure.session
     || (Boolean(row.session) && failure.session === row.session);
   const drop = (row, matches) => {
     for (const [key, list] of [...failed]) {
@@ -305,8 +313,8 @@ function unrecoveredFailureLists(rows = [], clearing = null) {
     }
   };
   for (const row of ordered) {
-    if (isCaptureFailure(row) && row.operationId && namedBy.has(row.operationId)) {
-      clearing?.add(namedBy.get(row.operationId));
+    if (isCaptureFailure(row) && namedBy.has(failureRef(row))) {
+      clearing?.add(namedBy.get(failureRef(row)));
       continue;
     }
     if (isCaptureFailure(row)) {

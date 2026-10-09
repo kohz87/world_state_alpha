@@ -55,15 +55,23 @@ function anchorLongEnough(anchor) {
 // ("Northbridge has not collapsed" for "Northbridge has collapsed"), and a condition that the excerpt says
 // continues ("the garrison still occupies Northbridge") is not ended by it. Judged per clause and only where a
 // clause carries every content word of the statement, so a paraphrase is never refused on wording alone.
-const NEGATION = /\b(?:not|never|cannot|nor|neither|none|no\s+longer)\b|n['’]t\b/iu;
-const CONTINUATION = /\b(?:still|remains?|remained|continues?|continued|persists?|persisted|keeps?|kept|yet)\b/iu;
-const CLAIM_CLAUSE = /[;,:—–]|\s(?:and|but|while|whereas|though|although)\s|(?<=[.!?])\s+/iu;
+const NEGATION = /\b(?:not|never|cannot|nor|neither|none|no|nobody|nothing|nowhere|no\s+longer)\b|n['’]t\b/iu;
+const NEGATION_WORDS = new Set(['not', 'never', 'cannot', 'nor', 'neither', 'none', 'nobody', 'nothing', 'nowhere', 'longer', 'anymore']);
+const CONTINUATION = /\b(?:still|remains?|remained|continues?|continued|persists?|persisted|keeps?|kept|yet)\b/giu;
+// Clauses, subordinate and relative ones included ("Northbridge collapsed because the engineers did not
+// reinforce it": the negation belongs to the reason, not to the collapse).
+const CLAIM_CLAUSE = /[;,:—–()]|\s(?:and|but|while|whereas|though|although|because|since|until|unless|after|before|when|whenever|where|which|who|whom|whose|that)\s|(?<=[.!?])\s+/iu;
+
+// The statement's content words, its negation words left out (they are its polarity, judged apart).
+function contentWords(statement) {
+  return [...new Set(significantTokens(statement))].filter(word => !NEGATION_WORDS.has(word));
+}
 
 function clausesCarrying(statement, claim) {
-  const words = [...new Set(significantTokens(statement))];
+  const words = contentWords(statement);
   if (words.length < 2) return [];
   return String(claim ?? '').split(CLAIM_CLAUSE).filter(clause => {
-    const tokens = new Set(significantTokens(clause));
+    const tokens = new Set(significantTokens(clause ?? ''));
     return words.every(word => tokens.has(word));
   });
 }
@@ -75,12 +83,14 @@ export function claimContradictsStatement(statement, claim) {
   return clauses.length > 0 && clauses.every(clause => NEGATION.test(clause) !== negated);
 }
 
-// The claim says the record's own condition continues: a clause carrying it with the same polarity and a word of
-// continuation ("still", "remains", "continues").
+// The claim says the record's own condition continues: a clause carrying it with the same polarity and a word
+// of continuation ("still", "remains", "continues") beyond those the record's own summary uses.
 export function claimStatesContinuation(recordSummary, claim) {
-  const negated = NEGATION.test(String(recordSummary ?? ''));
-  return clausesCarrying(recordSummary, claim)
-    .some(clause => CONTINUATION.test(clause) && NEGATION.test(clause) === negated);
+  const summary = String(recordSummary ?? '');
+  const negated = NEGATION.test(summary);
+  const own = (summary.match(CONTINUATION) || []).length;
+  return clausesCarrying(summary, claim)
+    .some(clause => (clause.match(CONTINUATION) || []).length > own && NEGATION.test(clause) === negated);
 }
 
 function targetAffinity(record, text) {
@@ -541,11 +551,19 @@ export function reportedAccountRecord(summary) {
   return REPORTED_ACCOUNT_RE.test(String(summary ?? ''));
 }
 
-// A stored claim read on its own (evolution has no source message to judge it in): it reports, or it is a
-// plan or expectation. Such a claim keeps its uncertainty when another writer reuses it.
+// Hearsay read from a stored text on its own (evolution has no source message to judge it in): an account
+// framed as a report or rumour. A narrated speech act ("the duke declared martial law", "denied", "admitted")
+// is an event, not hearsay.
+const HEARSAY_RE = /\b(?:reports?|reported|reportedly|rumou?rs?|rumou?red|allegedly|supposedly|purportedly|unconfirmed|unverified|gossip|hearsay|word\s+(?:is|has\s+it)|it\s+is\s+said|heard\s+that|claims?\s+that|claimed\s+that|says?\s+that|said\s+that)\b/iu;
+export function hearsayText(text) {
+  return HEARSAY_RE.test(String(text ?? ''));
+}
+
+// A stored claim read on its own: hearsay, or a plan or expectation. Such a claim keeps its uncertainty when
+// another writer reuses it.
 export function claimTextAttributed(claim) {
   const text = String(claim ?? '');
-  return REPORTED_ACCOUNT_RE.test(text) || PROSPECTIVE_CLAIM_RE.test(text);
+  return HEARSAY_RE.test(text) || PROSPECTIVE_CLAIM_RE.test(text);
 }
 
 // What is planned, expected or conditional has not happened: a claim stating it ("the valley will flood",

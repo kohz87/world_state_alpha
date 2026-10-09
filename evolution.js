@@ -5,7 +5,7 @@ import { EVOLUTION_WIRE_LIMITS, EvolutionWireError, parseEvolutionJson, validate
 import { buildWorldStateInjection } from './injection.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
 import { evaluationBoundary, selectBackgroundDevelopments, updateRelevanceIndex } from './relevance.js';
-import { captureExchangeIndex, claimTextAttributed, evidenceClaimGrounded, preservesReportedInformationStatus, reportedAccountRecord } from './source-firewall.js';
+import { captureExchangeIndex, claimTextAttributed, evidenceClaimGrounded, hearsayText, preservesReportedInformationStatus } from './source-firewall.js';
 import { clipMiddle, ownEntry } from './common.js';
 import { reduceMutations } from './state-core.js';
 
@@ -401,21 +401,23 @@ function evaluationMutation(evaluation, context) {
   // Evolution keeps the epistemic status capture enforced. A reported account (a rumour, a report) does not
   // become an established fact without confirming current evidence, and an established condition is not ended
   // on reported or planned support alone.
+  // One refused evaluation is recorded as stable (its target keeps its condition); the rest of the batch stands.
   if (evaluation.outcome !== 'stable') {
     const target = context.targets.find(item => item.record.id === evaluation.recordId)?.record;
     const confirming = supports.some(item => item.type === 'current' && !claimTextAttributed(item.claim));
-    if (target && reportedAccountRecord(target.summary) && evaluation.outcome === 'update' && evaluation.summary
+    let refusal = '';
+    if (target && hearsayText(target.summary) && evaluation.outcome === 'update' && evaluation.summary
       && !preservesReportedInformationStatus(evaluation.summary) && !confirming) {
-      throw new EvolutionWireError(
-        `update for ${evaluation.recordId} would turn a reported account into an established fact without confirming current evidence`,
-      );
+      refusal = `update for ${evaluation.recordId} would turn a reported account into an established fact without confirming current evidence`;
     }
     const factual = supports.filter(item => item.type === 'current' || item.type === 'historical');
-    if (target && ['resolve', 'supersede'].includes(evaluation.outcome) && !reportedAccountRecord(target.summary)
+    if (!refusal && target && ['resolve', 'supersede'].includes(evaluation.outcome) && !hearsayText(target.summary)
       && factual.length && factual.every(item => claimTextAttributed(item.claim))) {
-      throw new EvolutionWireError(
-        `${evaluation.outcome} of ${evaluation.recordId} rests only on reported or planned support; an established condition needs narrated support to end`,
-      );
+      refusal = `${evaluation.outcome} of ${evaluation.recordId} rests only on reported or planned support; an established condition needs narrated support to end`;
+    }
+    if (refusal) {
+      const { summary, trend, anchors, ...rest } = evaluation;
+      return { ...evaluationMutation({ ...rest, outcome: 'stable' }, context), refusal };
     }
   }
 
@@ -493,6 +495,15 @@ function derivedMutation(candidate, context, state, index = null) {
   if (!changeHasCausalSupport(supports)) {
     return { ok: false, reason: 'derived development lacks causal support' };
   }
+  // A development derived only from hearsay or plans is not an established fact: its summary must keep that
+  // status, as an update of the rumour itself would have to.
+  const factualSupport = supports.filter(item => item.type === 'current' || item.type === 'historical');
+  const causes = candidate.causeRecordIds.map(id => context.targets.find(item => item.record.id === id)?.record).filter(Boolean);
+  const onlyHearsay = (factualSupport.length && factualSupport.every(item => claimTextAttributed(item.claim)))
+    || (causes.length && causes.every(record => hearsayText(record.summary)));
+  if (onlyHearsay && !preservesReportedInformationStatus(candidate.summary)) {
+    return { ok: false, reason: 'derived development rests only on reported or planned support; its summary must keep that status' };
+  }
 
   let bestDuplicate = null;
   const pool = duplicatePool(index, candidate, targetIds);
@@ -555,6 +566,7 @@ export function processEvolutionResponse({
   const seen = new Set();
   const evaluationMutations = [];
   const outcomes = [];
+  const refusedEvaluations = [];
 
   for (const evaluation of wire.evaluations) {
     if (!targetIds.includes(evaluation.recordId)) {
@@ -566,7 +578,8 @@ export function processEvolutionResponse({
     seen.add(evaluation.recordId);
     const prepared = evaluationMutation(evaluation, context);
     evaluationMutations.push(prepared.mutation);
-    outcomes.push({ recordId: evaluation.recordId, outcome: evaluation.outcome });
+    outcomes.push({ recordId: evaluation.recordId, outcome: prepared.refusal ? 'stable' : evaluation.outcome });
+    if (prepared.refusal) refusedEvaluations.push({ stage: 'evaluation-epistemic', recordId: evaluation.recordId, reason: prepared.refusal });
   }
 
   // Derived developments are judged against the evaluated state; with none proposed, the batch's own
@@ -584,9 +597,9 @@ export function processEvolutionResponse({
     );
   }
 
-  const rejectedDerived = wire.rejected
+  const rejectedDerived = [...refusedEvaluations, ...wire.rejected
     .filter(item => item.section === 'derived')
-    .map(item => ({ stage: 'wire', reason: item.reason, index: item.index }));
+    .map(item => ({ stage: 'wire', reason: item.reason, index: item.index }))];
   const derivedMutations = [];
   for (const candidate of wire.derived) {
     const admitted = derivedMutation(candidate, context, projectedEvaluations.state, index);

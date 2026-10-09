@@ -107,26 +107,33 @@ async function evolve(definitions, evaluations) {
 }
 
 test('A13: evolution keeps a rumour a rumour and ends nothing established on reported support alone', async () => {
+  // A refused evaluation is recorded as stable: the record keeps its condition and the batch stands.
   const rumour = await evolve(
     [{ summary: 'Merchants report that the border fort has fallen.', anchors: ['border fort'], claim: 'Merchants report that the border fort has fallen.' }],
     ([record]) => [{ recordId: record.id, outcome: 'update', summary: 'The border fort has fallen.', reason: 'Time passed.', supportIds: ['t0', 'h0'] }],
   );
-  assert.equal(rumour.outcome, 'invalid-response');
-  assert.match(rumour.errorMessage, /reported account/);
+  assert.notEqual(rumour.outcome, 'invalid-response');
+  assert.equal(rumour.state.records[0].summary, 'Merchants report that the border fort has fallen.');
+  assert.ok(rumour.rejectedDerived.some(item => item.stage === 'evaluation-epistemic' && /reported account/.test(item.reason)));
 
   const ended = await evolve(
     [{ summary: 'The border fort is held by the king.', anchors: ['border fort'], claim: 'Merchants report that the border fort will fall soon.' }],
     ([record]) => [{ recordId: record.id, outcome: 'resolve', summary: 'The border fort has fallen.', reason: 'Time passed.', supportIds: ['t0', 'h0'] }],
   );
-  assert.equal(ended.outcome, 'invalid-response');
-  assert.match(ended.errorMessage, /reported or planned support/);
+  assert.equal(ended.state.records[0].status, 'active');
+  assert.ok(ended.rejectedDerived.some(item => /reported or planned support/.test(item.reason)));
 
-  // A rumour that keeps its reporting status may still evolve.
+  // A rumour that keeps its reporting status may still evolve, and a narrated speech act is no hearsay.
   const kept = await evolve(
     [{ summary: 'Merchants report that the border fort has fallen.', anchors: ['border fort'], claim: 'Merchants report that the border fort has fallen.' }],
     ([record]) => [{ recordId: record.id, outcome: 'update', summary: 'Merchants still report that the border fort has fallen.', reason: 'Time passed.', supportIds: ['t0', 'h0'] }],
   );
-  assert.notEqual(kept.outcome, 'invalid-response');
+  assert.equal(kept.state.records[0].summary, 'Merchants still report that the border fort has fallen.');
+  const declared = await evolve(
+    [{ summary: 'Martial law holds in Ravenford.', anchors: ['martial law'], claim: 'The duke declared martial law in Ravenford.' }],
+    ([record]) => [{ recordId: record.id, outcome: 'resolve', summary: 'Martial law has lapsed in Ravenford.', reason: 'Time passed quietly.', supportIds: ['t0', 'h0'] }],
+  );
+  assert.equal(declared.state.records[0].status, 'resolved');
 });
 
 const failure = (messageId, at, extra = {}) => ({ label: 'capture', at, sourceMessageId: messageId, lineageKey: 'ln-' + messageId, contentLineageKey: 'c-' + messageId, outcome: 'invalid-response', operationId: 'capture:' + messageId + ':' + at, ...extra });
@@ -154,4 +161,38 @@ test('A15: missed-capture recovery follows which failures a recovery saw, not de
     { ...failure(2, 10), operationId: '' },
     { label: 'capture', at: 20, sourceMessageId: 2, lineageKey: 'ln-2', outcome: 'applied' },
   ]), []);
+});
+
+test('review: failures are named by session, id and time, so a reused id is not hidden', () => {
+  const store = createDiagnosticStore({ session: 's1', now: (() => { let t = 0; return () => ++t; })() });
+  store.record('chat:z', failure(10, undefined, { operationId: 'capture:10:1:1', at: undefined }));
+  store.record('chat:z', { label: 'capture', sourceMessageId: 10, lineageKey: 'ln-10', contentLineageKey: 'c-10', outcome: 'applied', operationId: 'capture:10:1:2' });
+  // After a reload the same operation id fails again.
+  const reloaded = createDiagnosticStore({ session: 's2', now: () => 50 });
+  reloaded.merge('chat:z', store.allRecords('chat:z'));
+  reloaded.record('chat:z', failure(10, undefined, { operationId: 'capture:10:1:1', at: undefined }));
+  assert.deepEqual(unrecoveredCaptureFailures(reloaded.recoveryRows('chat:z')).map(item => item.messageId), [10]);
+});
+
+test('review: an import, reset or rebuild clears every earlier failure of its range, however many', () => {
+  const other = createDiagnosticStore({ session: 'other', now: (() => { let t = 0; return () => ++t; })() });
+  for (let id = 0; id < 60; id += 1) other.record('chat:i', failure(id, undefined, { at: undefined }));
+  const here = createDiagnosticStore({ session: 'here', now: () => 1000 });
+  here.record('chat:i', { label: 'import', outcome: 'applied' });
+  assert.deepEqual(unrecoveredCaptureFailures(mergeOperationRows(other.allRecords('chat:i'), here.allRecords('chat:i'), 128)), []);
+});
+
+test('review: polarity and continuation read the right clause', () => {
+  assert.equal(claimContradictsStatement('Northbridge has collapsed', 'Northbridge collapsed because the engineers did not reinforce it'), false);
+  assert.equal(claimContradictsStatement('No ships sail from Port Kell', 'Ships do not sail from Port Kell anymore'), false);
+  assert.equal(claimContradictsStatement('No ships sail from Port Kell', 'Ships sail from Port Kell again'), true);
+  assert.equal(claimStatesContinuation('The plague continues to spread in Lowtown', 'The plague that continues to spread in Lowtown is finally cured by the healers'), false);
+});
+
+test('review: a development derived only from hearsay keeps that status', async () => {
+  const fs = await import('node:fs');
+  const evolution = fs.readFileSync('evolution.js', 'utf8');
+  assert.match(evolution, /if \(onlyHearsay && !preservesReportedInformationStatus\(candidate\.summary\)\) \{/);
+  // An upload's deadline grows with its body.
+  assert.match(fs.readFileSync('host-storage.js', 'utf8'), /const ms = Math\.min\(600000, uploadMs \+ Math\.ceil\(bytes \/ 50000\) \* 1000\);/);
 });

@@ -19,7 +19,14 @@
 
 ### Validation
 
-- `tests/audit-alpha68.test.js` (4 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+- `tests/audit-alpha68.test.js` (8 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+
+### Code review hardening
+
+- A recovery names a failure by session, operation id and time, so a failure that reuses an id after a reload is no longer hidden; a rebuild, import or reset clears every earlier failure of its range again (a capture recovery still never clears another device's failure it did not see); the failure walk runs once per recovery row.
+- The negation check splits subordinate and relative clauses ("collapsed because the engineers did not reinforce it" is no contradiction), reads "no", "nobody" and "nothing", and leaves the summary's own negation out of its content words; a continuation word the record's summary already uses no longer blocks an ending.
+- Evolution's rumour check reads only hearsay (reports, rumours, "said that"), not narrated speech acts ("declared martial law"); a refused evaluation is recorded as stable instead of failing the whole batch; and a development derived only from hearsay must keep that status.
+- An upload's deadline grows with its size (a second per 50 KB, at most ten minutes), so a large save on a slow link is not restarted forever. A request the server applies after it timed out cannot be recalled without server-side compare-and-swap; the retry's read-back narrows that window.
 
 ## 0.9.0-alpha.67 - Places geometry and provenance (Astra Pro audit A06-A09, A14, A16, A17)
 

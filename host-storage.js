@@ -152,8 +152,13 @@ export function createSillyTavernWorldStateStorageAdapter({
     });
   }
 
+  // A large sidecar on a slow link gets longer (a second per 50 KB, at most ten minutes): a deadline it can
+  // never meet would restart the whole upload on every retry. A request the server applies after it timed out
+  // here cannot be recalled (no server-side compare-and-swap); the retry's read-back limits that window.
   function uploadTextFile(filename, body) {
-    return withDeadline(uploadMs, 'file write', signal => uploadTextFileNow(filename, body, signal));
+    const bytes = String(body ?? '').length;
+    const ms = Math.min(600000, uploadMs + Math.ceil(bytes / 50000) * 1000);
+    return withDeadline(ms, 'file write', signal => uploadTextFileNow(filename, body, signal));
   }
 
   async function uploadTextFileNow(filename, body, signal) {
