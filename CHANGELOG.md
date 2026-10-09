@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.0-alpha.68 - Bounded storage, admission and recovery (Astra Pro audit A11, A12, A13, A15)
+
+### Fixed
+
+- **Saving and loading**
+  - A save or load that never answers now fails after 30 seconds (60 for an upload) instead of holding every later save of that chat. The request is cancelled and retried; an upload that did land is recognised by its own content, never written twice (A11).
+- **Capture**
+  - A record is no longer created from an excerpt that says the opposite ("Northbridge has not collapsed" no longer establishes "Northbridge has collapsed"), and a condition is no longer ended by an excerpt saying it continues ("the garrison still occupies Northbridge"). Paraphrases are unaffected (A12).
+- **Evolution**
+  - A rumour ("Merchants report that the border fort has fallen") no longer becomes an established fact when time passes, and an established condition is no longer ended on a rumour or plan alone (A13).
+- **Missed captures across devices**
+  - A device whose clock runs behind no longer leaves an already-recovered capture listed as missed, and a device whose clock runs ahead no longer hides a newer missed capture: recovery follows which failures each recovery actually saw (A15).
+
+### Architecture
+
+- New contract section C29. Operations rows carry `session` and recovery rows `clears` (non-canonical log only); `host-storage.js` exports `WORLD_STATE_STORAGE_DEADLINES` and the adapter takes `deadlines`; `source-firewall.js` exports `claimContradictsStatement`, `claimStatesContinuation`, `claimTextAttributed` and `reportedAccountRecord`. No sidecar, bundle or journal format change (schema 2, envelopes 1).
+
+### Validation
+
+- `tests/audit-alpha68.test.js` (8 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+
+### Code review hardening
+
+- A recovery names a failure by session, operation id and time, so a failure that reuses an id after a reload is no longer hidden; a rebuild, import or reset clears every earlier failure of its range again (a capture recovery still never clears another device's failure it did not see); the failure walk runs once per recovery row.
+- The negation check splits subordinate and relative clauses ("collapsed because the engineers did not reinforce it" is no contradiction), reads "no", "nobody" and "nothing", and leaves the summary's own negation out of its content words; a continuation word the record's summary already uses no longer blocks an ending.
+- Evolution's rumour check reads only hearsay (reports, rumours, "said that"), not narrated speech acts ("declared martial law"); a refused evaluation is recorded as stable instead of failing the whole batch; and a development derived only from hearsay must keep that status.
+- An upload's deadline grows with its size (a second per 50 KB, at most ten minutes), so a large save on a slow link is not restarted forever. A request the server applies after it timed out cannot be recalled without server-side compare-and-swap; the retry's read-back narrows that window.
+
 ## 0.9.0-alpha.67 - Places geometry and provenance (Astra Pro audit A06-A09, A14, A16, A17)
 
 ### Fixed

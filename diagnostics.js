@@ -44,7 +44,19 @@ export function sanitizeCaptureDiagnostic(raw = {}) {
     rejectionsJson: clean(raw.rejectionsJson, 12000),
     // When a host rewrite moved the row to new message keys: that version wins every later merge.
     ...(int(raw.relinkedAt) > 0 ? { relinkedAt: int(raw.relinkedAt) } : {}),
+    // The session that wrote the row (rows of one session share its clock), and for a recovery the failures
+    // it cleared when it was recorded: recovery follows these links, not timestamps from different devices.
+    ...(clean(raw.session, 24) ? { session: clean(raw.session, 24) } : {}),
+    ...(Array.isArray(raw.clears) ? { clears: raw.clears.map(id => clean(id, 120)).filter(Boolean).slice(0, MAX_CLEARS) } : {}),
   };
+}
+
+const MAX_CLEARS = 400;
+
+// A failure as a recovery names it: its session, operation id and time together (an operation id alone repeats
+// after a reload and across devices). Rows written before sessions were recorded cannot be named.
+function failureRef(row) {
+  return row?.session ? row.session + '|' + (row.operationId || '') + '|' + int(row.at) : '';
 }
 
 function operationKey(row) {
@@ -67,7 +79,12 @@ export function mergeOperationRows(left = [], right = [], limit = DEFAULT_LIMIT)
   return trimOperationRows(rows, Math.max(1, int(limit, DEFAULT_LIMIT)));
 }
 
-export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.now(), onRecord = null } = {}) {
+export function createDiagnosticStore({
+  limit = DEFAULT_LIMIT,
+  now = () => Date.now(),
+  onRecord = null,
+  session = hashText(String(Date.now()) + ':' + Math.random()).slice(0, 16),
+} = {}) {
   const max = Math.max(8, Math.min(128, int(limit, DEFAULT_LIMIT)));
   const byChat = new Map();
 
@@ -75,12 +92,17 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     const key = clean(chatKey, 500);
     if (!key) return null;
     const rows = byChat.get(key) || [];
-    const value = sanitizeCaptureDiagnostic({ ...raw, at: raw.at ?? now() });
-    // Whether a failure was listed before this row, judged before the trim below can drop the failure it
-    // clears: the host saves such a recovery at once.
-    const failuresListed = typeof onRecord === 'function' && isCaptureRecovery(value)
-      ? unrecoveredFailureLists(rows.map(recoveryView)).length > 0
-      : false;
+    let value = sanitizeCaptureDiagnostic({ ...raw, at: raw.at ?? now(), session });
+    // A recovery names the failures it clears, as this session knows them now; the same walk tells whether a
+    // failure was listed before this row (judged before the trim below can drop the failure it clears), and
+    // the host saves such a recovery at once.
+    let failuresListed = false;
+    if (isCaptureRecovery(value)) {
+      const listed = unrecoveredFailureLists(rows.map(recoveryView));
+      failuresListed = typeof onRecord === 'function' && listed.length > 0;
+      const cleared = failuresClearedBy(value, listed.flat());
+      value = sanitizeCaptureDiagnostic({ ...value, clears: cleared.map(failureRef).filter(Boolean) });
+    }
     rows.push(value);
     byChat.set(key, rows.length > max ? trimOperationRows(rows, max) : rows);
     if (typeof onRecord === 'function') {
@@ -188,7 +210,25 @@ function recoveryView(row) {
     lineageKey: row?.lineageKey || '',
     contentLineageKey: row?.contentLineageKey || '',
     operationId: row?.operationId || '',
+    session: row?.session || '',
+    ...(Array.isArray(row?.clears) ? { clears: row.clears } : {}),
   };
+}
+
+// The failure rows (of `failures`) a recovery row clears by its own rule: its message version for a capture,
+// its range for a rebuild, everything for an import or reset.
+function failuresClearedBy(row, failures) {
+  if (row.label === 'capture' && CAPTURE_CLEARS.has(row.outcome)) {
+    return failures.filter(failure => failure.sourceMessageId === row.sourceMessageId && sameCaptureLineage(failure, row));
+  }
+  if (row.label === 'rebuild' && row.outcome === 'rebuild-completed') {
+    const start = rebuildStartFromOperationId(row.operationId);
+    if (start === null) return [];
+    const end = Number.isInteger(row.sourceMessageId) ? row.sourceMessageId : Infinity;
+    return failures.filter(failure => failure.sourceMessageId >= start && failure.sourceMessageId <= end);
+  }
+  if ((row.label === 'import' || row.label === 'reset') && row.outcome === 'applied') return failures.slice();
+  return [];
 }
 
 function isCaptureFailure(row) {
@@ -240,10 +280,24 @@ function unrecoveredFailureLists(rows = [], clearing = null) {
     .map((row, index) => ({ row, index }))
     .sort((a, b) => (int(a.row.at) - int(b.row.at)) || (a.index - b.index))
     .map(item => item.row);
+  // Failures a recovery named when it was recorded are recovered whatever the clocks say; the rows naming them
+  // are kept with them (see trimOperationRows).
+  const namedBy = new Map();
+  for (const row of ordered) {
+    if (!Array.isArray(row.clears) || !isCaptureRecovery(row)) continue;
+    for (const id of row.clears) if (!namedBy.has(id)) namedBy.set(id, row);
+  }
+  // A capture recovery that names what it clears (recorded since alpha.68) clears, besides those, only failures
+  // its own session recorded before it (one clock) and failures written before sessions were recorded: another
+  // device's unnamed failure may be newer than it, whatever the clocks say, so it stays listed. A rebuild,
+  // import or reset replaced a whole range, and an older row names nothing: those clear every earlier failure
+  // of their scope.
+  const inScope = (row, failure) => !Array.isArray(row.clears) || row.label !== 'capture' || !failure.session
+    || (Boolean(row.session) && failure.session === row.session);
   const drop = (row, matches) => {
     for (const [key, list] of [...failed]) {
       if (list[0].sourceMessageId !== row.sourceMessageId) continue;
-      const kept = list.filter(failure => !matches(failure));
+      const kept = list.filter(failure => !(matches(failure) && inScope(row, failure)));
       if (kept.length !== list.length) clearing?.add(row);
       if (kept.length) failed.set(key, kept);
       else failed.delete(key);
@@ -252,11 +306,17 @@ function unrecoveredFailureLists(rows = [], clearing = null) {
   const clearWhere = (row, test) => {
     for (const [key, list] of [...failed]) {
       if (!test(list[0].sourceMessageId)) continue;
-      clearing?.add(row);
-      failed.delete(key);
+      const kept = list.filter(failure => !inScope(row, failure));
+      if (kept.length !== list.length) clearing?.add(row);
+      if (kept.length) failed.set(key, kept);
+      else failed.delete(key);
     }
   };
   for (const row of ordered) {
+    if (isCaptureFailure(row) && namedBy.has(failureRef(row))) {
+      clearing?.add(namedBy.get(failureRef(row)));
+      continue;
+    }
     if (isCaptureFailure(row)) {
       // The same story message under another lineage (a hide or unhide since) is the same version.
       let carried = [];

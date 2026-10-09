@@ -92,6 +92,35 @@ async function reach(fetchFn, url, init) {
   }
 }
 
+// Every request and its body read finish within a deadline the extension sets, so a request that never
+// settles cannot hold a writer lock (and every save queued behind it) open. On expiry the request is aborted
+// and the error is retryable: an upload's outcome is then unknown, and the retry reads the file back first
+// (an upload that landed is recognised by its own body, never written twice).
+export const WORLD_STATE_STORAGE_DEADLINES = Object.freeze({ readMs: 30000, uploadMs: 60000 });
+
+async function withDeadline(ms, label, operation) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer = null;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort();
+      const error = new Error('World State Alpha ' + label + ' did not finish within ' + Math.round(ms / 1000) + ' seconds.');
+      error.code = 'WORLD_STATE_STORAGE_TIMEOUT';
+      error.retryable = true;
+      error.outcomeUnknown = label === 'file write';
+      reject(error);
+    }, ms);
+  });
+  const work = operation(controller?.signal);
+  // A late settlement after the deadline is ignored (never an unhandled rejection).
+  work.catch(() => {});
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function readResponse(response) {
   if (response?.status === 404) return null;
   if (!response?.ok) {
@@ -107,17 +136,32 @@ export function createSillyTavernWorldStateStorageAdapter({
   fetchFn = globalThis.fetch,
   headers = {},
   headersFn = undefined,
+  deadlines = WORLD_STATE_STORAGE_DEADLINES,
 } = {}) {
   if (typeof fetchFn !== 'function') throw new Error('fetch() is unavailable for World State Alpha sidecar persistence.');
+  const readMs = Math.max(1, Number(deadlines?.readMs) || WORLD_STATE_STORAGE_DEADLINES.readMs);
+  const uploadMs = Math.max(1, Number(deadlines?.uploadMs) || WORLD_STATE_STORAGE_DEADLINES.uploadMs);
 
-  async function read(path) {
+  // The request and its body read share one deadline.
+  function read(path) {
     const target = text(path);
-    if (!target || isLogicalPath(target)) return null;
-    const response = await reach(fetchFn, target, { method: 'GET', cache: 'no-store' });
-    return readResponse(response);
+    if (!target || isLogicalPath(target)) return Promise.resolve(null);
+    return withDeadline(readMs, 'file read', async signal => {
+      const response = await reach(fetchFn, target, { method: 'GET', cache: 'no-store', ...(signal ? { signal } : {}) });
+      return readResponse(response);
+    });
   }
 
-  async function uploadTextFile(filename, body) {
+  // A large sidecar on a slow link gets longer (a second per 50 KB, at most ten minutes): a deadline it can
+  // never meet would restart the whole upload on every retry. A request the server applies after it timed out
+  // here cannot be recalled (no server-side compare-and-swap); the retry's read-back limits that window.
+  function uploadTextFile(filename, body) {
+    const bytes = String(body ?? '').length;
+    const ms = Math.min(600000, uploadMs + Math.ceil(bytes / 50000) * 1000);
+    return withDeadline(ms, 'file write', signal => uploadTextFileNow(filename, body, signal));
+  }
+
+  async function uploadTextFileNow(filename, body, signal) {
     const targetName = worldStateHostFileName(filename);
     const data = bytesToBase64(new TextEncoder().encode(String(body ?? '')));
     const response = await reach(fetchFn, '/api/files/upload', {
@@ -127,6 +171,7 @@ export function createSillyTavernWorldStateStorageAdapter({
         name: targetName,
         data,
       }),
+      ...(signal ? { signal } : {}),
     });
 
     if (!response?.ok) {
