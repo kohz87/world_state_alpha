@@ -110,8 +110,9 @@ function verifySidecar(text, { expectedChatKey = '' } = {}) {
   return { ...withoutChecksum, state, checksum };
 }
 
+// (A revision conflict never reaches this check: writeSidecar settles it before.)
 function retryable(error) {
-  return Boolean(error?.retryable) && error?.code !== 'WORLD_STATE_REVISION_CONFLICT';
+  return Boolean(error?.retryable);
 }
 
 export async function readSidecar({ adapter, pointer, expectedChatKey, readOnly = false }) {
@@ -139,6 +140,8 @@ export async function writeSidecar({
   const expectedRevision = Math.max(0, Math.trunc(Number(pointer?.revision) || 0));
   const nextRevision = expectedRevision + 1;
   const body = encodeSidecar({ chatKey, state, revision: nextRevision, appVersion });
+  // The one verification of this text in the session: a later read of the same server text (the boundary
+  // refresh, the next write's revision check) reuses it instead of verifying again.
   const target = decodeSidecar(body, { expectedChatKey: chatKey, readOnly: true });
   const attempts = Math.max(1, Math.trunc(Number(maxAttempts) || 1));
 
@@ -164,7 +167,9 @@ export async function writeSidecar({
       if (result?.conflict) {
         const recovered = await recoverCommittedWrite();
         if (recovered) return recovered;
-        throw new RevisionConflictError(undefined, { currentRevision: result.currentRevision });
+        const conflict = new RevisionConflictError(undefined, { currentRevision: result.currentRevision });
+        conflict.recoveryChecked = true;
+        throw conflict;
       }
       const revision = Math.max(0, Math.trunc(Number(result?.revision) || nextRevision));
       if (revision !== nextRevision) throw new RevisionConflictError('storage adapter returned an unexpected revision');
@@ -172,6 +177,8 @@ export async function writeSidecar({
       return { path: committedPath, revision, checksum: target.checksum };
     } catch (error) {
       if (error instanceof RevisionConflictError || error?.code === 'WORLD_STATE_REVISION_CONFLICT') {
+        // A conflict this loop already checked against the server file is not read again.
+        if (error.recoveryChecked) throw error;
         const recovered = await recoverCommittedWrite();
         if (recovered) return recovered;
         throw error;

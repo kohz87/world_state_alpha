@@ -1,30 +1,8 @@
 import { SPATIAL_LIMITS } from './constants.js';
 import { resolveEffectiveLocations, resolveEffectiveRoutes } from './spatial-core.js';
-import { nonAsciiBigrams, phraseCandidates, rarestFirst, RELEVANCE_STOPWORDS } from './relevance.js';
+import { addPosting, boundedInt, deletePosting } from './common.js';
+import { nonAsciiBigrams, phraseCandidates, rarestFirst, RELEVANCE_STOPWORDS, tokens } from './relevance.js';
 import { INFIX_NAME_SCRIPT, canonicalText as normalizeText } from './hash.js';
-
-function tokens(value) {
-  return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];
-}
-
-function boundedInt(value, fallback, min, max) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(number)));
-}
-
-function addPosting(map, key, id) {
-  if (!key) return;
-  if (!map.has(key)) map.set(key, new Set());
-  map.get(key).add(id);
-}
-
-function deletePosting(map, key, id) {
-  const posting = map.get(key);
-  if (!posting) return;
-  posting.delete(id);
-  if (!posting.size) map.delete(key);
-}
 
 function indexLocationTerms(loc, index) {
   const nameNorm = normalizeText(loc.name);
@@ -41,7 +19,9 @@ function indexLocationTerms(loc, index) {
   owned.namePhrases.push(nameNorm);
   addPosting(index.namePhrases, nameNorm, loc.id);
 
+  // Lookups skip function words, so they get no postings.
   for (const token of tokens(nameNorm)) {
+    if (RELEVANCE_STOPWORDS.has(token)) continue;
     owned.nameTokens.push(token);
     addPosting(index.nameTokens, token, loc.id);
   }
@@ -53,6 +33,7 @@ function indexLocationTerms(loc, index) {
 
   if (loc.context) {
     for (const token of tokens(loc.context)) {
+      if (RELEVANCE_STOPWORDS.has(token)) continue;
       owned.contextTokens.push(token);
       addPosting(index.contextTokens, token, loc.id);
     }

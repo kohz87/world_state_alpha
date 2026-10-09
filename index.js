@@ -7,7 +7,7 @@ import {
   saveSettings,
 } from '../../../../script.js';
 
-import { chatLineage, commitMutationBoundary, contentLineageKey, contentLineageKeys, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, relinkParkedBranches, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
+import { chatHeadKey, chatLineage, commitMutationBoundary, contentLineageKey, contentLineageKeys, earliestPartialRebuildStart, extendChatLineage, fingerprintMessage, parkAbandonedBranch, rebaseLineageMetadata, reconcileBranch, relinkParkedBranches, resumeParkedBranch, seedRootCheckpoint } from './branch.js';
 import { assistantBoundaryExchange, boundedExchangeText, CAPTURE_LIMITS, hiddenConversationRole, isNarratorMessage, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
 import { affectsCaptureRecovery, CAPTURE_FORFEITED, createDiagnosticStore, mergeOperationRows, unrecoveredCaptureFailures } from './diagnostics.js';
 import { resolveContinuityElapsedHint } from './elapsed.js';
@@ -38,7 +38,7 @@ import { buildSpatialRelevanceIndex, selectRelevantLocations, updateSpatialRelev
 import { buildSpatialInjection } from './spatial-injection.js';
 import { applySpatialManualMutation } from './spatial-manual.js';
 import { activeCampaignPlaceCount, normalizeSpatialProfile, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
-import { clone, hostMessageText as messageText } from './common.js';
+import { clone, hostMessageText as messageText, visibleRole as messageRole } from './common.js';
 import { createState, HISTORY_FIELDS, normalizeState } from './state-core.js';
 import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
@@ -1313,11 +1313,7 @@ async function handleCharacterRenamed(oldAvatar, newAvatar) {
   const newPrefix = characterOwnerKeyPrefix(newAvatar);
   if (!oldPrefix || !newPrefix || oldPrefix === newPrefix) return;
 
-  const settings = getWorldStateSettings();
-  const keys = new Set([
-    ...Object.keys(settings.dataFiles || {}),
-    ...stateCache.keys(),
-  ]);
+  const keys = knownChatKeys();
   for (const oldKey of keys) {
     if (!oldKey.startsWith(oldPrefix)) continue;
     const newKey = newPrefix + oldKey.slice(oldPrefix.length);
@@ -1376,10 +1372,7 @@ async function handleCharacterRenamedInPastChat(messages, oldAvatar, newAvatar) 
   const nextLineage = chatLineage(renamedMessages);
   const settings = getWorldStateSettings();
   const directPrefix = characterOwnerKeyPrefix(newAvatar);
-  const candidates = new Set([
-    ...Object.keys(settings.dataFiles || {}),
-    ...stateCache.keys(),
-  ]);
+  const candidates = knownChatKeys(settings);
   const matches = [];
 
   for (const chatKey of candidates) {
@@ -1483,11 +1476,7 @@ async function handleCharacterDeleted(eventData = {}) {
   if (!prefix) return;
 
   pendingCharacterRenames.delete(avatar);
-  const settings = getWorldStateSettings();
-  const keys = new Set([
-    ...Object.keys(settings.dataFiles || {}),
-    ...stateCache.keys(),
-  ]);
+  const keys = knownChatKeys();
   for (const chatKey of keys) {
     if (!chatKey.startsWith(prefix)) continue;
     await removeWorldStateChatOwnership(chatKey, 'character-deleted');
@@ -1530,6 +1519,14 @@ async function handleChatRenamed(eventData = {}) {
   }
 }
 
+// Every chat key this session knows: the saved sidecar pointers and the cached states.
+function knownChatKeys(settings = getWorldStateSettings()) {
+  return new Set([
+    ...Object.keys(settings.dataFiles || {}),
+    ...stateCache.keys(),
+  ]);
+}
+
 function matchingWorldStateChatKeys(kind, chatId) {
   if (!['chat', 'group'].includes(kind)) return [];
   const probe = buildWorldStateChatKey(kind, '__world_state_owner_probe__', chatId);
@@ -1537,11 +1534,7 @@ function matchingWorldStateChatKeys(kind, chatId) {
   const suffix = splitAt >= 0 ? probe.slice(splitAt) : '';
   if (!suffix) return [];
 
-  const settings = getWorldStateSettings();
-  const keys = new Set([
-    ...Object.keys(settings.dataFiles || {}),
-    ...stateCache.keys(),
-  ]);
+  const keys = knownChatKeys();
   return [...keys].filter(key => key.startsWith(kind + ':') && key.endsWith(suffix));
 }
 
@@ -2203,11 +2196,6 @@ function notifyBootstrapRequiredOnce(chatKey = currentChatKey()) {
   );
 }
 
-function messageRole(message) {
-  if (message?.is_system || message?.role === 'system') return 'system';
-  if (message?.is_user || message?.role === 'user') return 'user';
-  return 'assistant';
-}
 
 // `knownLineage === false` builds the rows without lineage keys (the injection view, which discards them):
 // computing them for the user's new message re-hashed the whole chat on every send.
@@ -2295,10 +2283,10 @@ function serializeActivation(chatKey, task) {
 
 function chatHeadGuard(chatKey) {
   const startEpoch = epoch(chatKey);
-  const startLineage = stableStringify(chatLineage(getContext().chat || []));
+  const startHead = chatHeadKey(getContext().chat || []);
   return () => currentChatKey() === chatKey
     && epoch(chatKey) === startEpoch
-    && stableStringify(chatLineage(getContext().chat || [])) === startLineage;
+    && chatHeadKey(getContext().chat || []) === startHead;
 }
 
 // After a stale write was compensated, the server holds the restored state at a new revision. When the
@@ -2476,7 +2464,9 @@ async function settleReplacedBranch(chatKey) {
   }
 }
 
-async function reconcileCurrentBranch(chatKey, { persistRestore = false } = {}) {
+// A restore is persisted unless a caller says otherwise: an unsaved restore would leave the server holding
+// the abandoned branch's state.
+async function reconcileCurrentBranch(chatKey, { persistRestore = true } = {}) {
   const state = await ensureChatStateLoaded(chatKey);
   if (!state || currentChatKey() !== chatKey) return null;
 
@@ -4045,6 +4035,39 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     const applied = priorTotals.applied + receipts.reduce((sum, item) => sum + (Number(item?.applied) || 0), 0);
     const rejected = priorTotals.rejected + receipts.reduce((sum, item) => sum + (Number(item?.rejected) || 0), 0);
     const aliasRepairs = priorTotals.aliasRepairs + receipts.reduce((sum, item) => sum + (Number(item?.aliasRepairs) || 0), 0);
+    // The status and diagnostic every ending of this run records: phase, outcome, code and detail vary, the
+    // counts do not.
+    const endRun = ({ phase, outcome, code, detail, logDetail = detail, at = sourceMessageId, status = {}, log = {} }) => {
+      const totals = {
+        processedBoundaries: result.processedBoundaries || 0,
+        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+      };
+      rebuildStatuses.set(chatKey, {
+        ...(rebuildStatuses.get(chatKey) || {}),
+        phase,
+        detail,
+        ...totals,
+        providerCalls: result.providerCalls || 0,
+        applied,
+        rejected,
+        ...status,
+        completedAt: Date.now(),
+      });
+      diagnosticStore.record(chatKey, {
+        operationId,
+        label: 'rebuild',
+        sourceMessageId: at,
+        outcome,
+        code,
+        detail: logDetail,
+        providerCalls: result.providerCalls || 0,
+        applied,
+        rejected,
+        aliasRepairs,
+        ...totals,
+        ...log,
+      });
+    };
     const failedReceipt = receipts.slice().reverse().find(item => item?.messageId === result.failedBoundary) || receipts.at(-1) || null;
     const firstRejection = failedReceipt?.rejections?.[0];
     const failureDetail = result.outcome === 'completed'
@@ -4085,30 +4108,12 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       });
     }
     if (result.outcome !== 'completed' || !currentAtEnd) {
-      rebuildStatuses.set(chatKey, {
-        ...(rebuildStatuses.get(chatKey) || {}),
+      endRun({
         phase: cancelledOutcome ? 'cancelled' : 'failed',
-        detail: failureDetail,
-        processedBoundaries: result.processedBoundaries || 0,
-        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
-        providerCalls: result.providerCalls || 0,
-        applied,
-        rejected,
-        completedAt: Date.now(),
-      });
-      diagnosticStore.record(chatKey, {
-        operationId,
-        label: 'rebuild',
-        sourceMessageId: Number.isInteger(result.failedBoundary) ? result.failedBoundary : sourceMessageId,
         outcome: cancelledOutcome ? 'rebuild-cancelled' : 'rebuild-failed',
         code: result.errorCode || (currentAtEnd ? 'WORLD_STATE_REBUILD_INCOMPLETE' : 'WORLD_STATE_REBUILD_STALE'),
         detail: failureDetail,
-        providerCalls: result.providerCalls || 0,
-        applied,
-        rejected,
-        aliasRepairs,
-        processedBoundaries: result.processedBoundaries || 0,
-        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+        at: Number.isInteger(result.failedBoundary) ? result.failedBoundary : sourceMessageId,
       });
       refreshPanel();
       const atBoundary = Number.isInteger(result.failedBoundary) ? ' at message ' + result.failedBoundary : '';
@@ -4147,61 +4152,13 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       }
       if (conflictHandled) {
         const detail = 'Rebuild candidate was rejected because another session advanced the server state; the latest durable state was rehydrated.';
-        rebuildStatuses.set(chatKey, {
-          ...(rebuildStatuses.get(chatKey) || {}),
-          phase: 'cancelled',
-          detail,
-          processedBoundaries: result.processedBoundaries || 0,
-          totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
-          providerCalls: result.providerCalls || 0,
-          applied,
-          rejected,
-          completedAt: Date.now(),
-        });
-        diagnosticStore.record(chatKey, {
-          operationId,
-          label: 'rebuild',
-          sourceMessageId,
-          outcome: 'rebuild-cancelled',
-          code: 'WORLD_STATE_REVISION_CONFLICT',
-          detail,
-          providerCalls: result.providerCalls || 0,
-          applied,
-          rejected,
-          aliasRepairs,
-          processedBoundaries: result.processedBoundaries || 0,
-          totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
-        });
+        endRun({ phase: 'cancelled', outcome: 'rebuild-cancelled', code: 'WORLD_STATE_REVISION_CONFLICT', detail });
         refreshPanel();
         notify('info', detail);
         return;
       }
       const detail = String(error?.message || error || 'persistence failure').slice(0, 320);
-      rebuildStatuses.set(chatKey, {
-        ...(rebuildStatuses.get(chatKey) || {}),
-        phase: 'failed',
-        detail,
-        processedBoundaries: result.processedBoundaries || 0,
-        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
-        providerCalls: result.providerCalls || 0,
-        applied,
-        rejected,
-        completedAt: Date.now(),
-      });
-      diagnosticStore.record(chatKey, {
-        operationId,
-        label: 'rebuild',
-        sourceMessageId,
-        outcome: 'rebuild-persist-failed',
-        code: error?.code || 'WORLD_STATE_REBUILD_PERSIST_FAILURE',
-        detail,
-        providerCalls: result.providerCalls || 0,
-        applied,
-        rejected,
-        aliasRepairs,
-        processedBoundaries: result.processedBoundaries || 0,
-        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
-      });
+      endRun({ phase: 'failed', outcome: 'rebuild-persist-failed', code: error?.code || 'WORLD_STATE_REBUILD_PERSIST_FAILURE', detail });
       refreshPanel();
       notify('error', 'World State Alpha rebuild finished extraction but could not persist it: ' + detail + '. Canonical state was left unchanged.');
       return;
@@ -4228,27 +4185,13 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
           reconcileDetail = blocked.message;
         }
 
-        rebuildStatuses.set(chatKey, {
-          ...(rebuildStatuses.get(chatKey) || {}),
+        endRun({
           phase: hydrationErrors.has(chatKey) ? 'failed' : 'cancelled',
-          detail: reconcileDetail,
-          completedAt: Date.now(),
-        });
-        diagnosticStore.record(chatKey, {
-          operationId,
-          label: 'rebuild',
-          sourceMessageId,
           outcome: hydrationErrors.has(chatKey) ? 'rebuild-persist-failed' : 'rebuild-cancelled',
           code: hydrationErrors.has(chatKey)
             ? 'WORLD_STATE_BOOTSTRAP_REBUILD_RECONCILE_FAILURE'
             : 'WORLD_STATE_BOOTSTRAP_REBUILD_STALE_RETAINED',
           detail: reconcileDetail,
-          providerCalls: result.providerCalls || 0,
-          applied,
-          rejected,
-          aliasRepairs,
-          processedBoundaries: result.processedBoundaries || 0,
-          totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
         });
         updatePrivateInjection();
         refreshPanel();
@@ -4270,51 +4213,19 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
         const blocked = new Error('World State Alpha blocked this chat after a stale rebuild write could not be compensated: ' + detail);
         blocked.code = 'WORLD_STATE_REBUILD_STALE_RESTORE_FAILURE';
         hydrationErrors.set(chatKey, blocked);
-        rebuildStatuses.set(chatKey, {
-          ...(rebuildStatuses.get(chatKey) || {}),
-          phase: 'failed',
-          detail: blocked.message,
-          completedAt: Date.now(),
-        });
-        diagnosticStore.record(chatKey, {
-          operationId,
-          label: 'rebuild',
-          sourceMessageId,
-          outcome: 'rebuild-persist-failed',
-          code: blocked.code,
-          detail: blocked.message,
-          providerCalls: result.providerCalls || 0,
-          applied,
-          rejected,
-          aliasRepairs,
-          processedBoundaries: result.processedBoundaries || 0,
-          totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
-        });
+        endRun({ phase: 'failed', outcome: 'rebuild-persist-failed', code: blocked.code, detail: blocked.message });
         clearPrivatePrompt();
         refreshPanel();
         notify('error', blocked.message);
         return;
       }
 
-      rebuildStatuses.set(chatKey, {
-        ...(rebuildStatuses.get(chatKey) || {}),
+      endRun({
         phase: 'cancelled',
-        detail: 'Rebuild became stale during persistence; the previous canonical state was restored.',
-        completedAt: Date.now(),
-      });
-      diagnosticStore.record(chatKey, {
-        operationId,
-        label: 'rebuild',
-        sourceMessageId,
         outcome: 'rebuild-cancelled',
         code: 'WORLD_STATE_REBUILD_STALE',
-        detail: 'Rebuild became stale during persistence; the previous canonical state was restored before publication.',
-        providerCalls: result.providerCalls || 0,
-        applied,
-        rejected,
-        aliasRepairs,
-        processedBoundaries: result.processedBoundaries || 0,
-        totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
+        detail: 'Rebuild became stale during persistence; the previous canonical state was restored.',
+        logDetail: 'Rebuild became stale during persistence; the previous canonical state was restored before publication.',
       });
       refreshPanel();
       notify('info', 'World State Alpha rebuild became stale during persistence. Previous canonical state was restored.');
@@ -4326,37 +4237,20 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
     forgetBranchContinuations(chatKey);
     const currentCount = (result.state.records || []).filter(record => record?.status === 'active').length;
     const placeCount = activeCampaignPlaceCount(result.state.spatial);
-    rebuildStatuses.set(chatKey, {
-      ...(rebuildStatuses.get(chatKey) || {}),
+    endRun({
       phase: 'completed',
+      outcome: 'rebuild-completed',
+      code: aliasRepairs ? 'WORLD_STATE_REBUILD_ALIAS_REPAIRED' : '',
       detail: 'Rebuild completed and persisted.'
         + (includeHiddenMessages && (result.plan?.hiddenMessagesIncluded || 0) > 0
           ? ' Included ' + result.plan.hiddenMessagesIncluded + ' hidden roleplay message' + (result.plan.hiddenMessagesIncluded === 1 ? '.' : 's.')
           : ''),
-      processedBoundaries: result.processedBoundaries || 0,
-      totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
-      providerCalls: result.providerCalls || 0,
-      applied,
-      rejected,
-      currentRecords: currentCount,
-      places: placeCount,
-      completedAt: Date.now(),
-    });
-    diagnosticStore.record(chatKey, {
-      operationId,
-      label: 'rebuild',
-      sourceMessageId,
-      outcome: 'rebuild-completed',
-      code: aliasRepairs ? 'WORLD_STATE_REBUILD_ALIAS_REPAIRED' : '',
-      detail: 'Rebuild completed and persisted: ' + currentCount + ' current records, ' + placeCount + ' places.',
-      providerCalls: result.providerCalls || 0,
-      applied,
-      rejected,
-      aliasRepairs,
-      processedBoundaries: result.processedBoundaries || 0,
-      totalBoundaries: result.plan?.assistantBoundaries ?? totalBoundaries,
-      hiddenMessagesIncluded: result.plan?.hiddenMessagesIncluded || 0,
-      hiddenAssistantBoundaries: result.plan?.hiddenAssistantBoundaries || 0,
+      logDetail: 'Rebuild completed and persisted: ' + currentCount + ' current records, ' + placeCount + ' places.',
+      status: { currentRecords: currentCount, places: placeCount },
+      log: {
+        hiddenMessagesIncluded: result.plan?.hiddenMessagesIncluded || 0,
+        hiddenAssistantBoundaries: result.plan?.hiddenAssistantBoundaries || 0,
+      },
     });
     await settleReplacedBranch(chatKey);
     updatePrivateInjection();

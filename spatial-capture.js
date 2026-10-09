@@ -646,6 +646,9 @@ export function processSpatialCapture({
       continue;
     }
     proposal.evidence = grounded.evidence;
+    // Judged at most once per row (admission and the coordinate firewall both ask).
+    let hypotheticalMemo;
+    const evidenceHypothetical = () => (hypotheticalMemo ??= placeEvidenceHypothetical(proposal.evidence, exchangeById));
 
     if (proposal.action === 'upsert_location') {
       const isUpdate = Boolean(proposal.locationId);
@@ -672,7 +675,7 @@ export function processSpatialCapture({
         rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'generated location name is not grounded in accepted narration' });
         continue;
       }
-      if (!isUpdate && placeEvidenceHypothetical(proposal.evidence, exchangeById)) {
+      if (!isUpdate && evidenceHypothetical()) {
         rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'a hypothetical or proposed place is not current geography' });
         continue;
       }
@@ -758,7 +761,7 @@ export function processSpatialCapture({
         // Automatic coordinate firewall: narrative_explicit only if accepted source text explicitly contains matching x/y.
         // Grounding is checked first: an invented coordinate is simply dropped and never costs the place itself;
         // only a narrated coordinate outside the profile bounds rejects the proposal.
-        const narrated = placeEvidenceHypothetical(proposal.evidence, exchangeById)
+        const narrated = evidenceHypothetical()
           ? null
           : narratedCoordinateFor(normCoord, proposal.evidence, exchangeById, activeProfile?.decimalStep, proposal.name);
         coordGrounded = Boolean(narrated);
@@ -875,14 +878,9 @@ export function processSpatialCapture({
         }
       }
 
-      if (!finalCoord) {
-        if (proposal.coordinate && coordKnown(proposal.coordinate) && !coordGrounded && !targetIsUpdate) {
-          // If the model tried to propose a coordinate with no relative fallback, assign unknown authority
-          finalCoord = { x: null, y: null, authority: 'unknown', locked: false };
-        } else if (!targetIsUpdate) {
-          finalCoord = { x: null, y: null, authority: 'unknown', locked: false };
-        }
-      }
+      // A new place with no grounded position (an invented one included) starts unknown; an update without one
+      // keeps its stored position.
+      if (!finalCoord && !targetIsUpdate) finalCoord = { x: null, y: null, authority: 'unknown', locked: false };
 
       proposal.coordinate = finalCoord;
 

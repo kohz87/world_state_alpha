@@ -1,4 +1,4 @@
-import { clone, hostMessageText } from './common.js';
+import { clone, hostMessageText, messageRole } from './common.js';
 import { LIMITS, ROLLBACK_JOURNAL_VERSION } from './constants.js';
 import { deterministicId, hashText, stableStringify } from './hash.js';
 import {
@@ -29,16 +29,11 @@ export function fingerprintAssistantNarration(message) {
   return hashText(sanitizeAssistantNarration(messageContent(message)));
 }
 
-function lineageRole(message) {
-  if (message?.role === 'user' || message?.is_user === true) return 'user';
-  if (message?.role === 'assistant' || (message?.is_user === false && message?.is_system !== true)) return 'assistant';
-  return 'system';
-}
 
 function lineageEntry(message, messageId, parentLineageKey) {
   const fingerprint = fingerprintMessage(message);
   const lineageKey = deterministicId('ln', [parentLineageKey, fingerprint]);
-  const role = lineageRole(message);
+  const role = messageRole(message);
   return {
     messageId,
     fingerprint,
@@ -58,6 +53,16 @@ export function chatLineage(chat = []) {
     parentLineageKey = entry.lineageKey;
   }
   return out;
+}
+
+// The chat's head: its length and the lineage key of its last message, which chains every message's
+// fingerprint, so it changes exactly when chatLineage does. Computed without the narration fingerprints (no
+// sanitizing, no lineage rows) for guards that only compare.
+export function chatHeadKey(chat = []) {
+  const rows = Array.isArray(chat) ? chat : [];
+  let parentLineageKey = 'root';
+  for (const message of rows) parentLineageKey = deterministicId('ln', [parentLineageKey, fingerprintMessage(message)]);
+  return rows.length + ':' + parentLineageKey;
 }
 
 // Lineage keys with every message's hidden flag ignored, so hiding or
@@ -183,8 +188,16 @@ function snapshotDomainHash(state, snapshot = {}) {
   });
 }
 
-function checkpointSnapshot(state) {
-  return canonicalDomain(state);
+// Both callers hold a state they just normalized, so its canonical domain is copied as it is (one clone, not a
+// second normalization pass).
+function checkpointSnapshot(normalized) {
+  return clone({
+    records: normalized.records,
+    evidence: normalized.evidence,
+    links: normalized.links,
+    lastCaptureMessage: normalized.lastCaptureMessage,
+    spatial: normalized.spatial,
+  });
 }
 
 function restoreCheckpoint(state, snapshot) {
@@ -464,9 +477,14 @@ export function firstStoryChange(previousLineage, chat, currentLineage = null) {
   return plan.kind === 'destructive' ? plan.firstSemantic : previous.length;
 }
 
+// `options.lineage`: the chat's lineage when the caller already holds it (a rebuild's plan), so the chat is not
+// hashed again.
 export function reconcileBranch(inputState, chat, options = {}) {
   const state = normalizeState(inputState);
-  const currentLineage = chatLineage(chat);
+  const rows = Array.isArray(chat) ? chat : [];
+  const currentLineage = Array.isArray(options.lineage) && options.lineage.length === rows.length
+    ? options.lineage
+    : chatLineage(chat);
   const previousLineage = Array.isArray(state.lineage) ? state.lineage : [];
   const divergence = firstLineageDivergence(previousLineage, currentLineage);
 
@@ -540,12 +558,11 @@ export function reconcileBranch(inputState, chat, options = {}) {
   }
 
   restored.rollbackJournal = state.rollbackJournal.filter(entry => entry.messageId < cut);
-  const retainedSeqs = new Set(restored.rollbackJournal.map(entry => entry.seq));
+  // The head is the last retained entry (so it is always retained).
   const lastEntry = restored.rollbackJournal.at(-1) || null;
   restored.rollbackHead = lastEntry
     ? { seq: lastEntry.seq, messageId: lastEntry.messageId, lineageKey: lastEntry.lineageKey }
     : null;
-  if (restored.rollbackHead && !retainedSeqs.has(restored.rollbackHead.seq)) restored.rollbackHead = null;
   restored.checkpoints = state.checkpoints.filter(item => item.messageId < cut);
   // A checkpoint restore with no retained entries is exact from its own boundary.
   if (action === 'exact-checkpoint' && !restored.rollbackJournal.length) {
@@ -561,6 +578,8 @@ export function reconcileBranch(inputState, chat, options = {}) {
   trimCheckpoints(restored, options.maxCheckpoints);
 
   return {
+    // A second normalization on purpose: it freezes the new lineage entries and the trimmed history, so the
+    // returned state shares only frozen entries with later copies.
     state: normalizeState(restored),
     divergence: cut,
     action,

@@ -2,8 +2,9 @@ import { BUNDLE_FORMAT, BUNDLE_VERSION } from './constants.js';
 import { hashText, stableStringify } from './hash.js';
 import { createState, normalizeState } from './state-core.js';
 
-function bundleCore(state, exportedAt) {
-  const normalized = normalizeState(state, { strictSchema: true });
+// `strictlyNormalized`: the caller already ran normalizeState(state, { strictSchema: true }) on this state.
+function bundleCore(state, exportedAt, strictlyNormalized = false) {
+  const normalized = strictlyNormalized ? state : normalizeState(state, { strictSchema: true });
   return {
     format: BUNDLE_FORMAT,
     version: BUNDLE_VERSION,
@@ -13,8 +14,8 @@ function bundleCore(state, exportedAt) {
   };
 }
 
-export function exportBundle(state, { exportedAt = new Date().toISOString() } = {}) {
-  const core = bundleCore(state, exportedAt);
+export function exportBundle(state, { exportedAt = new Date().toISOString(), strictlyNormalized = false } = {}) {
+  const core = bundleCore(state, exportedAt, strictlyNormalized);
   return JSON.stringify({ ...core, checksum: hashText(stableStringify(core)) });
 }
 

@@ -6,7 +6,7 @@ import {
   SPATIAL_LIMITS,
   SPATIAL_LOCATION_STATUSES,
 } from './constants.js';
-import { boundedText, clone, uniqueStrings } from './common.js';
+import { boundedText, clone, keyedUndo, restoreKeyed, uniqueStrings } from './common.js';
 import { canonicalText, deterministicId, stableStringify } from './hash.js';
 
 function messageId(value) {
@@ -743,32 +743,6 @@ export function compactSpatialEvidence(spatialState) {
   return spatialState;
 }
 
-function keyedBy(items) {
-  return new Map(items.map(item => [item.id, item]));
-}
-
-// A removed entry also records where it stood (`at`), so undoing the removal puts it back in place: list
-// order is part of the state a checkpoint is compared with.
-function keyedUndo(beforeItems, afterItems) {
-  const before = keyedBy(beforeItems);
-  const after = keyedBy(afterItems);
-  const positions = new Map(beforeItems.map((item, index) => [item.id, index]));
-  const ids = new Set([...before.keys(), ...after.keys()]);
-  const out = [];
-  for (const id of ids) {
-    const left = before.get(id) ?? null;
-    const right = after.get(id) ?? null;
-    if (left && !right) {
-      out.push({ id, before: clone(left), at: positions.get(id) });
-      continue;
-    }
-    if (stableStringify(left) !== stableStringify(right)) {
-      out.push({ id, before: left ? clone(left) : null });
-    }
-  }
-  return out;
-}
-
 export function buildSpatialUndoPatch(beforeSpatial, afterSpatial) {
   const before = normalizeSpatialState(beforeSpatial);
   const after = normalizeSpatialState(afterSpatial);
@@ -799,22 +773,6 @@ export function buildSpatialUndoPatch(beforeSpatial, afterSpatial) {
     lastCaptureMessageBefore: before.lastCaptureMessage,
     lastCaptureChanged,
   };
-}
-
-function restoreKeyed(items, changes) {
-  const map = keyedBy(items);
-  const reinserted = [];
-  for (const change of changes || []) {
-    if (change.before === null) map.delete(change.id);
-    else if (!map.has(change.id) && Number.isInteger(change.at)) reinserted.push(change);
-    else map.set(change.id, clone(change.before));
-  }
-  const out = [...map.values()];
-  // Ascending, so each lands where it stood before the removal (older patches without `at` append).
-  for (const change of reinserted.sort((left, right) => left.at - right.at)) {
-    out.splice(Math.min(change.at, out.length), 0, clone(change.before));
-  }
-  return out;
 }
 
 export function applySpatialUndoPatch(inputSpatial, patch) {
@@ -1467,16 +1425,18 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     // A new override of a base place moves it from the base coordinate.
     const priorCoordinateOf = loc => (beforeById.has(loc.id) ? normalizeCoordinate(beforeById.get(loc.id).coordinate) : null)
       || (loc.baseRefId ? effectiveById.get(loc.baseRefId)?.coordinate : null);
+    // Only a place this pass changed can have moved (the actions name it): no pass over every place.
+    const touchedIds = new Set(applied.flatMap(item => [item.locationId, item.targetId]).filter(Boolean));
     const movedLocations = new Map();
     for (const loc of spatial.locations) {
+      if (!touchedIds.has(loc.id)) continue;
       const prior = priorCoordinateOf(loc);
       if (!prior) continue;
       if (prior.x !== loc.coordinate?.x || prior.y !== loc.coordinate?.y) movedLocations.set(effectiveLocationId(loc, baseMap, spatial), loc);
     }
-    const coordinateOf = id => {
-      const campaign = spatial.locations.find(loc => effectiveLocationId(loc, baseMap, spatial) === id && loc.status !== 'archived');
-      return campaign?.coordinate || effectiveCoordinateFor(id, effectiveById, spatial);
-    };
+    // One lookup of the places as they stand after every action of this pass.
+    campaignIndex = null;
+    const coordinateOf = id => campaignByEffectiveId().get(id)?.coordinate || effectiveCoordinateFor(id, effectiveById, spatial);
     const contradicted = rel => {
       const direction = canonicalSpatialDirection(rel.direction);
       if (!OPPOSITE_DIRECTION[direction] || (!movedLocations.has(rel.fromId) && !movedLocations.has(rel.toId))) return false;

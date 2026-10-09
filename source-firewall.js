@@ -190,8 +190,21 @@ function nameLikeQuote(text, before) {
 // Inner ranges [from, to) of the quoted spans, in reading order and never overlapping (also exported for
 // callers that blank dialogue out themselves).
 export { quotedSpans as quotedDialogueRanges };
+// The spans of the last few texts: one evidence check reads the same message's quotes many times (each claim,
+// each sentence test), so they are paired once per text. Callers never mutate the returned spans.
+const QUOTED_SPAN_CACHE = new Map();
+const QUOTED_SPAN_CACHE_SIZE = 8;
 function quotedSpans(sourceText) {
   const source = String(sourceText ?? '');
+  const cached = QUOTED_SPAN_CACHE.get(source);
+  if (cached) return cached;
+  const spans = Object.freeze(pairQuotedSpans(source).map(span => Object.freeze(span)));
+  if (QUOTED_SPAN_CACHE.size >= QUOTED_SPAN_CACHE_SIZE) QUOTED_SPAN_CACHE.delete(QUOTED_SPAN_CACHE.keys().next().value);
+  QUOTED_SPAN_CACHE.set(source, spans);
+  return spans;
+}
+
+function pairQuotedSpans(source) {
   const spans = [];
   let open = -1;
   let closer = '';
@@ -238,7 +251,8 @@ function quotedDialogueSegments(sourceText) {
 
 export function sourceWithoutQuotedDialogue(sourceText) {
   const source = String(sourceText ?? '');
-  const spans = quotedSpans(source).sort((a, b) => a[0] - b[0]);
+  // Spans come in reading order and never overlap.
+  const spans = quotedSpans(source);
   let out = '';
   let at = 0;
   for (const [from, to] of spans) {
@@ -356,6 +370,17 @@ const SENTENCE_SEPARATOR = /((?<=[.!?]["'”’»」』)\]]*)[ \t]+|\s*\r?\n\s*)
 // A full stop after a title or an initial does not end the sentence ("Lt. Varro reported that ...").
 // Titles are capitalized; a lower-case word ("the scout said no.") or a unit ("10 ft.") ends its sentence.
 const ABBREVIATION_END = /(?:^|[\s(\["“'‘])(?:Mr|Mrs|Ms|Dr|St|Mt|Lt|Col|Gen|Capt|Cpt|Sgt|Cmdr|Cdr|Adm|Maj|Prof|Rev|Fr|Sr|Jr|Hon|Gov|Pres|Sen|vs|e\.g|i\.e|\p{Lu})\.$/u;
+
+// Whether the character at `index` ends a sentence: a line break, "!" or "?", or a full stop that does not
+// close a title or an initial (the rule sentencesOf uses). Shared with the elapsed-time detector.
+export function endsSentenceAt(source, index) {
+  const char = source[index];
+  if (char === '\n' || char === '!' || char === '?') return true;
+  if (char !== '.') return false;
+  const from = Math.max(0, index - 16);
+  // A cut-off word start is marked with a letter so the pattern's start anchor does not see a word boundary.
+  return !ABBREVIATION_END.test(`${from > 0 ? 'x' : ''}${source.slice(from, index + 1)}`);
+}
 
 export function sentencesOf(text) {
   const parts = String(text ?? '').split(SENTENCE_SEPARATOR);
@@ -521,18 +546,27 @@ function evidenceStatus(claim, sourceText, focusText) {
   return { attributed: reported || prospective, reported };
 }
 
+// The per-response context of the firewall: the sanitized exchange and the record lookups. A caller judging
+// several rows of one response builds it once (createCaptureFirewallContext) and passes it as `context`.
+export function createCaptureFirewallContext({ exchange = [], visibleRecords = [], state } = {}) {
+  return {
+    exchangeById: captureExchangeIndex(exchange),
+    visibleIds: new Set((Array.isArray(visibleRecords) ? visibleRecords : []).map(record => record?.id).filter(Boolean)),
+    stateRecords: new Map((Array.isArray(state?.records) ? state.records : []).map(record => [record.id, record])),
+  };
+}
+
 export function applyCaptureSourceFirewall(mutation, {
   exchange = [],
   visibleRecords = [],
   lifecycleContextRecordIds = [],
   state,
+  context = null,
 } = {}) {
   const candidate = clone(mutation);
   if (candidate.action === 'noop') return { ok: true, mutation: candidate };
 
-  const exchangeById = captureExchangeIndex(exchange);
-  const visibleIds = new Set((Array.isArray(visibleRecords) ? visibleRecords : []).map(record => record?.id).filter(Boolean));
-  const stateRecords = new Map((Array.isArray(state?.records) ? state.records : []).map(record => [record.id, record]));
+  const { exchangeById, visibleIds, stateRecords } = context || createCaptureFirewallContext({ exchange, visibleRecords, state });
   const lifecycleContextIds = new Set(
     (Array.isArray(lifecycleContextRecordIds) ? lifecycleContextRecordIds : [])
       .map(value => String(value || '').trim())

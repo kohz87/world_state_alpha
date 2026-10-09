@@ -1,4 +1,4 @@
-import { uniqueStrings } from './common.js';
+import { boundedText, uniqueStrings } from './common.js';
 import {
   SPATIAL_ADMISSION_REASONS,
   SPATIAL_AUTHORITIES,
@@ -22,9 +22,7 @@ export class SpatialWireError extends Error {
   }
 }
 
-function text(value, max = 400) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
+const text = (value, max = 400) => boundedText(value, max);
 
 function evidenceItem(raw) {
   if (!raw || typeof raw !== 'object') throw new SpatialWireError('spatial evidence item must be an object');

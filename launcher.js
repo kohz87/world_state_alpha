@@ -68,13 +68,12 @@ export function saveLauncherPosition(position, storage = defaultStorage()) {
   }
 }
 
-function launcherIconHtml() {
-  return '<svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="15"></circle>' +
-    '<path d="M12 19l8-7 11 3 6 9-5 10-12 2-9-8z"></path>' +
-    '<circle cx="20" cy="12" r="2.5"></circle><circle cx="31" cy="15" r="2.5"></circle>' +
-    '<circle cx="37" cy="24" r="2.5"></circle><circle cx="32" cy="34" r="2.5"></circle>' +
-    '<circle cx="20" cy="36" r="2.5"></circle><circle cx="11" cy="28" r="2.5"></circle></svg>';
-}
+// The continuity mark, shared by this button and the panel header.
+export const CONTINUITY_ICON_SVG = '<svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="15"></circle>' +
+  '<path d="M12 19l8-7 11 3 6 9-5 10-12 2-9-8z"></path>' +
+  '<circle cx="20" cy="12" r="2.5"></circle><circle cx="31" cy="15" r="2.5"></circle>' +
+  '<circle cx="37" cy="24" r="2.5"></circle><circle cx="32" cy="34" r="2.5"></circle>' +
+  '<circle cx="20" cy="36" r="2.5"></circle><circle cx="11" cy="28" r="2.5"></circle></svg>';
 
 export function mountWorldStateLauncher({
   onOpen,
@@ -96,7 +95,7 @@ export function mountWorldStateLauncher({
   button.className = 'world-state-alpha-launcher';
   button.title = 'World State — drag to move, click to open';
   button.setAttribute('aria-label', 'Open World State. Drag to move.');
-  button.innerHTML = launcherIconHtml();
+  button.innerHTML = CONTINUITY_ICON_SVG;
 
   let drag = null;
   let suppressClickUntil = 0;

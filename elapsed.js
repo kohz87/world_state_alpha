@@ -1,6 +1,6 @@
-import { messageRole, messageText } from './common.js';
+import { boundedText, hostMessageText, messageRole, messageText, visibleRole } from './common.js';
 import { sanitizeExchangeMessage } from './narrative-sanitizer.js';
-import { quotedDialogueRanges } from './source-firewall.js';
+import { endsSentenceAt, quotedDialogueRanges } from './source-firewall.js';
 
 const WORD_NUMBERS = Object.freeze({
   one: 1,
@@ -69,9 +69,7 @@ const UNIT_ALIASES = Object.freeze({
 // Units named through a larger one: a fortnight is two weeks, a decade ten years.
 const UNIT_FACTORS = Object.freeze({ fortnight: 2, fortnights: 2, decade: 10, decades: 10 });
 
-function text(value, max = 240) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
+const text = (value, max = 240) => boundedText(value, max);
 
 function amountValue(value) {
   const raw = String(value || '').trim().toLowerCase();
@@ -219,16 +217,11 @@ function insideQuotationAt(at, ranges) {
 // The sentence around [at, end) and where the phrase starts in it (the phrase's own position, never the first
 // occurrence of the same words).
 function sentenceAt(source, at, end) {
-  const before = Math.max(
-    source.lastIndexOf('\n', at - 1),
-    source.lastIndexOf('.', at - 1),
-    source.lastIndexOf('!', at - 1),
-    source.lastIndexOf('?', at - 1),
-  );
-  const after = ['\n', '.', '!', '?']
-    .map(mark => source.indexOf(mark, end))
-    .filter(value => value >= 0);
-  const stop = after.length ? Math.min(...after) + 1 : Math.min(source.length, end + 220);
+  let before = at - 1;
+  while (before >= 0 && !endsSentenceAt(source, before)) before -= 1;
+  let stop = end;
+  while (stop < source.length && !endsSentenceAt(source, stop)) stop += 1;
+  stop = stop < source.length ? stop + 1 : Math.min(source.length, end + 220);
   const from = before < 0 ? 0 : before + 1;
   const raw = source.slice(from, stop);
   const lead = raw.length - raw.trimStart().length;
@@ -409,11 +402,25 @@ function explicitMeaningfulSkip(source) {
   return establishedElapsedHints(source).some(item => item.meaningful);
 }
 
-// Hidden SillyTavern rows carry is_system even when is_user is true.
-function walkRole(message) {
-  if (message?.is_system === true) return 'system';
-  return messageRole(message);
+// What one message contributes to the walk, judged once per text: the walk reads the same lookback window on
+// every turn, so each message is sanitized and matched only when its text is new. Keyed by the role the
+// sanitizer reads and the raw text, so an edit or swipe is judged afresh.
+const DAY_STEP_CACHE = new Map();
+const DAY_STEP_CACHE_SIZE = 512;
+function dayStepAnalysis(raw, messageId) {
+  const userRow = raw?.role === 'user' || raw?.is_user === true;
+  const key = (userRow ? 'u\u0000' : 'a\u0000') + (userRow ? messageText(raw) : hostMessageText(raw));
+  const cached = DAY_STEP_CACHE.get(key);
+  if (cached) return cached;
+  const source = messageText(sanitizeExchangeMessage({ ...raw, messageId }));
+  const blank = !source.trim();
+  const skip = !blank && explicitMeaningfulSkip(source);
+  const analysis = Object.freeze({ blank, skip, step: blank || skip ? null : narratedDayStep(source) });
+  if (DAY_STEP_CACHE.size >= DAY_STEP_CACHE_SIZE) DAY_STEP_CACHE.delete(DAY_STEP_CACHE.keys().next().value);
+  DAY_STEP_CACHE.set(key, analysis);
+  return analysis;
 }
+
 
 export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
   sinceMessageId = -1,
@@ -439,7 +446,7 @@ export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
 
   for (let messageId = start; messageId <= endMessageId; messageId += 1) {
     const raw = rows[messageId];
-    const role = walkRole(raw);
+    const role = visibleRole(raw);
     if (role === 'system') continue;
     if (role === 'user' && previousRole === 'assistant') {
       exchangeCounted = false;
@@ -448,11 +455,11 @@ export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
     const followsAssistantStep = role === 'user' && previousRole === 'assistant' && previousAssistantHadStep;
     previousRole = role;
 
-    const source = messageText(sanitizeExchangeMessage({ ...raw, messageId }));
+    const analysis = dayStepAnalysis(raw, messageId);
     if (role === 'assistant') previousAssistantHadStep = false;
-    if (!source.trim()) continue;
+    if (analysis.blank) continue;
 
-    if (explicitMeaningfulSkip(source)) {
+    if (analysis.skip) {
       // The explicit detector owns this skip; restart the count after it.
       steps = [];
       fired = null;
@@ -460,7 +467,7 @@ export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
       continue;
     }
 
-    const step = narratedDayStep(source);
+    const { step } = analysis;
     if (!step) continue;
     if (role === 'assistant') previousAssistantHadStep = true;
     if (followsAssistantStep) {

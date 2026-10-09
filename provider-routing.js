@@ -89,15 +89,7 @@ export function worldStateRouteFingerprint(ctx, route = {}) {
   const profileId = String(route.profileId || '').trim();
   const maxOutputTokens = configuredWorldStateMaxOutputTokens(ctx);
   if (profileId) {
-    let profile = null;
-    try {
-      const service = ctx?.ConnectionManagerRequestService;
-      profile = typeof service?.getProfile === 'function'
-        ? service.getProfile(profileId)
-        : (ctx?.extensionSettings?.connectionManager?.profiles || []).find(item => item?.id === profileId);
-    } catch {
-      profile = null;
-    }
+    const profile = lookupProfile(ctx, ctx?.ConnectionManagerRequestService, profileId);
     return { profileId, signature: profile ? profileSignature(profile) : null, maxOutputTokens };
   }
   const host = hostRouteParts(ctx);
@@ -135,6 +127,18 @@ function hostRouteParts(ctx) {
 export function worldStateHostRouteKey(ctx) {
   const host = hostRouteParts(ctx);
   return host.model ? JSON.stringify([host.mainApi, host.source, host.model]) : null;
+}
+
+// The profile `profileId` names, through the service when it can look one up, else the saved settings; null
+// when it is missing or the lookup throws. The one lookup the route fingerprint, request and re-check share.
+function lookupProfile(ctx, service, profileId) {
+  try {
+    return (typeof service?.getProfile === 'function'
+      ? service.getProfile(profileId)
+      : (ctx?.extensionSettings?.connectionManager?.profiles || []).find(item => item?.id === profileId)) || null;
+  } catch {
+    return null;
+  }
 }
 
 function profileSignature(profile) {
@@ -278,14 +282,7 @@ export async function dispatchWorldStateRequest(ctx, options = {}, scope = {}) {
     } else {
       const service = await Promise.race([profileService(ctx), stopped]);
       assertCurrent();
-      let profile;
-      try {
-        profile = typeof service.getProfile === 'function'
-          ? service.getProfile(profileId)
-          : ctx?.extensionSettings?.connectionManager?.profiles?.find(item => item?.id === profileId);
-      } catch {
-        profile = null;
-      }
+      const profile = lookupProfile(ctx, service, profileId);
       if (!profile || String(profile.id || '') !== profileId) {
         throw worldStateRoutingError(`Selected profile "${profileId}" is missing; no fallback was used.`);
       }
@@ -303,14 +300,7 @@ export async function dispatchWorldStateRequest(ctx, options = {}, scope = {}) {
       }
       route.signature = signature;
       verifyProfile = () => {
-        let current = null;
-        try {
-          current = typeof service.getProfile === 'function'
-            ? service.getProfile(profileId)
-            : ctx?.extensionSettings?.connectionManager?.profiles?.find(item => item?.id === profileId);
-        } catch {
-          current = null;
-        }
+        const current = lookupProfile(ctx, service, profileId);
         if (connectionManagerDisabled(ctx) || !current || profileSignature(current) !== signature) {
           throw worldStateRoutingError('Selected profile changed or disappeared during the operation.', 'WORLD_STATE_PROFILE_CHANGED');
         }

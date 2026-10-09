@@ -59,7 +59,8 @@ export function queryWorldState(state, {
   kinds = [],
   limit = 30,
 } = {}) {
-  const normalized = normalizeState(state);
+  // Read only (the rows returned are copies).
+  const normalized = readableState(state);
   const statusFilter = normalizedSet(statuses);
   const kindFilter = normalizedSet(kinds);
   // Filtered once: the rows and the total come from the same matches.
@@ -83,7 +84,8 @@ export function queryWorldState(state, {
 }
 
 export function inspectWorldStateRecord(state, recordId) {
-  const normalized = normalizeState(state);
+  // Read only (everything returned is a copy).
+  const normalized = readableState(state);
   const id = clean(recordId, 120);
   const record = normalized.records.find(item => item.id === id);
   if (!record) return null;
@@ -310,7 +312,8 @@ export function prepareWorldStateExport(state, options = {}) {
   const normalized = normalizeState(state, { strictSchema: true });
   return {
     kind: 'world_state_alpha_export',
-    text: exportBundle(normalized, options),
+    // Normalized once here; the bundle reuses it.
+    text: exportBundle(normalized, { ...options, strictlyNormalized: true }),
     summary: stateSummary(normalized),
   };
 }
