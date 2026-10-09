@@ -1,5 +1,5 @@
 import { chatLineage } from './branch.js';
-import { CaptureWireError, parseCaptureJson, validateCaptureEnvelope } from './capture-wire.js';
+import { CAPTURE_WIRE_LIMITS, CaptureWireError, parseCaptureJson, validateCaptureEnvelope } from './capture-wire.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { DUPLICATE_THRESHOLD, consolidateCreateCandidate, duplicateSimilarity, mergeAnchors } from './duplicate.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
@@ -7,7 +7,7 @@ import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 import { processSpatialCapture } from './spatial-capture.js';
 import { SPATIAL_WIRE_LIMITS } from './spatial-wire.js';
 import { applyCaptureSourceFirewall } from './source-firewall.js';
-import { clone, clipMiddle, messageRole as roleOf, messageText } from './common.js';
+import { clone, clipMiddle, hostMessageText, messageRole as roleOf, messageText } from './common.js';
 import { cloneState, reduceMutations } from './state-core.js';
 
 export const CAPTURE_RESPONSE_TOKENS = 2200;
@@ -66,7 +66,7 @@ export function extractWorldStateCompletenessHints(exchange = []) {
 
   function pushHint(messageId, section, rawValue) {
     const value = normalizeChecklistText(rawValue).slice(0, CAPTURE_LIMITS.completenessHintChars);
-    const key = value.normalize('NFKC').toLocaleLowerCase();
+    const key = value.normalize('NFKC').toLowerCase();
     if (!value || key.length < 8 || seen.has(key)) return false;
     seen.add(key);
     hints.push({ sourceMessageId: messageId, section, text: value });
@@ -75,7 +75,7 @@ export function extractWorldStateCompletenessHints(exchange = []) {
 
   for (const message of messages) {
     const narration = sanitizeAssistantNarration(messageText(message));
-    const blocks = narration.match(/<World_State(?:\s+[^>]*)?>[\s\S]*?(?:<\/World_State>|$)/gi) || [];
+    const blocks = narration.match(/<World_State(?:\s+[^>]*)?>[\s\S]*?(?:<\/World_State\s*>|$)/gi) || [];
     for (const block of blocks) {
       let section = '';
       for (const rawLine of block.split(/\r?\n/u)) {
@@ -200,14 +200,19 @@ export function assistantBoundaryExchange(chat = [], endMessageId, knownLineage 
     }
   }
 
+  // A hidden row (is_system) is out of the prompt, so it is no evidence: a hidden user turn no more than a hidden
+  // reply. (A rebuild that includes hidden messages passes them as visible copies.)
   return rows.slice(startMessageId, endMessageId + 1).map((message, offset) => {
     const messageId = startMessageId + offset;
+    if (message?.is_system === true) return null;
     return {
       ...clone(message),
+      // The host text as lineage reads it (`mes` first): a stale `content` left on a host row is never captured.
+      content: hostMessageText(message),
       messageId,
       lineageKey: lineage[messageId]?.lineageKey || '',
     };
-  });
+  }).filter(Boolean);
 }
 
 // The relevance view of an exchange, bounded exactly like the capture exchange: newest message first within
@@ -349,6 +354,7 @@ export function buildCapturePrompt({
     spatialEnabled
       ? '{"mutations":[' + REALITY_MUTATION_SHAPE + '],"spatialMutations":[{"action":"upsert_location|upsert_relation|upsert_route","locationId":"visible existing id only when updating","name":"grounded persistent place name","type":"generic place type","context":"established context","coordinate":{"x":1.2,"y":3.4,"authority":"narrative_explicit"},"relative":{"toLocationId":"visible anchor id","direction":"east","distanceKm":10,"distanceMode":"straight_line|route|unspecified"},"routeRefs":["visible route"],"admissionReason":"named|explicit_position|explicit_coordinate|revisited|persistent_feature|route_landmark|material_event","evidence":[{"sourceMessageId":123,"claim":"verbatim excerpt from CURRENT EXCHANGE"}]}]}'
       : '{"mutations":[' + REALITY_MUTATION_SHAPE + ']}',
+    'At most ' + CAPTURE_WIRE_LIMITS.mutations + ' mutations per response: keep the most material ones.',
     spatialEnabled
       ? 'Spatial rules: track only persistent established places; never capture generic scenery. Planning/writer_state is not evidence. Do not invent precise coordinates. Route/travel distance is not straight-line displacement. Never assign manual/base/campaign_override authority. At most ' + SPATIAL_WIRE_LIMITS.mutations + ' spatialMutations per response: keep the most material ones. If no spatial change return spatialMutations:[] alongside mutations.'
       : '',
@@ -401,8 +407,19 @@ export function processCaptureResponse({
     );
   }
   const boundedRecords = boundedVisibleRecords(visibleRecords);
-  const rejected = [];
+  // Rows past the cap are rejected one by one; the response's other rows still count.
+  const rejected = (wire.capped || []).map(item => rejectedEntry('wire-limit', item.reason, { index: item.index }));
   const accepted = [];
+  // Records this response ends: a create in the same response is their replacement, never an update of them
+  // (folded into a record being superseded, the new condition would be lost with it).
+  // Only an ending the firewall admits counts: a rejected resolve leaves its record active, and a near-duplicate
+  // create still meets it in the duplicate gate.
+  const endingIds = new Set(wire.mutations
+    .filter(item => (['resolve', 'supersede'].includes(item.action) || ['resolved', 'superseded'].includes(item.status))
+      && applyCaptureSourceFirewall(item, { exchange, visibleRecords: boundedRecords, lifecycleContextRecordIds, state }).ok)
+    .map(item => item.recordId)
+    .filter(Boolean));
+  const consolidationRecords = endingIds.size ? boundedRecords.filter(record => !endingIds.has(record?.id)) : boundedRecords;
 
   for (let index = 0; index < wire.mutations.length; index += 1) {
     const proposal = wire.mutations[index];
@@ -417,7 +434,7 @@ export function processCaptureResponse({
       rejected.push(rejectedEntry('source-firewall', firewalled.reason, { index }));
       continue;
     }
-    const consolidated = consolidateCreateCandidate(firewalled.mutation, boundedRecords);
+    const consolidated = consolidateCreateCandidate(firewalled.mutation, consolidationRecords);
     if (!consolidated.ok) {
       rejected.push(rejectedEntry('duplicate-gate', consolidated.reason, {
         index,

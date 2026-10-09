@@ -1,5 +1,6 @@
 import { messageRole, messageText } from './common.js';
 import { sanitizeExchangeMessage } from './narrative-sanitizer.js';
+import { quotedDialogueRanges } from './source-firewall.js';
 
 const WORD_NUMBERS = Object.freeze({
   one: 1,
@@ -73,7 +74,7 @@ function text(value, max = 240) {
 }
 
 function amountValue(value) {
-  const raw = String(value || '').trim().toLocaleLowerCase();
+  const raw = String(value || '').trim().toLowerCase();
   if (/^\d+$/.test(raw)) return Number(raw);
   // "twenty-five", "twenty five"
   const compound = raw.match(/^(\p{L}+)[\s-]+(\p{L}+)$/u);
@@ -85,7 +86,7 @@ function amountValue(value) {
 
 // The amount and canonical unit of a matched phrase; an unknown amount stays unknown.
 function measure(amountRaw, unitRaw) {
-  const unitWord = String(unitRaw || '').toLocaleLowerCase();
+  const unitWord = String(unitRaw || '').toLowerCase();
   const unit = UNIT_ALIASES[unitWord] || '';
   const factor = UNIT_FACTORS[unitWord] || 1;
   const counted = amountRaw === undefined ? null : amountValue(amountRaw);
@@ -130,11 +131,13 @@ export function normalizeElapsedHint(input, defaults = {}) {
     return hint(input, { ...defaults, meaningful: defaults.meaningful !== false, source: defaults.source || 'explicit' });
   }
   if (typeof input !== 'object') return null;
-  const unit = UNIT_ALIASES[String(input.unit || '').toLocaleLowerCase()] || text(input.unit, 40);
-  // Number(null) and Number('') are 0: an unknown amount must stay unknown.
+  const unitWord = String(input.unit || '').toLowerCase();
+  const unit = UNIT_ALIASES[unitWord] || text(input.unit, 40);
+  // Number(null) and Number('') are 0: an unknown amount must stay unknown. A fortnight is two weeks, a
+  // decade ten years.
   const rawAmount = input.amount;
   const amount = rawAmount !== null && rawAmount !== undefined && rawAmount !== '' && Number.isFinite(Number(rawAmount))
-    ? Math.max(0, Number(rawAmount))
+    ? Math.max(0, Number(rawAmount)) * (UNIT_FACTORS[unitWord] || 1)
     : null;
   const meaningful = input.meaningful === undefined
     ? (unit ? meaningfulAmount(amount, unit) : true)
@@ -195,57 +198,26 @@ function elapsedCandidates(source, defaults = {}) {
   }
   for (const match of source.matchAll(new RegExp(NAMED_STEP.source, 'giu'))) {
     add(match, item => {
-      const unit = UNIT_ALIASES[String(item[1]).toLocaleLowerCase()] || item[1].toLocaleLowerCase();
+      const unit = UNIT_ALIASES[String(item[1]).toLowerCase()] || item[1].toLowerCase();
       return hint(item[0], { amount: 1, unit, meaningful: unit !== 'day', ...defaults, source: 'detected' });
     });
   }
   return found.sort((a, b) => a.at - b.at).slice(0, ELAPSED_CANDIDATES_PER_MESSAGE);
 }
 
-// Single-quoted dialogue: an opening quote after a space or bracket, a closing
-// quote after punctuation; apostrophes between letters ("we'll") stay inside.
-const SINGLE_QUOTED = /(^|[\s(\[—–-])'(?:[^'\n]|(?<=\p{L})'(?=\p{L}))+?[.,!?;:…—–-]'(?=[\s)\],.;:!?—–-]|$)/gu;
-const CURLY_SINGLE_QUOTED = /‘[^’\n]*’/gu;
-
-// Quoted spans of a text, paired line by line with no length limit (a long
-// speech never shifts the pairing onto the narration after it). An opening
-// double quote left open runs to the end of its line.
+// Dialogue spans, paired exactly as the source firewall pairs them: a quotation runs across a wrapped line
+// until it closes, single and curly-single quotes are dialogue only when they close (a contraction's
+// apostrophe, "don’t", closes nothing), and every quote style counts. Each range covers its quote marks.
 function quotedRanges(source) {
-  const ranges = [];
-  let lineStart = 0;
-  for (const line of source.split('\n')) {
-    let open = -1;
-    let curlyOpen = -1;
-    for (let index = 0; index < line.length; index += 1) {
-      const char = line[index];
-      if (char === '"') {
-        if (open < 0) open = index;
-        else {
-          ranges.push([lineStart + open, lineStart + index + 1]);
-          open = -1;
-        }
-      } else if (char === '“' && curlyOpen < 0) {
-        curlyOpen = index;
-      } else if (char === '”' && curlyOpen >= 0) {
-        ranges.push([lineStart + curlyOpen, lineStart + index + 1]);
-        curlyOpen = -1;
-      }
-    }
-    if (open >= 0) ranges.push([lineStart + open, lineStart + line.length]);
-    if (curlyOpen >= 0) ranges.push([lineStart + curlyOpen, lineStart + line.length]);
-    lineStart += line.length + 1;
-  }
-  for (const match of source.matchAll(SINGLE_QUOTED)) {
-    ranges.push([match.index + match[1].length, match.index + match[0].length]);
-  }
-  for (const match of source.matchAll(CURLY_SINGLE_QUOTED)) ranges.push([match.index, match.index + match[0].length]);
-  return ranges;
+  return quotedDialogueRanges(source).map(([from, to]) => [Math.max(0, from - 1), Math.min(source.length, to + 1)]);
 }
 
 function insideQuotationAt(at, ranges) {
   return ranges.some(([from, to]) => at >= from && at < to);
 }
 
+// The sentence around [at, end) and where the phrase starts in it (the phrase's own position, never the first
+// occurrence of the same words).
 function sentenceAt(source, at, end) {
   const before = Math.max(
     source.lastIndexOf('\n', at - 1),
@@ -257,13 +229,27 @@ function sentenceAt(source, at, end) {
     .map(mark => source.indexOf(mark, end))
     .filter(value => value >= 0);
   const stop = after.length ? Math.min(...after) + 1 : Math.min(source.length, end + 220);
-  return source.slice(before < 0 ? 0 : before + 1, stop).trim().slice(0, 400);
+  const from = before < 0 ? 0 : before + 1;
+  const raw = source.slice(from, stop);
+  const lead = raw.length - raw.trimStart().length;
+  const text = raw.trim().slice(0, 400);
+  return { text, offset: Math.max(0, Math.min(text.length, at - from - lead)) };
 }
 
-// Any case ("Hypothetically, ...", "Could ..."), except "will", which counts in lower case only.
-const ELAPSED_PROSPECTIVE = /(?:\b(?:would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|appointment|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/iu;
-const DAY_STEP_PROSPECTIVE = /(?:\b(?:would|could|might|should|shall|going\s+to|plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?|tomorrow|proposal|hypothetical(?:ly)?)\b|'ll\b|’ll\b)/iu;
-const LOWER_CASE_WILL = /\bwill\b/u;
+// Any case ("Hypothetically, ...", "Should ..."), except "will", which counts in lower case only. A participle
+// after a determiner is an adjective ("the expected caravan", "the planned assault"), and "might" or "will"
+// after a possessive is a noun ("with all their might", "against their will"). "Would" and "could" are
+// judged separately: only before the phrase (see prospectivePhrase).
+const NOT_AS_ADJECTIVE = '(?<!\\b(?:the|a|an|his|her|their|its|our|my|your|this|that|long|well)\\s+)';
+const NOT_AS_NOUN = '(?<!\\b(?:their|his|her|its|my|our|your|the|own|free|good|ill|all)\\s+)(?<![\'’]s\\s+)';
+const ELAPSED_PROSPECTIVE = new RegExp('(?:\\b(?:should|shall|going\\s+to|' + NOT_AS_ADJECTIVE + '(?:plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?)|appointment|proposal|hypothetical(?:ly)?)\\b|' + NOT_AS_NOUN + '\\bmight\\b|\'ll\\b|’ll\\b)', 'iu');
+const DAY_STEP_PROSPECTIVE = new RegExp('(?:\\b(?:should|shall|going\\s+to|' + NOT_AS_ADJECTIVE + '(?:plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|expect(?:s|ed|ing)?|schedule(?:s|d|ing)?)|tomorrow|proposal|hypothetical(?:ly)?)\\b|' + NOT_AS_NOUN + '\\bmight\\b|\'ll\\b|’ll\\b)', 'iu');
+const LOWER_CASE_WILL = new RegExp(NOT_AS_NOUN + '\\bwill\\b', 'u');
+// "Would" and "could" narrate in the past ("Three days later she could walk again"); they make a phrase in
+// their scope prospective only when they come before it ("We could reach the pass two days later").
+const PAST_MODAL = /\b(?:would|could)\b/iu;
+// "As if" and "even if" compare or concede; they state no condition.
+const CONDITION_WORD = /(?:^|[^\p{L}])(?<!\bas\s+)(?<!\beven\s+)(?:if|unless)\b/iu;
 const CLAUSE_BREAKS = /[,;:—–]|\s(?:and|but|while|then|so)\s/gu;
 
 // The clause of `sentence` holding the phrase at `offset`: a modal or "if" elsewhere in the sentence ("Three
@@ -285,15 +271,16 @@ function clauseAt(sentence, offset, length = 0) {
       break;
     }
   }
-  return sentence.slice(start, end);
+  return { text: sentence.slice(start, end), start };
 }
 
 // A phrase is not established when its own clause is prospective or conditional, or its sentence opens with
 // a condition ("If the rains come, three weeks later ...").
 function prospectivePhrase(sentence, offset, length, prospective) {
-  const clause = clauseAt(sentence, offset, length);
+  const { text: clause, start: clauseStart } = clauseAt(sentence, offset, length);
   if (prospective.test(clause) || LOWER_CASE_WILL.test(clause)) return true;
-  if (/(?:^|[^\p{L}])(?:if|unless)\b/iu.test(clause)) return true;
+  if (PAST_MODAL.test(clause.slice(0, Math.max(0, offset - clauseStart)))) return true;
+  if (CONDITION_WORD.test(clause)) return true;
   return /^[^\p{L}]*(?:if|unless|should|suppose|supposing|hypothetically|imagine|imagining|in theory)\b/iu.test(sentence);
 }
 
@@ -301,12 +288,11 @@ function prospectivePhrase(sentence, offset, length, prospective) {
 // conditional, or a bare "next week" without stronger chronology.
 function establishedCandidateContext(source, candidate, ranges) {
   if (insideQuotationAt(candidate.at, ranges)) return null;
-  const raw = String(candidate.hint.raw || '').toLocaleLowerCase().trim();
+  const raw = String(candidate.hint.raw || '').toLowerCase().trim();
   if (/^next\s+(?:day|week|month|year|term|semester|season|cycle)\b/u.test(raw)) return null;
-  const context = sentenceAt(source, candidate.at, candidate.end);
+  const { text: context, offset } = sentenceAt(source, candidate.at, candidate.end);
   if (!context) return null;
-  const offset = context.toLocaleLowerCase().indexOf(raw);
-  if (prospectivePhrase(context, offset < 0 ? 0 : offset, raw.length, ELAPSED_PROSPECTIVE)) return null;
+  if (prospectivePhrase(context, offset, raw.length, ELAPSED_PROSPECTIVE)) return null;
   return context;
 }
 
@@ -330,7 +316,15 @@ function messageElapsedHints(message, defaults) {
 // One narrated text, judged exactly as the runtime detector judges a reply in the exchange.
 export function extractElapsedHint(textValue, defaults = {}) {
   const hints = messageElapsedHints({ role: 'assistant', content: String(textValue ?? '') }, defaults);
-  return hints.find(item => item.meaningful) || hints[0] || null;
+  return newestHint(hints, true) || newestHint(hints, false);
+}
+
+// The last hint in reading order (the newest in the story), meaningful only or any.
+function newestHint(hints, meaningfulOnly) {
+  for (let index = hints.length - 1; index >= 0; index -= 1) {
+    if (!meaningfulOnly || hints[index].meaningful) return hints[index];
+  }
+  return null;
 }
 
 export function detectElapsedHintFromExchange(exchange = []) {
@@ -346,9 +340,9 @@ export function detectElapsedHintFromExchange(exchange = []) {
     });
     // The newest meaningful skip in the exchange decides: a later short span ("An hour later") adds to it
     // rather than cancelling it. With none, the newest short span is reported.
-    const meaningful = hints.find(item => item.meaningful);
+    const meaningful = newestHint(hints, true);
     if (meaningful) return meaningful;
-    if (!shortSpan && hints.length) shortSpan = hints[0];
+    if (!shortSpan) shortSpan = newestHint(hints, false);
   }
   return shortSpan;
 }
@@ -404,9 +398,8 @@ function narratedDayStep(source) {
     .flatMap(pattern => [...narration.matchAll(new RegExp(pattern.source, 'giu'))])
     .sort((a, b) => a.index - b.index);
   for (const match of matches) {
-    const context = sentenceAt(narration, match.index, match.index + match[0].length);
-    const offset = context.indexOf(match[0]);
-    if (prospectivePhrase(context, offset < 0 ? 0 : offset, match[0].length, DAY_STEP_PROSPECTIVE)) continue;
+    const { text: context, offset } = sentenceAt(narration, match.index, match.index + match[0].length);
+    if (prospectivePhrase(context, offset, match[0].length, DAY_STEP_PROSPECTIVE)) continue;
     return { phrase: match[0], context };
   }
   return null;
@@ -441,12 +434,17 @@ export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
   let exchangeCounted = false;
   let previousRole = '';
   let previousAssistantHadStep = false;
+  // The day step a user echoed in this exchange: the narrator repeating the same words names the same day.
+  let echoedStep = '';
 
   for (let messageId = start; messageId <= endMessageId; messageId += 1) {
     const raw = rows[messageId];
     const role = walkRole(raw);
     if (role === 'system') continue;
-    if (role === 'user' && previousRole === 'assistant') exchangeCounted = false;
+    if (role === 'user' && previousRole === 'assistant') {
+      exchangeCounted = false;
+      echoedStep = '';
+    }
     const followsAssistantStep = role === 'user' && previousRole === 'assistant' && previousAssistantHadStep;
     previousRole = role;
 
@@ -466,7 +464,12 @@ export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
     if (!step) continue;
     if (role === 'assistant') previousAssistantHadStep = true;
     if (followsAssistantStep) {
-      // The user is acting on the day the narrator just opened, not a new one.
+      // The user is acting on the day the narrator just opened, not a new one. It uses up nothing: the
+      // narrator's next step in this exchange counts, unless it repeats the same words (the same day).
+      echoedStep = step.phrase.toLowerCase().replace(/\s+/gu, ' ');
+      continue;
+    }
+    if (role === 'assistant' && echoedStep && step.phrase.toLowerCase().replace(/\s+/gu, ' ') === echoedStep) {
       exchangeCounted = true;
       continue;
     }

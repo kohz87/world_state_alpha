@@ -117,7 +117,9 @@ function normalizeMutation(raw) {
   }
   // A field that was present but unusable (an unknown trend, malformed anchors) leaves a harmless no-op
   // update rather than failing the whole capture.
-  if (action === 'update' && !mutation.summary && raw.trend === undefined && raw.anchors === undefined) {
+  // A status or related records alone are an update too.
+  if (action === 'update' && !mutation.summary && raw.trend === undefined && raw.anchors === undefined
+    && mutation.status === undefined && !mutation.relatedRecordIds.length) {
     throw new CaptureWireError('update mutation contains no update fields');
   }
   return mutation;
@@ -140,17 +142,20 @@ export function parseCaptureJson(rawText) {
     throw new CaptureWireError('capture response root must be an object');
   }
   if (!Array.isArray(parsed.mutations)) throw new CaptureWireError('capture response requires mutations array');
-  if (parsed.mutations.length > CAPTURE_WIRE_LIMITS.mutations) {
-    throw new CaptureWireError('capture response exceeds mutation limit');
-  }
   return parsed;
 }
 
+// `capped`: rows past the limit, each rejected on its own; they never fail the response (`rejected` does).
 export function validateCaptureEnvelope(raw) {
   const accepted = [];
   const rejected = [];
+  const capped = [];
   let aliasRepairs = 0;
-  const mutations = Array.isArray(raw?.mutations) ? raw.mutations : [];
+  const all = Array.isArray(raw?.mutations) ? raw.mutations : [];
+  const mutations = all.slice(0, CAPTURE_WIRE_LIMITS.mutations);
+  for (let index = CAPTURE_WIRE_LIMITS.mutations; index < all.length; index += 1) {
+    capped.push({ index, code: 'WORLD_STATE_CAPTURE_WIRE_LIMIT', reason: 'mutation beyond the limit of ' + CAPTURE_WIRE_LIMITS.mutations + ' per response' });
+  }
   for (let index = 0; index < mutations.length; index += 1) {
     try {
       const repaired = repairProviderAliases(mutations[index]);
@@ -164,5 +169,5 @@ export function validateCaptureEnvelope(raw) {
       });
     }
   }
-  return { mutations: accepted, rejected, aliasRepairs };
+  return { mutations: accepted, rejected, capped, aliasRepairs };
 }

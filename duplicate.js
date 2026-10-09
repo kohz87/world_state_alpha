@@ -61,13 +61,13 @@ function subjectModifiers(summary, otherTokens) {
     const words = sentence.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
     for (let index = 0; index + 1 < words.length; index += 1) {
       const word = words[index];
-      const lower = word.toLocaleLowerCase();
-      const noun = words[index + 1].toLocaleLowerCase();
+      const lower = word.toLowerCase();
+      const noun = words[index + 1].toLowerCase();
       // A number right after a capitalized shared noun is an identifier ("Squad 12", "Gate 3"); after a
       // lowercase word it is a quantity ("has lasted 3 days"), and only an ordinal (1st) names a subject. A
       // number that counts the next word ("Harrow 3 times", "Tolls 5 silver") or is followed by more digits
       // ("3,000", "2.5") is a quantity too. Here the number is `noun` and the shared word before it `lower`.
-      const counted = (words[index + 2] || '').toLocaleLowerCase();
+      const counted = (words[index + 2] || '').toLowerCase();
       if (/^\p{N}+$/u.test(noun) && /^\p{Lu}/u.test(word) && !STOP.has(lower) && otherTokens.has(lower) && !otherTokens.has(noun)
         && !QUANTITY_WORDS.has(counted) && !/^\p{N}/u.test(counted)) {
         if (!modifiers.has(lower)) modifiers.set(lower, new Set());

@@ -29,7 +29,8 @@ function lexicalAffinity(left, right, anchors = []) {
   if (a.length >= 8 && containsOnWordBoundaries(b, a)) return true;
   if (b.length >= 8 && containsOnWordBoundaries(a, b)) return true;
 
-  const leftTokens = significantTokens(a);
+  // Distinct words: a summary repeating one word does not share two.
+  const leftTokens = [...new Set(significantTokens(a))];
   const rightTokens = new Set(significantTokens(b));
   const shared = leftTokens.filter(token => rightTokens.has(token));
   if (shared.length >= 2) return true;
@@ -112,7 +113,7 @@ export function evidenceClaimGrounded(claim, sourceText) {
 const REPORTED_CLAUSE = '(?=\\s+(?:that|to|the|a|an|this|these|those|his|her|their|its|our|my|he|she|they|it|we|i|you|there|someone|everyone|no)\\b)';
 const REPORTING_WORDS = 'reports?|reported|reportedly|reporting|rumou?rs?|rumou?red|claimed|claiming|claims?' + REPORTED_CLAUSE
   + '|alleges?|alleged|allegedly|according to|warns?|warned|believes?|believed|belief|beliefs|suspects?|suspected'
-  + '|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|says?|said|states' + REPORTED_CLAUSE + '|stated'
+  + '|predicts?|predicted|prediction|predictions|forecasts?|forecasted|said to|(?:says?|said)(?!\\s+(?:nothing|little|no\\s+more)\\b)|states' + REPORTED_CLAUSE + '|stated'
   + '|announces?|announced|declares?|declared|confesses?|confessed|admits?|admitted|denies|denied|accuses?|accused'
   + '|proclaims?|proclaimed|(?:swears?|swore)(?=\\s+(?:that|to|on|by|an?\\s+oath|he|she|they|it|we|i|you|the|his|her|their)\\b)'
   + '|vows?|vowed|word is|word was|word has|news of|news that|news about|accounts? of|accounts? that|talk of|gossip|hearsay';
@@ -121,11 +122,17 @@ const REPORTED_ACCOUNT_RE = new RegExp('\\b(?:' + REPORTING_WORDS + '|warnings?(
 // ... or describes the speech act itself. "Orders" counts only as a verb with an object ("orders every vendor
 // to pay"), never as a noun ("Holy Orders", "under orders of").
 const SPEECH_ACT_OBJECT = '(?=\\s+(?:that|to|the|a|an|all|every|each|his|her|their|its|them|him|us|everyone|everybody|anyone|no|any|some)\\b)';
+// "Refuses" is left out: it states a condition ("the gate refuses to open", "the guild refuses entry").
 const SPEECH_ACT_SUMMARY_RE = new RegExp('\\b(?:demands?|demanded|demanding|orders?' + SPEECH_ACT_OBJECT + '|ordered|ordering|threatens?|threatened|threatening'
-  + '|promises?|promised|promising|offers?|offered|offering|refuses?|refused|asks?|asked|asking|requests?|requested|requesting|insists?|insisted)\\b', 'iu');
+  + '|promises?|promised|promising|offers?|offered|offering|asks?|asked|asking|requests?|requested|requesting|insists?|insisted)\\b', 'iu');
 // ... or keeps a plan, expectation or condition prospective.
-const PROSPECTIVE_SUMMARY_RE = /\b(?:will|shall|might|going to|about to|plans?|planned|planning|plotting|intends?|intended|intending|intention|aims?|hopes?|expects?|expected|expecting|prepares?|preparing|if|unless|threat|threatened|tomorrow|tonight)\b/iu;
-const ATTRIBUTION_RE = new RegExp('\\b(?:' + REPORTING_WORDS + '|insists?|insisted|tells?|(?<!\\ball )told|explains?|explained|mentions?|mentioned|whispers?|whispered|informs?|informed)\\b', 'iu');
+// Modal verbs and "hope" count in lower case only, so a name (Will, Hope, May) does not keep a summary
+// prospective; "going to" counts only before a verb ("going to the capital" is travel).
+const PROSPECTIVE_SUMMARY_RE = /\b(?:will|shall|might|hopes?)\b|\b(?:[Gg]oing to(?!\s+(?:the|a|an|his|her|their|its|my|our|your|this|that|these|those)\b|\s+\p{Lu})|[Aa]bout to|[Pp]lans?|[Pp]lanned|[Pp]lanning|[Pp]lotting|[Ii]ntends?|[Ii]ntended|[Ii]ntending|[Ii]ntention|[Aa]ims?|[Ee]xpects?|[Ee]xpected|[Ee]xpecting|[Pp]repares?|[Pp]reparing|[Ii]f|[Uu]nless|[Tt]hreat|[Tt]hreatened|[Tt]omorrow|[Tt]onight)\b/u;
+// Speech verbs of an action beat ("the guard shouted") attribute dialogue like "said". Forms that are also
+// nouns or other verbs ("screams echoed", "the council answered the petition") are left out.
+const ATTRIBUTION_RE = new RegExp('\\b(?:' + REPORTING_WORDS + '|insists?|insisted|tells?|(?<!\\ball )told|explains?|explained|mentions?|mentioned|whispers?|whispered|informs?|informed'
+  + '|shouts|shouted|yells|yelled|cried|screamed|called\\s+out|muttered|murmured|replied|exclaimed)\\b', 'iu');
 // A demand, order, threat or promise is itself a narrated act ("Orson demands an unloading fee" shows the
 // extortion); only what is demanded, ordered, threatened or promised (the text after the verb) is not
 // established by it.
@@ -142,13 +149,31 @@ const PAIRED_QUOTES = Object.freeze({ '“': '”', '„': '“', '「': '」', 
 const NEW_QUOTED_LINE = /^[ \t]*(?:["“„「『«‘']|\r?\n)/u;
 const LETTER = /[\p{L}\p{N}]/u;
 
+// Elided words open no quotation mid-sentence in lower case ("we drove 'em off"); at the start of a line or
+// sentence ('Cause the duke ...', 'Round here ...) they may open dialogue.
+const ELISION = /^(?:em|tis|twas|til|cause|bout|round|nuff|neath|cept|ere)\b/u;
+
+function closingSingleQuote(source, index) {
+  const char = source[index];
+  return (char === "'" || char === '’') && !LETTER.test(source[index + 1] || '') && /[\p{L}\p{N}.,!?;:…\-—]/u.test(source[index - 1] || '');
+}
+
+// A plural possessive ("'The soldiers' horses are gone,' ...") is no closing quote: an apostrophe after "s"
+// and before a lower-case word, when the quotation closes again later in its paragraph. Without a later
+// close it is the end of the line ("'Fetch the horses' ordered Mira.").
 function singleQuoteEnd(source, from) {
+  let possessive = -1;
   for (let index = from + 1; index < source.length; index += 1) {
     const char = source[index];
-    if (char === '\n' && NEW_QUOTED_LINE.test(source.slice(index + 1, index + 4))) return -1;
-    if ((char === "'" || char === '’') && !LETTER.test(source[index + 1] || '') && /[\p{L}\p{N}.,!?;:…\-—]/u.test(source[index - 1] || '')) return index;
+    if (char === '\n' && NEW_QUOTED_LINE.test(source.slice(index + 1, index + 4))) break;
+    if (!closingSingleQuote(source, index)) continue;
+    if (/s/iu.test(source[index - 1] || '') && /^ \p{Ll}/u.test(source.slice(index + 1, index + 3))) {
+      if (possessive < 0) possessive = index;
+      continue;
+    }
+    return index;
   }
-  return -1;
+  return possessive;
 }
 
 // A short title-cased quotation introduced as a name ("the "Black Gull" anchors offshore", "a ship named
@@ -193,7 +218,8 @@ function quotedSpans(sourceText) {
     } else if (PAIRED_QUOTES[char]) {
       open = index;
       closer = PAIRED_QUOTES[char];
-    } else if ((char === "'" || char === '‘') && !LETTER.test(source[index - 1] || '') && LETTER.test(source[index + 1] || '')) {
+    } else if ((char === "'" || char === '‘') && !LETTER.test(source[index - 1] || '') && LETTER.test(source[index + 1] || '')
+      && !(ELISION.test(source.slice(index + 1, index + 8)) && /\p{L}[\s,]*$/u.test(source.slice(Math.max(0, index - 12), index)))) {
       const end = singleQuoteEnd(source, index);
       if (end > index) {
         spans.push([index + 1, end]);
@@ -275,6 +301,19 @@ function sentenceClauses(sentence) {
 // or a short trailing attribution clause ("..., the trader said."). A reporting
 // clause about something else in the same sentence does not make a narrated
 // claim hearsay.
+// An earlier clause attributes a later one only as a frame: it ends with its reporting word ("The scout said,"
+// "Rumour has it"), introduces it ("According to the scouts,"), or is a short reporting clause. A clause that
+// reports something of its own ("The captain announced the curfew, soldiers barred the gates") does not.
+const ATTRIBUTION_FRAME_TOKENS = 4;
+function attributionFrame(text) {
+  const canon = canonicalText(text);
+  const match = ATTRIBUTION_RE.exec(canon);
+  if (!match) return false;
+  const after = canon.slice(match.index + match[0].length).trim().split(' ').filter(Boolean);
+  return !after.length || (after.length === 1 && after[0] === 'that') || /^according to\b/u.test(match[0])
+    || canon.split(' ').filter(Boolean).length <= ATTRIBUTION_FRAME_TOKENS;
+}
+
 function clauseAttributes(sentence, claimTokens) {
   const clauses = sentenceClauses(sentence);
   const bearing = clauses.map(clause => {
@@ -288,7 +327,7 @@ function clauseAttributes(sentence, claimTokens) {
     for (let earlier = index - 1; earlier >= 0; earlier -= 1) {
       if (clauses[earlier + 1].contrastiveBefore) break;
       if (SUBORDINATE_CLAUSE.test(clauses[earlier].text)) continue;
-      if (ATTRIBUTION_RE.test(clauses[earlier].text)) return true;
+      if (attributionFrame(clauses[earlier].text)) return true;
     }
     const next = clauses[index + 1];
     return Boolean(next && !next.contrastiveBefore && !SUBORDINATE_CLAUSE.test(next.text) && ATTRIBUTION_RE.test(next.text)
@@ -298,16 +337,22 @@ function clauseAttributes(sentence, claimTokens) {
 
 // "X reports that ..." / "X insisted ... that ...": everything after the
 // complementizer is the reported content, whatever turns it takes.
+// "that" is the complementizer only within twelve words of the reporting verb, with no turn between, and not
+// as a demonstrative ("said nothing, but that night the river flooded").
+const COMPLEMENT_GAP = '(?:\\s+(?!but\\b|while\\b|yet\\b|although\\b|though\\b|whereas\\b|meanwhile\\b|and\\b|then\\b)\\S+){0,12}?';
+const DEMONSTRATIVE_THAT = '(?!\\s+(?:night|day|morning|evening|afternoon|dawn|dusk|week|month|year|time|moment|hour|winter|summer|spring|autumn|season|same)\\b)';
+const REPORTED_COMPLEMENT_RE = new RegExp(ATTRIBUTION_RE.source + COMPLEMENT_GAP + '\\s+that\\b' + DEMONSTRATIVE_THAT, 'iu');
 function claimInsideReportedComplement(claim, sentence) {
   const text = canonicalText(sentence);
   const needle = canonicalText(claim);
-  const match = new RegExp(ATTRIBUTION_RE.source + '[^.!?]*?\\bthat\\b', 'iu').exec(text);
+  const match = REPORTED_COMPLEMENT_RE.exec(text);
   if (!match || !needle) return false;
   const at = text.indexOf(needle);
   return at >= match.index + match[0].length - 4;
 }
 
-const SENTENCE_SEPARATOR = /((?<=[.!?])[ \t]+|\s*\r?\n\s*)/u;
+// A sentence also ends after a closing quote or bracket that follows its stop ("The gate is sealed." The ...).
+const SENTENCE_SEPARATOR = /((?<=[.!?]["'”’»」』)\]]*)[ \t]+|\s*\r?\n\s*)/u;
 // A full stop after a title or an initial does not end the sentence ("Lt. Varro reported that ...").
 // Titles are capitalized; a lower-case word ("the scout said no.") or a unit ("10 ft.") ends its sentence.
 const ABBREVIATION_END = /(?:^|[\s(\["“'‘])(?:Mr|Mrs|Ms|Dr|St|Mt|Lt|Col|Gen|Capt|Cpt|Sgt|Cmdr|Cdr|Adm|Maj|Prof|Rev|Fr|Sr|Jr|Hon|Gov|Pres|Sen|vs|e\.g|i\.e|\p{Lu})\.$/u;
@@ -350,7 +395,21 @@ function claimInsideSpeechActComplement(claim, sentence) {
   });
 }
 
+// The excerpt is a threat or promise together with what it threatens or promises ("threatened to burn the
+// granary", "promised the miners that wages would rise"): the act is narrated, its content is not done. A
+// coordinated narrated act after it ("... and burned the granary") is narration. A demand or order with its
+// content stays a narrated act: one shown demand may establish a levy or toll (an arrangement).
+const SPEECH_ACT_CONTENT_RE = /\b(?:threatens?|threatened|threatening)\s+to\s+\S+|\b(?:promises?|promised|promising|vows?|vowed)(?:\s+\S+){0,3}?\s+(?:to|that)\s+\S+/iu;
+function claimCarriesSpeechActContent(claim) {
+  const text = canonicalText(claim);
+  const match = SPEECH_ACT_CONTENT_RE.exec(text);
+  if (!match) return false;
+  const after = text.slice(match.index + match[0].length).split(' ').filter(Boolean);
+  return !after.some(word => COORDINATING.has(word));
+}
+
 function sentenceReported(claim, sourceText) {
+  if (claimCarriesSpeechActContent(claim)) return true;
   if (evidenceClaimQuotedOnly(claim, sourceText)) return true;
   if (claimSubstanceQuoted(claim, sourceText)) return true;
   const source = String(sourceText ?? '');
@@ -358,7 +417,8 @@ function sentenceReported(claim, sourceText) {
   let segments = sentencesOf(source).filter(segment => evidenceClaimGrounded(claim, segment));
   // An excerpt running across a sentence end is judged within its line.
   if (!segments.length) segments = source.split(/\r?\n+/u).filter(segment => evidenceClaimGrounded(claim, segment));
-  return segments.some(segment => (
+  // Reported only when every sentence stating it reports it: narration repeated in a report is still narration.
+  return segments.length > 0 && segments.every(segment => (
     claimInsideSpeechActComplement(claim, segment)
     || (ATTRIBUTION_RE.test(segment) && (claimInsideReportedComplement(claim, segment) || clauseAttributes(segment, claimTokens)))
   ));
@@ -425,15 +485,15 @@ function reportedAccountRecord(summary) {
 // Modal verbs count in lower case only, so a character named Will or May does not.
 // A modal followed by its verb, never the noun ("against their will", "with all their might", "the king's
 // will"). Narrated day steps ("the next morning") and "tonight" are narration, not plans.
-const PROSPECTIVE_CLAIM_RE = /(?<!\b(?:their|his|her|its|my|our|your|the|own|free|good|ill|all)\s+)(?<!['’]s\s+)\b(?:will|shall|might)\s+(?:not\s+|never\s+|soon\s+|surely\s+|likely\s+)?\p{Ll}|\b(?:going|about)\s+to\b|\b(?:plans?|planned|planning|plotting|intends?|intended|intending|aims?|hopes?|expects?|expected|prepares?|preparing)\s+to\b|\b[Tt]omorrow\b/u;
+const PROSPECTIVE_CLAIM_RE = /(?<!\b(?:their|his|her|its|my|our|your|the|own|free|good|ill|all)\s+)(?<!['’]s\s+)\b(?:will|shall|might)\s+(?:not\s+|never\s+|soon\s+|surely\s+|likely\s+)?\p{Ll}|\bgoing\s+to\b(?!\s+(?:the|a|an|his|her|their|its|my|our|your|this|that|these|those)\b|\s+\p{Lu})|\babout\s+to\b|\b(?:plans?|planned|planning|plotting|intends?|intended|intending|aims?|hopes?|expects?|expected|prepares?|preparing)\s+to\b|\b[Tt]omorrow\b/u;
 const CONDITIONAL_START = /^[^\p{L}\p{N}]*(?:even\s+)?(?:if|unless|lest|suppose|supposing|in case|should)\b/iu;
 
 function evidenceClaimProspective(claim, sourceText) {
   if (PROSPECTIVE_CLAIM_RE.test(String(claim ?? ''))) return true;
-  return sentencesOf(sourceText).some(sentence => evidenceClaimGrounded(claim, sentence) && (
-    CONDITIONAL_START.test(sentence)
-    || sentenceClauses(sentence).some(clause => CONDITIONAL_START.test(clause.text) && evidenceClaimGrounded(claim, clause.text))
-  ));
+  // Conditional only when every sentence stating it is: a narrated statement repeated in an "if" stays narrated.
+  const stating = sentencesOf(sourceText).filter(sentence => evidenceClaimGrounded(claim, sentence));
+  return stating.length > 0 && stating.every(sentence => CONDITIONAL_START.test(sentence)
+    || sentenceClauses(sentence).some(clause => CONDITIONAL_START.test(clause.text) && evidenceClaimGrounded(claim, clause.text)));
 }
 
 export function captureExchangeIndex(exchange = []) {

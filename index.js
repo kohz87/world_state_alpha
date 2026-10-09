@@ -44,7 +44,7 @@ import { makeSidecarPath, readSidecar, writeSidecar } from './storage.js';
 import { createWorldStateUiController } from './ui.js';
 import { mountWorldStateLauncher } from './launcher.js';
 
-export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.61';
+export const WORLD_STATE_ALPHA_VERSION = '0.9.0-alpha.62';
 export const WORLD_STATE_HOST_NAMESPACE = 'world_state_alpha';
 export const WORLD_STATE_SETTINGS_ID = 'world_state_alpha_settings';
 export const WORLD_STATE_PANEL_ROOT_ID = 'world_state_alpha_panel_root';
@@ -2777,7 +2777,7 @@ async function captureAssistantBoundary(chatKey, messageId, markStarted) {
       messageId,
       CAPTURE_LIMITS.lifecycleContextMessages,
       currentState?.lineage,
-    ).filter(row => !currentExchangeIds.has(row?.messageId)),
+    ).filter(row => !currentExchangeIds.has(row?.messageId) && row?.is_system !== true),
   ));
   const lifecycleSelection = selectLifecycleCandidates(before, {
     index,

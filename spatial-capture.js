@@ -296,7 +296,7 @@ const DIRECTION_FOLLOWERS = new Set(['of', 'from', 'by', 'along', 'across', 'bey
   'when', 'but', 'so', 'until', 'before', 'after', 'whereas', 'yet']);
 function directionStated(sentence, form) {
   const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${form.replace(' ', '[\\s-]+')}(?![\\p{L}\\p{N}])(\\s*[,.;:!?)\\]—–]|\\s*$|\\s+([\\p{L}\\p{N}]+))`, 'giu');
-  for (const match of String(sentence).toLocaleLowerCase().matchAll(pattern)) {
+  for (const match of String(sentence).toLowerCase().matchAll(pattern)) {
     const next = match[2];
     if (/wards?$/u.test(form) || next === undefined || DIRECTION_FOLLOWERS.has(next) || /^\d/u.test(next)) return true;
   }
@@ -424,7 +424,7 @@ function explicitWorldStateLocationHeaders(exchangeById) {
   const headers = [];
   for (const source of exchangeById.values()) {
     if (!source?.text || source.role === 'system') continue;
-    const blocks = source.text.matchAll(/<World_State(?:\s+[^>]*)?>([\s\S]*?)(?:<\/World_State>|$)/gi);
+    const blocks = source.text.matchAll(/<World_State(?:\s+[^>]*)?>([\s\S]*?)(?:<\/World_State\s*>|$)/gi);
     for (const blockMatch of blocks) {
       const body = blockMatch[1] || '';
       for (const rawLine of body.split(/\r?\n/)) {
