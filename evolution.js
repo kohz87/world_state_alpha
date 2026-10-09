@@ -889,7 +889,8 @@ export async function prepareWorldStateContinuity({
     : sourceMessageId;
   // Only relevant developments that are due (evaluated before this skip, or affected by new evidence) take
   // a slot: one evaluated since is skipped by the plan and must not leave a background slot empty.
-  const dueRelevant = resolvedElapsedHint?.meaningful && index
+  // (Already known when the due filter ran: every entry kept is due.)
+  const dueRelevant = dueIds ? relevantEvolutionEntries.length : resolvedElapsedHint?.meaningful && index
     ? planLazyEvolution(state, {
       selectedEntries: relevantEvolutionEntries,
       exchange,
@@ -958,7 +959,10 @@ export async function prepareWorldStateContinuity({
     dispatcher,
   });
   evolution.backgroundSelection = backgroundSelection.metrics;
-  if (publishIndex && cursorBefore && backgroundSelection.selected.length && !['evolved', 'stable'].includes(evolution.outcome)) {
+  // A run that changed nothing (it failed, went stale or answered unusably) puts the background cursor back so
+  // a later turn retries that catch-up: the same rule the host applies when it publishes the index itself.
+  if (publishIndex && cursorBefore && backgroundSelection.selected.length && evolution.outcome !== 'skipped'
+    && (evolution.state || state) === state) {
     index.backgroundCursor = cursorBefore.cursor;
     index.backgroundElapsedBoundary = cursorBefore.boundary;
   }

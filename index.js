@@ -3534,7 +3534,22 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
       .catch(error => actionFailed('Forfeit missed capture', error, chatKey));
   }
 
+  if (actionId === 'rebuild') {
+    if (rebuildRunning(chatKey)) {
+      notify('info', 'A rebuild is already running for this chat. Wait for it to finish (or cancel it) before starting another.');
+      refreshPanel();
+      return false;
+    }
+    rebuildRequests.set(chatKey, (rebuildRequests.get(chatKey) || 0) + 1);
+  }
+  const released = () => {
+    if (actionId !== 'rebuild') return;
+    const left = (rebuildRequests.get(chatKey) || 1) - 1;
+    if (left > 0) rebuildRequests.set(chatKey, left);
+    else rebuildRequests.delete(chatKey);
+  };
   return queueChatWork(chatKey, () => applyMaintenanceActionNow(actionId, payload, chatKey))
+    .finally(released)
     .catch(error => {
       // A rebuild that throws past its own handling never stays 'running' or 'committing': that would block
       // Forfeit and new rebuilds until a reload.
@@ -3550,8 +3565,12 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
     });
 }
 
+// A rebuild (Recapture and Resume included) requested and waiting for the chat queue counts as running: Forfeit
+// and a second rebuild are refused from the click, not after the first one finished.
+const rebuildRequests = new Map();
+
 function rebuildRunning(chatKey) {
-  return ['running', 'cancelling', 'committing'].includes(rebuildStatuses.get(chatKey)?.phase);
+  return (rebuildRequests.get(chatKey) || 0) > 0 || ['running', 'cancelling', 'committing'].includes(rebuildStatuses.get(chatKey)?.phase);
 }
 
 function refuseForfeitDuringRebuild() {
@@ -3580,17 +3599,23 @@ async function forfeitMissedCapture(chatKey, payload) {
   // Only an integer names a message (Number(null) would be message 0).
   const messageId = typeof payload?.messageId === 'number' ? payload.messageId : NaN;
   const chat = getContext().chat || [];
-  const cached = stateCache.get(chatKey)?.lineage || [];
   if (!Number.isInteger(messageId) || messageId < 0 || messageId >= chat.length || !pendingCaptureFailures(chatKey).includes(messageId)) {
     notify('error', 'That missed capture is no longer listed. Review the panel and try again.');
     refreshPanel();
     return false;
   }
-  // The row names the message's current version; without a cached lineage for it, the live chat's.
-  const lineage = cached[messageId]?.lineageKey ? cached : chatLineage(chat);
+  // The row names the message as the live chat holds it now (Forfeit runs outside the chat queue, so a swipe
+  // or edit still waiting to be reconciled is already seen), and only a listed failure of that very version
+  // is forfeited: a version that was never attempted is never marked.
+  const prefix = chat.slice(0, messageId + 1);
+  const lineage = chatLineage(prefix);
   const lineageKey = lineage[messageId]?.lineageKey || '';
-  if (!lineageKey) {
-    notify('error', 'That message cannot be identified safely. Use Recapture or a rebuild instead.');
+  const contentKey = contentLineageKey(prefix, messageId, lineage);
+  const sameVersion = unrecoveredCaptureFailures(diagnosticStore.recoveryRows(chatKey))
+    .some(item => item.messageId === messageId && (item.lineageKey === lineageKey || (contentKey && item.contentLineageKey === contentKey)));
+  if (!lineageKey || !sameVersion) {
+    notify('error', 'That message changed since its capture failed. Review the panel and try again.');
+    refreshPanel();
     return false;
   }
   if (!window.confirm('Forfeit the missed capture of message ' + messageId + '?\n\n'
@@ -3603,7 +3628,7 @@ async function forfeitMissedCapture(chatKey, payload) {
     label: 'capture',
     sourceMessageId: messageId,
     lineageKey,
-    contentLineageKey: currentContentLineageKeys(chat, lineage, [messageId]).get(messageId) || '',
+    contentLineageKey: contentKey,
     outcome: CAPTURE_FORFEITED,
     code: 'WORLD_STATE_CAPTURE_FORFEITED',
     detail: 'The operator forfeited this missed capture; World State was not changed.',
@@ -4088,8 +4113,10 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       refreshPanel();
       const atBoundary = Number.isInteger(result.failedBoundary) ? ' at message ' + result.failedBoundary : '';
       notify(
-        cancelledOutcome ? 'info' : 'error',
-        cancelledOutcome
+        staleAtEnd ? 'warning' : cancelledOutcome ? 'info' : 'error',
+        staleAtEnd
+          ? 'World State Alpha rebuild finished, but ' + failureDetail.charAt(0).toLowerCase() + failureDetail.slice(1)
+          : cancelledOutcome
           ? 'World State Alpha rebuild cancelled' + atBoundary + '. Canonical state was left unchanged.'
           : 'World State Alpha rebuild failed' + atBoundary + ': ' + failureDetail + '. Canonical state was left unchanged.'
             + (resumable ? ' Use Resume from message ' + result.resume.fromMessageId + ' to continue without redoing earlier messages.' : ''),

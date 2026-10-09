@@ -44,10 +44,22 @@
 
 ### Validation
 
-- New `tests/audit-alpha64.test.js` (17 tests, each failing on 0.9.0-alpha.63).
-- Two older tests updated: Forfeit now shows six buttons before "Show all", and the render call grew.
-- `npm test` (729) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
-- Live in SillyTavern, these behave as on alpha.63: the branch, rebuild, resume, hide, forfeit (now outside the chat queue), alpha.59 and alpha.57 Places scripts.
+- New `tests/audit-alpha64.test.js` (20 tests). The first 17 each fail on 0.9.0-alpha.63, and the 3 review-hardening tests fail on the pre-review code.
+- Three older tests updated: Forfeit now shows six buttons before "Show all", the render call grew, and the maintenance entry now releases a rebuild request.
+- `npm test` (732) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
+- Live in SillyTavern, these behave as on alpha.63: the branch, rebuild, resume, hide, forfeit (now outside the chat queue), alpha.59 and alpha.57 Places scripts. They were run again after the review hardening.
+
+### Code review hardening
+
+- Korean one-word anchors and place names followed by a particle ("서울에서") still match.
+- Rebuild matching counts only content character pairs, so one shared word plus common Japanese endings no longer marks a record as addressed. The exchange's pairs are read once per boundary, not once per record.
+- Forfeit, now outside the chat queue, names the message as the live chat holds it, forfeits only a listed failure of that exact version, and is refused while a rebuild is requested.
+- A second rebuild (Recapture and Resume included) is refused from the click while one is requested or running. Start Rebuild's own click guard covers only the start.
+- A rebuild that finished over changed messages says so in its notice instead of "rebuild cancelled".
+- The background-cursor give-back follows the host's rule (a run that changed nothing).
+- The due plan is no longer computed twice.
+- An empty boundary asks the Places timeline whether anything changed instead of serializing the state twice.
+- Model text shown in Operations never ends on half an emoji.
 
 ## 0.9.0-alpha.63 - Places (deep pass on alpha.60)
 

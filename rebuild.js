@@ -1,6 +1,6 @@
 import { chatLineage, commitMutationBoundary, earliestPartialRebuildStart, firstStoryChange, reconcileBranch, seedRootCheckpoint } from './branch.js';
 import { CAPTURE_LIMITS, captureDue, hiddenConversationRole, isNarratorMessage, normalizeCaptureExchange, runCaptureOperation } from './capture.js';
-import { SPACELESS_SCRIPT, hashText, sharedSpacelessBigrams, stableStringify } from './hash.js';
+import { INFIX_NAME_SCRIPT, hashText, sharedContentBigrams, spacelessBigrams, stableStringify } from './hash.js';
 import { RELEVANCE_STOPWORDS, extractContextTerms, functionWordNames, normalizeAnchor, selectRelevantRecords } from './relevance.js';
 import { SUPPORT_STOPWORDS, significantTokens } from './source-firewall.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
@@ -142,12 +142,15 @@ function rebuildMatchContext(recentText) {
     names: functionWordNames(recentText),
     // The exchange's content words for the direct-address check, read once per exchange.
     directTerms: new Set(significantTokens(recentText, REBUILD_DIRECT_STOPWORDS)),
+    // Its character pairs (Chinese, Japanese, ...), read once per exchange rather than once per record.
+    pairs: spacelessBigrams(recentText),
   };
 }
 
-// A one-word anchor in a script written without spaces ("王都") is found inside the exchange's runs of letters.
+// A one-word anchor in a script written without spaces or with attached particles ("王都", "서울") is found
+// inside the exchange's runs of letters.
 function spacelessAnchorIn(normalized, haystack) {
-  return normalized.length >= 2 && SPACELESS_SCRIPT.test(normalized) && haystack.includes(normalized);
+  return normalized.length >= 2 && INFIX_NAME_SCRIPT.test(normalized) && haystack.includes(normalized);
 }
 
 function exchangeOverlap(record, context) {
@@ -160,8 +163,9 @@ function exchangeOverlap(record, context) {
   });
   let shared = 0;
   for (const term of extractContextTerms(record?.summary || '')) if (context.terms.has(term)) shared += 1;
-  // Chinese or Japanese summaries share character pairs, not words (as the firewall compares them).
-  const pairs = shared < 2 ? sharedSpacelessBigrams(record?.summary || '', context.haystack) : 0;
+  // Chinese or Japanese summaries share character pairs, not words: content pairs only (one shared word plus
+  // common endings is no topic), read only when words and anchors decided nothing.
+  const pairs = !anchorHit && shared < 2 && context.pairs.size ? sharedContentBigrams(record?.summary || '', context.pairs) : 0;
   return { relevant: anchorHit || shared >= 2 || pairs >= 3, touched: anchorHit || shared >= 1 || pairs >= 2 };
 }
 
@@ -187,7 +191,7 @@ function rebuildDirectlyAddresses(record, context) {
   const left = new Set(significantTokens(record?.summary || '', REBUILD_DIRECT_STOPWORDS));
   let shared = 0;
   for (const token of left) if (context.directTerms.has(token)) shared += 1;
-  return shared >= 2 || sharedSpacelessBigrams(record?.summary || '', context.haystack) >= 3;
+  return shared >= 2 || (context.pairs.size > 0 && sharedContentBigrams(record?.summary || '', context.pairs) >= 3);
 }
 
 function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessageId) {
@@ -362,6 +366,7 @@ function disabledSpatialTimeline(original, chat, { operatorOnly = false, lineage
       unverified: heldBeforeFloor && firstStoryChange(original.lineage, chat, lineage) <= floor,
       at: () => clone(original.spatial),
       changesAfter: () => false,
+      changesBetween: () => false,
     };
   }
   const divergence = firstStoryChange(original.lineage, chat, lineage);
@@ -394,6 +399,8 @@ function disabledSpatialTimeline(original, chat, { operatorOnly = false, lineage
     },
     // Whether a replayed change was made after `messageId` (after every boundary when it is null).
     changesAfter: messageId => steps.some(step => messageId === null || step.messageId > messageId),
+    // Whether one was made after `after` (from the start when null) up to and including `upTo`.
+    changesBetween: (after, upTo) => steps.some(step => (after === null || step.messageId > after) && step.messageId <= upTo),
   };
 }
 
@@ -679,8 +686,10 @@ export async function runManualRebuild({
     }
   };
 
-  for (const window of plan.windows) {
+  for (const [windowIndex, window] of plan.windows.entries()) {
     if (resumeFromMessageId !== null && window.messageId < resumeFromMessageId) continue;
+    // The boundary before this one: the replayed Places it holds are already in the candidate.
+    const lastCommittedBoundary = windowIndex > 0 ? plan.windows[windowIndex - 1].messageId : null;
     if (signal?.aborted) return cancelledResult(window.messageId);
     if (!current()) {
       return {
@@ -701,9 +710,8 @@ export async function runManualRebuild({
     if (!captureDue({ exchange: window.exchange, sourceMessageId: window.messageId })) {
       // Committed only when replayed Places change there: a no-op commit would add a checkpoint and evict a
       // real one.
-      const atBoundary = spatialAtBoundary(candidate, window.messageId);
-      if (atBoundary !== candidate && stableStringify(atBoundary.spatial) !== stableStringify(candidate.spatial)) {
-        candidate = commitMutationBoundary(candidate, atBoundary, chat.slice(0, window.messageId + 1), window.messageId, 'rebuild', { lineage: plan.lineage.slice(0, window.messageId + 1) });
+      if (historyTimeline?.changesBetween?.(lastCommittedBoundary, window.messageId)) {
+        candidate = commitMutationBoundary(candidate, spatialAtBoundary(candidate, window.messageId), chat.slice(0, window.messageId + 1), window.messageId, 'rebuild', { lineage: plan.lineage.slice(0, window.messageId + 1) });
       }
       receipts.push({ messageId: window.messageId, outcome: 'empty-boundary', providerCalls: 0, applied: 0, rejected: 0, aliasRepairs: 0, completenessHints: 0, rejections: [] });
       processedBoundaries += 1;

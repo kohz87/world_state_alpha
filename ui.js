@@ -1,6 +1,6 @@
 import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
-import { hashText } from './hash.js';
+import { hashText, withoutSplitSurrogate } from './hash.js';
 import { clone } from './common.js';
 import { normalizeState } from './state-core.js';
 import { canonicalSpatialDirection, OPPOSITE_DIRECTION, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
@@ -246,7 +246,7 @@ function projectDiagnostics(rows) {
 }
 
 function boundedRaw(value, max) {
-  return typeof value === 'string' ? value.slice(0, max) : '';
+  return typeof value === 'string' ? withoutSplitSurrogate(value.slice(0, max)) : '';
 }
 
 function projectSpatialLocation(loc, key) {
@@ -1526,6 +1526,9 @@ function tabLabel(tab) {
   return 'Data';
 }
 
+// How long Start Rebuild ignores a repeated click while the host takes the request.
+const REBUILD_START_GUARD_MS = 1500;
+
 // A number field's integer value, or null when it is blank or not a number.
 function numberInput(value) {
   const textValue = String(value ?? '').trim();
@@ -2527,14 +2530,19 @@ export function createWorldStateUiController({
       ));
       const includeHiddenMessages = hiddenInput ? Boolean(hiddenInput.checked) : ui.rebuildForm.includeHiddenMessages !== false;
       ui.rebuildForm = { mode, startMessageId, lastMessages, maxBoundaries, includeHiddenMessages };
+      // The guard covers the start only (the host refuses a second rebuild while one is requested or runs):
+      // the request resolves when the rebuild ends, which can take minutes.
       ui.rebuildStarting = true;
+      const started = typeof onMaintenanceAction === 'function'
+        ? Promise.resolve(onMaintenanceAction('rebuild', { rebuild: { ...ui.rebuildForm } }))
+        : Promise.resolve();
       try {
-        if (typeof onMaintenanceAction === 'function') {
-          await onMaintenanceAction('rebuild', { rebuild: { ...ui.rebuildForm } });
-        }
+        await Promise.race([started, new Promise(resolve => setTimeout(resolve, REBUILD_START_GUARD_MS))]);
       } finally {
         ui.rebuildStarting = false;
       }
+      refresh();
+      await started.catch(() => {});
       refresh();
       return;
     }

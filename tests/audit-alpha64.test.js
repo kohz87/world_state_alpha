@@ -34,12 +34,13 @@ test('70: a one-word anchor in a spaced script matches whole words only', () => 
 test('71 and 75: due developments are chosen before the four relevant slots, and an unfinished catch-up gives its slots back', () => {
   assert.match(evolution, /const dueIds = relevantDevelopments\.length > EVOLUTION_LIMITS\.relevantTargets/);
   assert.match(evolution, /\? relevantDevelopments\.filter\(entry => dueIds\.has\(recordFromEntry\(entry\)\?\.id\)\)/);
-  assert.match(evolution, /if \(publishIndex && cursorBefore && backgroundSelection\.selected\.length && !\['evolved', 'stable'\]\.includes\(evolution\.outcome\)\) \{\s*index\.backgroundCursor = cursorBefore\.cursor;/);
+  // The same rule as the host: a run that changed nothing (and was not skipped) gives the slots back.
+  assert.match(evolution, /if \(publishIndex && cursorBefore && backgroundSelection\.selected\.length && evolution\.outcome !== 'skipped'\s*&& \(evolution\.state \|\| state\) === state\) \{\s*index\.backgroundCursor = cursorBefore\.cursor;/);
 });
 
 test('72 and 76: rebuild matching reads Chinese and Japanese text, and any specific one-word anchor addresses a record', () => {
   assert.match(rebuild, /function spacelessAnchorIn\(normalized, haystack\)/);
-  assert.match(rebuild, /sharedSpacelessBigrams\(record\?\.summary \|\| '', context\.haystack\)/);
+  assert.match(rebuild, /sharedContentBigrams\(record\?\.summary \|\| '', context\.pairs\)/);
   assert.match(rebuild, /if \(anchors\.some\(anchor => !anchor\.includes\(' '\) && \(\(anchor\.length >= 5/);
   assert.doesNotMatch(rebuild, /anchors\.length === 1 && anchors\[0\]\.length >= 5/);
 });
@@ -50,7 +51,7 @@ test('73: function words take no anchor-lookup slot unless used as names', () =>
 });
 
 test('74: an empty rebuild boundary commits only when replayed Places change there', () => {
-  assert.match(rebuild, /if \(atBoundary !== candidate && stableStringify\(atBoundary\.spatial\) !== stableStringify\(candidate\.spatial\)\) \{\s*candidate = commitMutationBoundary\(candidate, atBoundary/);
+  assert.match(rebuild, /if \(historyTimeline\?\.changesBetween\?\.\(lastCommittedBoundary, window\.messageId\)\) \{\s*candidate = commitMutationBoundary\(/);
 });
 
 test('77: sorting is the same on every device', () => {
@@ -124,6 +125,8 @@ test('93, 94, 98, 99 and 102: Forfeit redraws, runs outside the chat queue, sits
   assert.doesNotMatch(html, /wsa-capture-failures" role="status"/);
   assert.match(ui, /ui\.forfeitPending = false;\s*\}\s*\/\/ Redrawn here too[^\n]*\n\s*refresh\(\);/);
   assert.match(index, /if \(rebuildRunning\(chatKey\)\) return refuseForfeitDuringRebuild\(\);\s*return forfeitMissedCapture\(chatKey, payload\)/);
+  // Outside the queue, the row names the message as the live chat holds it, and only that listed version.
+  assert.match(index, /const lineage = chatLineage\(prefix\);[\s\S]{0,400}const sameVersion = unrecoveredCaptureFailures/);
   assert.match(index, /const messageId = typeof payload\?\.messageId === 'number' \? payload\.messageId : NaN;/);
 });
 
@@ -140,4 +143,27 @@ test('100 and 101: a relation under an override\'s own id names its place, and p
   assert.match(ui, /for \(const item of resolvedLocations\) if \(item\.overrideId && !locMap\.has\(item\.overrideId\)\) locMap\.set\(item\.overrideId, item\);/);
   assert.doesNotMatch(ui.slice(ui.indexOf('function placeParentKeys('), ui.indexOf('function isPlaceAncestor(')), /toLocaleLowerCase/);
   assert.doesNotMatch(ui.slice(ui.indexOf('function placeMentions('), ui.indexOf('export function buildWorldStateUiModel(')), /toLocaleLowerCase/);
+});
+
+test('review hardening: Korean names with particles still match; kana endings are no shared topic', async () => {
+  const state = seeded([['The army gathers in Seoul', ['서울']]]);
+  assert.ok(selectedIds(state, '서울에서 군대가 모였다').includes('The army gathers in Seoul'));
+  const { sharedContentBigrams, spacelessBigrams } = await import('../hash.js');
+  // One shared word (王都) plus common endings (されている) is one content pair, not five.
+  assert.equal(sharedContentBigrams('王都は封鎖されている', spacelessBigrams('兵が王都に入り、門は閉ざされている')), 1);
+  assert.match(rebuild, /pairs: spacelessBigrams\(recentText\)/);
+});
+
+test('review hardening: a second rebuild is refused from the click; a stale finish says so; Start guards only the start', () => {
+  assert.match(index, /return \(rebuildRequests\.get\(chatKey\) \|\| 0\) > 0 \|\| \['running', 'cancelling', 'committing'\]/);
+  assert.match(index, /if \(actionId === 'rebuild'\) \{\s*if \(rebuildRunning\(chatKey\)\) \{\s*notify\('info', 'A rebuild is already running/);
+  assert.match(index, /staleAtEnd\s*\? 'World State Alpha rebuild finished, but '/);
+  assert.match(ui, /await Promise\.race\(\[started, new Promise\(resolve => setTimeout\(resolve, REBUILD_START_GUARD_MS\)\)\]\);/);
+  assert.match(evolution, /const dueRelevant = dueIds \? relevantEvolutionEntries\.length :/);
+});
+
+test('review hardening: the model text shown in Operations never ends on half an emoji', () => {
+  const text = 'a'.repeat(15999) + '\u{1F600}';
+  const html = renderWorldStatePanel(buildWorldStateUiModel(createState('a64'), { diagnostics: [{ operationId: 'x', at: 1, label: 'capture', outcome: 'applied', responseJson: text }] }), { activeTab: 'diagnostics' });
+  assert.doesNotMatch(html, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
 });

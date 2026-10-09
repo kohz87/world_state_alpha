@@ -1,5 +1,5 @@
 import { compareText } from './common.js';
-import { SPACELESS_SCRIPT, canonicalText as normalizeText } from './hash.js';
+import { INFIX_NAME_SCRIPT, canonicalText as normalizeText } from './hash.js';
 
 function tokens(value) {
   return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];
@@ -85,9 +85,10 @@ function anchorStrength(anchor, normalizedHaystack, haystackTokens, haystackName
   if (!normalized) return 0;
 
   const anchorTokens = normalized.split(' ').filter(Boolean);
-  // Inside a run of letters only for scripts written without spaces ("王都" in "王都の"); a one-word anchor in
-  // any spaced script, accented Latin and Cyrillic included, matches whole words ("été" is not in "société").
-  const spaceless = SPACELESS_SCRIPT.test(normalized);
+  // Inside a run of letters only for scripts written without spaces or with attached particles ("王都" in
+  // "王都の", "서울" in "서울에서"); a one-word anchor in any other script, accented Latin and Cyrillic included,
+  // matches whole words ("été" is not in "société").
+  const spaceless = INFIX_NAME_SCRIPT.test(normalized);
   const exactPhrase = anchorTokens.length > 1
     ? ` ${normalizedHaystack} `.includes(` ${normalized} `)
     : RELEVANCE_STOPWORDS.has(normalized)
