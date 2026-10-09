@@ -207,7 +207,7 @@ function restoreCheckpoint(state, snapshot) {
 function unjournaledStateSince(state, lineage, maxMessageId) {
   const rows = Array.isArray(lineage) ? lineage : [];
   const candidates = (state.checkpoints || [])
-    .filter(item => Number.isInteger(item?.messageId) && item.messageId <= maxMessageId
+    .filter(item => Number.isInteger(item?.messageId) && item.messageId <= maxMessageId && hasSnapshot(item)
       && (item.messageId < 0 ? item.lineageKey === 'root' : rows[item.messageId]?.lineageKey === item.lineageKey))
     .sort((a, b) => a.messageId - b.messageId);
   if (!candidates.length) return null;
@@ -361,13 +361,19 @@ export function commitMutationBoundary(beforeState, afterState, chat, messageId,
   return freezeHistory(next);
 }
 
+// Only a checkpoint that holds a snapshot can restore: an entry without one (an old or foreign save) is
+// unusable, so recovery fails closed instead of throwing.
+function hasSnapshot(item) {
+  return Boolean(item?.snapshot && typeof item.snapshot === 'object' && !Array.isArray(item.snapshot));
+}
+
 function exactCheckpoint(state, currentLineage, targetMessageId) {
-  if (targetMessageId < 0) return state.checkpoints.find(item => item.messageId === -1) || null;
+  if (targetMessageId < 0) return state.checkpoints.find(item => item.messageId === -1 && hasSnapshot(item)) || null;
   const key = currentLineage[targetMessageId]?.lineageKey;
   if (!key) return null;
   return [...state.checkpoints]
     .reverse()
-    .find(item => item.messageId === targetMessageId && item.lineageKey === key) || null;
+    .find(item => item.messageId === targetMessageId && item.lineageKey === key && hasSnapshot(item)) || null;
 }
 
 function restoreByJournal(state, previousLineage, divergence) {

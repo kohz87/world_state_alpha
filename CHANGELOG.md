@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.9.0-alpha.61 - Data loss and wrong state (deep pass on alpha.60)
+
+### Fixed
+
+- **Missed captures**
+  - A capture, forfeit or rebuild recovery is saved at once even when the Operations log is full. It is kept with the failure it clears, so a saved copy of that failure can no longer come back.
+  - A completed rebuild clears only the missed captures in its own range. A reply added and missed while it ran stays listed.
+  - A reply whose capture was abandoned because you switched chats is listed as a missed capture. This covers a capture waiting behind other work and a swipe or edit still settling. A reply the state already holds is not listed.
+  - A reply that was not captured because its branch could not be proven is also listed.
+- **Operations log**
+  - A log save that overlaps the chat leaving memory still saves its rows.
+  - A deleted chat's log clear is retried, so a new chat that reuses its name cannot inherit its rows.
+  - A retried rename never revives a chat renamed or deleted since.
+- **Renames and recovery**
+  - Renaming a chat that still needs recovery no longer writes an empty World State file for the new name. The new name stays recovery-required until a Full chat rebuild, an import or a reset, and its Operations log follows the rename.
+  - A damaged World State file stays recovery-required each time the chat is opened, instead of turning into "could not load this chat state".
+  - A load overtaken by a rename or delete no longer undoes the newer load.
+- **Saving across sessions**
+  - A freshness check that overlaps this session's own save no longer takes that save for another device's. Before, it could cancel requests or a running rebuild, or list a saved capture as missed.
+  - After a stale save is undone, the restored revision counts as this session's own.
+  - The revision check reads exactly the file the upload replaces, and a file that belongs to another chat is never replaced.
+  - Without Web Locks (SillyTavern over plain HTTP on a LAN), a save reads its upload back. If another tab wrote in between, it reports a revision conflict instead of losing an update. This narrows that window but does not close it.
+- **Rebuild**
+  - A rebuild whose conflict recovery fails, or that throws, ends as failed instead of staying running. Before, it blocked Forfeit and new rebuilds until a reload.
+  - A failed rebuild's Resume point survives new messages being added; it is still discarded by new World State.
+- **Places**
+  - A Places index built before the base map loaded is rebuilt once the map is available. Base places are no longer missed or duplicated.
+- **State handling**
+  - A checkpoint without a snapshot, from an old or foreign save, now fails recovery closed instead of throwing.
+  - Checksums agree with JSON, so a state carrying an undefined field no longer fails its own checksum.
+  - Text matching lowercases without the device locale. Under a Turkish locale, "I" now matches the same as elsewhere.
+  - Bounding text is idempotent and never cuts an emoji in half, so excerpts cut at their limit still ground.
+
+### Architecture
+
+- No durable format change (schema 2; envelopes 1).
+- The diagnostics store reports to the host whether a recorded row clears a listed failure, judged before the trim.
+- The two Places copies of the text-bounding helper are replaced by the shared one in `common.js`.
+- Core contract C19 and the host, persistence, recovery, admission and Places sections record the rules.
+
+### Validation
+
+- New `tests/audit-alpha61.test.js` (20 tests), with host scenarios `tests/host/rename-recovery.mjs`, `tests/host/corrupt-reactivate.mjs`, `tests/host/rename-cached.mjs` and `tests/host/rename-corrupt.mjs`. Each of the first 16 tests fails on 0.9.0-alpha.60. The review-hardening tests and their two rename scenarios fail on the pre-review code.
+- `npm test` (660), `npm run validate`, `npm run measure:prompts` and `npm run package` pass on Node 22 and Node 24 (CI). Node 24 provides `navigator.locks`, so the tests of the no-Web-Locks path hide it explicitly (`tests/web-locks.mjs`).
+- Live in SillyTavern, these behave as on alpha.60: the branch, rebuild, resume, hide, forfeit, alpha.59 and alpha.57 Places scripts. They were run again after the review hardening.
+
+### Code review hardening
+
+- Renaming a recovery-required chat writes nothing only when it holds no continuity of its own. When the World State file was briefly unreachable, the cached continuity still moves to the new name instead of being dropped.
+- A chat whose World State file is damaged can be renamed without an error, and stays recovery-required.
+- A capture that fails after you switched chats, before it started, is listed as a missed capture.
+- A kept clearing row no longer takes a stored model answer away from a missed capture.
+- A damaged file recorded under another spelling of its path can still be replaced by a Full chat rebuild, import or reset.
+- The Places index remembers its base map by digest, so it never holds an evicted map in memory.
+- An Operations-log save no longer deep-copies every row.
+- The freshness check drops a redundant counter: a write that finished during the read has already changed the settings pointer.
+- Kept as is:
+  - Without Web Locks, the read-back cannot catch a concurrent writer that uploads and reads back first. The contract says this narrows the window and does not close it.
+  - The capture handler keeps a shallow copy of the chat array, which is only references, not message reads or hashing. It is the only record of the message keys if a chat switch empties the array.
+
 ## 0.9.0-alpha.60 - Forfeit a missed capture
 
 ### Added

@@ -19,6 +19,10 @@ async function withInProcessWriterLock(key, task) {
   }
 }
 
+function webLocksAvailable() {
+  return typeof globalThis.navigator?.locks?.request === 'function';
+}
+
 async function withWriterLock(key, task) {
   const lockName = 'world-state-alpha-sidecar:' + worldStateHostFileName(key);
   const locks = globalThis.navigator?.locks;
@@ -166,7 +170,9 @@ export function createSillyTavernWorldStateStorageAdapter({
     // A logical path (a chat's first write, before it has a pointer) uploads to the same deterministic
     // file another device or tab may already have written, so it is locked and revision-checked as that
     // physical file: never overwrite an existing sidecar blindly.
-    const physical = isLogicalPath(target) ? worldStateHostDeterministicPath(target) : target;
+    // The file the upload replaces is always the sanitized name under /user/files/, so the revision check
+    // reads exactly that file, whatever form the pointer path took.
+    const physical = worldStateHostDeterministicPath(target);
     return withWriterLock(physical, async () => {
       const expected = Math.max(0, Math.trunc(Number(expectedRevision) || 0));
       const decoded = decodeSidecar(body, { readOnly: true });
@@ -175,10 +181,11 @@ export function createSillyTavernWorldStateStorageAdapter({
       let current = null;
       if (currentText !== null) {
         try {
-          current = decodeSidecar(currentText, { readOnly: true });
+          // Another chat's file is never replaced, whatever its revision (a wrong pointer fails closed).
+          current = decodeSidecar(currentText, { readOnly: true, expectedChatKey: decoded.chatKey });
         } catch (error) {
           // A recovery baseline (revision 1) may replace a damaged file, only the one recorded as damaged.
-          if (!(replaceCorrupt && replaceCorrupt === physical && expected === 0 && error?.damaged === true)) {
+          if (!(replaceCorrupt && worldStateHostDeterministicPath(replaceCorrupt) === physical && expected === 0 && error?.damaged === true)) {
             error.retryable = false;
             throw error;
           }
@@ -201,6 +208,22 @@ export function createSillyTavernWorldStateStorageAdapter({
       }
 
       const uploaded = await uploadTextFile(target, body);
+      // Without Web Locks (an insecure context such as SillyTavern over plain HTTP on a LAN) another tab can
+      // pass the same revision check and upload in between: read the file back, and report a conflict
+      // instead of a silent lost update when it no longer holds this body.
+      if (!webLocksAvailable()) {
+        const landedText = await read(uploaded.path).catch(() => null);
+        let landed = null;
+        try {
+          landed = landedText === null ? null : decodeSidecar(landedText, { readOnly: true });
+        } catch {
+          landed = null;
+        }
+        // An unreadable read-back is not proof of a lost update: the upload itself succeeded.
+        if (landed && landed.checksum !== decoded.checksum) {
+          return { conflict: true, currentRevision: Math.max(0, Math.trunc(Number(landed?.revision) || 0)) };
+        }
+      }
       return {
         path: uploaded.path,
         revision: decoded.revision,

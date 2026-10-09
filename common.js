@@ -1,3 +1,5 @@
+import { withoutSplitSurrogate } from './hash.js';
+
 // Small helpers shared by the runtime modules. Each lives here once so separate copies cannot drift apart.
 
 export function clone(value) {
@@ -5,8 +7,10 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+// Idempotent: a value cut right after a space, or between the halves of an astral character, is tidied, so
+// bounding it again (each normalization does) changes nothing.
 export function boundedText(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+  return typeof value === 'string' ? withoutSplitSurrogate(value.trim().slice(0, max)).trim() : '';
 }
 
 // Distinct non-empty bounded strings, in order. `bound` bounds each item (boundedText unless a module needs

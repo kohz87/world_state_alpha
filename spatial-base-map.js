@@ -1,3 +1,4 @@
+import { boundedText } from './common.js';
 import { SPATIAL_LIMITS } from './constants.js';
 import { deterministicId, hashText, stableStringify } from './hash.js';
 import {
@@ -6,11 +7,6 @@ import {
   normalizeSpatialProfile,
   normalizeSpatialRoute,
 } from './spatial-core.js';
-
-// Idempotent: a value cut right after a space is trimmed again, so re-parsing a stored map changes nothing.
-function boundedText(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max).trim() : '';
-}
 
 function normalizeBaseCoordinate(item) {
   if (item?.coordinate && typeof item.coordinate === 'object' && !Array.isArray(item.coordinate)) {

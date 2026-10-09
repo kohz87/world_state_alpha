@@ -154,6 +154,8 @@ test('review hardening: Forfeit reaches more messages than the notice names, and
   const source = fs.readFileSync('index.js', 'utf8');
   const forfeit = source.slice(source.indexOf('async function forfeitMissedCapture('), source.indexOf('async function applyMaintenanceActionNow('));
   assert.match(forfeit, /a later Recapture or rebuild that covers this message still re-reads it/);
-  assert.match(forfeit, /scheduleOperationLogSave\(chatKey, \{ now: true \}\)/);
+  // Saved at once through the store's own report of the failure it clears (alpha.61), not a second save.
+  assert.match(forfeit, /A row that clears a listed failure is saved at once/);
+  assert.doesNotMatch(forfeit, /scheduleOperationLogSave/);
   assert.doesNotMatch(forfeit, /refreshChatStateFromServer|ensureChatStateLoaded/);
 });

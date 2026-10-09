@@ -106,7 +106,7 @@ test('4: re-adding a name at the same chat head creates a new active place', () 
 });
 
 test('5: a capture that fails before it starts is recorded as a missed capture', () => {
-  assert.match(source, /try \{\s*await captureAssistantBoundary\(chatKey, messageId, \(\) => \{ captureStarted = true; \}\);\s*\} catch \(error\) \{\s*if \(!captureStarted\) recordCaptureStartFailure\(chatKey, messageId, startFingerprint, error\);/);
+  assert.match(source, /try \{\s*outcome = await captureAssistantBoundary\(chatKey, messageId, \(\) => \{ captureStarted = true; \}\);\s*\} catch \(error\) \{\s*if \(!captureStarted\) \{[\s\S]{0,160}else recordCaptureStartFailure\(chatKey, messageId, startFingerprint, error\);/);
   const record = source.slice(source.indexOf('function recordCaptureStartFailure('), source.indexOf('async function captureAssistantBoundary('));
   assert.match(record, /label: 'capture',[\s\S]*outcome: 'not-started',/);
   assert.match(source, /markStarted\(\);\s*const result = await runCaptureOperation\(\{/);

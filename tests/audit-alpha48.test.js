@@ -242,7 +242,7 @@ test('batch 4: typing through an input method does not re-render the search box 
 
 test('batch 4: failed panel actions report an error; overlapping chat loads are serialized', () => {
   // Before: a thrown import/reset/Places action gave only "Uncaught (in promise)" in the console.
-  assert.match(source, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, payload, chatKey\)\)\s*\.catch\(error => actionFailed\(/);
+  assert.match(source, /return queueChatWork\(chatKey, \(\) => applyMaintenanceActionNow\(actionId, payload, chatKey\)\)\s*\.catch\(error => \{[\s\S]{0,600}return actionFailed\('World State maintenance \(' \+ actionId \+ '\)', error, chatKey\);/);
   assert.match(source, /return queueChatWork\(chatKey, \(\) => applySpatialActionNow\(actionId, payload, chatKey\)\)\s*\.catch\(error => actionFailed\('Places edit', error, chatKey\)\);/);
   assert.match(source, /function actionFailed\(label, error, chatKey\) \{[\s\S]{0,200}notify\('error', label \+ ' failed: '/);
   // Before: the queue's own cleanup re-raised every failed task as an unhandled rejection.
