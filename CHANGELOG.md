@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.9.0-alpha.65 - Shared helpers and bounded per-turn work (deep pass on alpha.60)
+
+### Fixed
+
+- **Time passing**
+  - A title ("Mt.", "Lt.", "Capt.") no longer ends the sentence a time skip is judged in, so "If the scouts reach Mt. Ember, two days later we march." stays a condition instead of counting as two days passed.
+- **Cleanups**
+  - Helpers that had drifted into several modules now live once: bounded text, the message role and the role of a hidden row, keyed undo, token budgets, index postings, the connection-profile lookup, the evaluation boundary, the continuity icon, the list of known chats, the rebuild finish and the exchange budget.
+  - Unused code is gone: the rebuild lore option, an unread link counter, a dead branch check, a duplicate failure list in the panel model and dead Places branches. Defaults are safe: a branch reconcile saves its restore unless told otherwise.
+  - A save conflict is recovered once, and only a retryable error is retried.
+- **Performance**
+  - Capture judges every row of a response on one sanitized exchange, and pairs each text's quotes once.
+  - The day-step walk judges each message text once instead of re-reading 40 messages every turn.
+  - The chat guard around a save compares one chained key instead of rebuilding and comparing the chat's lineage three times.
+  - A checkpoint snapshot, an export and the panel no longer normalize the state twice; panel and manual reads read it in place.
+  - Rebuild reuses its plan's lineage, copies no message deeply, copies no chat prefix or Places per boundary, and checks direct address only for developments it shows.
+  - The Places list (with its duplicate hints) is rebuilt only when places change, the relevance index scans the evidence once, the True North check reads only places that changed, and Places index no function words.
+
+### Architecture
+
+- New contract section C26 (shared helpers and bounded per-turn work). `common.js` gains `visibleRole`, `tokenBudget`, `singleLine`, `boundedInt`, `addPosting`/`deletePosting` and `keyedUndo`/`restoreKeyed`; `source-firewall.js` exports `endsSentenceAt` and `createCaptureFirewallContext`; `branch.js` exports `chatHeadKey` and `reconcileBranch` accepts a known lineage.
+- No durable format changes: schema 2, sidecar, bundle and rollback-journal envelopes 1.
+
+### Validation
+
+- `tests/audit-alpha65.test.js` (18 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+
+### Code review hardening
+
+- A lone capital before a full stop ("plan B.") ends its sentence again for time skips, so a "would" or "should" in the sentence before can no longer cancel a real skip or day step; only titles ("Mt.", "Lt.") join.
+- The day-step walk reads SillyTavern rows `mes` first (a stale `content` left by another extension is never counted), and its cache keys on a hash instead of keeping long replies in memory.
+- A chat row without `is_user` (from an import or another extension) is still treated as a reply, as before.
+- The Places list cache reads only the places (never the evidence map) and keeps a hash, not a copy.
+- A lineage passed to a branch reconcile is used only when it fits the chat; rebuild passes no lore at all; the replayed Places a rebuild shares are documented as read-only; the continuity icon lives in `constants.js`, so the panel no longer depends on the optional launcher; three stray screenshots are removed.
+
 ## 0.9.0-alpha.64 - Relevance, evolution, rebuild, injection and panel (deep pass on alpha.60)
 
 ### Fixed

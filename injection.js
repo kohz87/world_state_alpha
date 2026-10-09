@@ -1,3 +1,4 @@
+import { singleLine, tokenBudget } from './common.js';
 import { selectRelevantRecords } from './relevance.js';
 
 export const WORLD_STATE_NAMESPACE = 'world_state_alpha';
@@ -18,17 +19,7 @@ export const WORLD_STATE_PRIVATE_HEADER = [
   'Relevant current world state:',
 ].join('\n');
 
-function singleLine(value) {
-  return String(value ?? '').replace(/\s+/g, ' ').trim();
-}
-
-function normalizeBudget(value) {
-  // An unset budget (null, '') is the default, never Number(null) = 0, which would turn injection off.
-  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return WORLD_STATE_INJECTION_DEFAULTS.budgetTokens;
-  const number = Number(value);
-  if (!Number.isFinite(number)) return WORLD_STATE_INJECTION_DEFAULTS.budgetTokens;
-  return Math.max(1, Math.min(2400, Math.trunc(number)));
-}
+const normalizeBudget = value => tokenBudget(value, WORLD_STATE_INJECTION_DEFAULTS.budgetTokens);
 
 function normalizeDepth(value) {
   const number = Number(value);

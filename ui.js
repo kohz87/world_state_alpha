@@ -2,7 +2,8 @@ import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { hashText, withoutSplitSurrogate } from './hash.js';
 import { clone } from './common.js';
-import { normalizeState } from './state-core.js';
+import { CONTINUITY_ICON_SVG } from './constants.js';
+import { readableState } from './state-core.js';
 import { canonicalSpatialDirection, OPPOSITE_DIRECTION, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 
 export const WORLD_STATE_UI_NAMESPACE = 'world_state_alpha_ui';
@@ -160,7 +161,7 @@ function projectRecord(record, reasonMap, key = '') {
 }
 
 function relationRows(state, record) {
-  const normalized = normalizeState(state);
+  const normalized = readableState(state);
   const byId = new Map(normalized.records.map(item => [item.id, item]));
   const rows = [];
   const seen = new Set();
@@ -428,6 +429,39 @@ function possibleDuplicatePlaceKeys(locations, parents) {
   return flagged;
 }
 
+// The Places list projection of one Places state and base map: the effective places, their rows, the name
+// nesting and the duplicate hints (an O(n²) pass). It reads only the places and the base map, so it is kept
+// for the last base map and a hash of the places (one linear serialization, never the evidence map), and a
+// re-render that changes only the selection, search or a form reuses it. Never modify the result.
+let lastPlacesProjection = null;
+function placesProjection(spatial, baseMap) {
+  const signature = hashText(JSON.stringify(spatial?.locations || []));
+  if (lastPlacesProjection && lastPlacesProjection.baseMap === baseMap && lastPlacesProjection.signature === signature) {
+    return lastPlacesProjection.value;
+  }
+  const resolvedLocations = resolveEffectiveLocations(spatial, baseMap);
+  // Archived campaign places (including merged duplicates) are history, not
+  // current geography: Spatial injection already skips them, so the list does
+  // too. An archived override stays listed because it is the only way back to
+  // the base-map place it shadows (delete the override).
+  const effectiveLocations = resolvedLocations.filter(loc => loc.status !== 'archived' || loc.isOverridden);
+  // Keys are derived from the location id, not list position, so archiving,
+  // merging, or a rehydrated change elsewhere cannot re-point a kept selection
+  // (or an open edit form) at a different place.
+  const spatialKeyOf = loc => 'sloc-' + hashText(loc.id).slice(0, 12);
+  const locBySpatialKey = new Map(effectiveLocations.map(loc => [spatialKeyOf(loc), loc]));
+  const allSpatialProjected = effectiveLocations.map(loc => projectSpatialLocation(loc, spatialKeyOf(loc)));
+  const placeParents = placeParentKeys(allSpatialProjected);
+  const activeSpatialProjected = allSpatialProjected.filter(loc => !loc.archived);
+  const duplicatePool = activeSpatialProjected.length <= PLACE_DUPLICATE_POOL
+    ? activeSpatialProjected
+    : activeSpatialProjected.filter(loc => loc.campaignId).slice(0, PLACE_DUPLICATE_POOL);
+  const duplicateKeys = possibleDuplicatePlaceKeys(duplicatePool, placeParents);
+  const value = { resolvedLocations, effectiveLocations, locBySpatialKey, allSpatialProjected, placeParents, duplicateKeys };
+  lastPlacesProjection = { signature, baseMap, value };
+  return value;
+}
+
 function placeTreeOrder(locations, parents, duplicateKeys) {
   const visible = new Map(locations.map(loc => [loc.key, loc]));
   const children = new Map();
@@ -508,7 +542,8 @@ export function buildWorldStateUiModel(state, {
   // re-render never swaps another relation under typed relation fields. null shows the first relation.
   editRelationId = null,
 } = {}) {
-  const normalized = normalizeState(state);
+  // Read in place when already normalized (the panel never modifies it).
+  const normalized = readableState(state);
   const reasons = latestReasonByMessage(normalized);
   const uiKeyByRecordId = new Map(normalized.records.map((record, index) => [record.id, 'row-' + index]));
   const recordIdByUiKey = new Map([...uiKeyByRecordId.entries()].map(([recordId, uiKey]) => [uiKey, recordId]));
@@ -545,13 +580,15 @@ export function buildWorldStateUiModel(state, {
   const detailRecordId = key ? recordIdByUiKey.get(key) : '';
   const detail = detailRecordId ? projectDetail(normalized, detailRecordId, reasons, key) : null;
 
-  // Spatial Projection
-  const resolvedLocations = resolveEffectiveLocations(normalized.spatial, baseMap);
-  // Archived campaign places (including merged duplicates) are history, not
-  // current geography: Spatial injection already skips them, so the list does
-  // too. An archived override stays listed because it is the only way back to
-  // the base-map place it shadows (delete the override).
-  const effectiveLocations = resolvedLocations.filter(loc => loc.status !== 'archived' || loc.isOverridden);
+  // Spatial Projection (reused while the places and the base map are unchanged)
+  const {
+    resolvedLocations,
+    effectiveLocations,
+    locBySpatialKey,
+    allSpatialProjected,
+    placeParents,
+    duplicateKeys,
+  } = placesProjection(normalized.spatial, baseMap);
   const hasBaseMap = Boolean(baseMap || normalized.spatial.baseMapRef);
   const activeSpatialProfile = resolveSpatialProfile(normalized.spatial, baseMap);
   const displaySpatialProfile = activeSpatialProfile || {
@@ -568,20 +605,7 @@ export function buildWorldStateUiModel(state, {
       && Number.isFinite(location.coordinate.x)
       && Number.isFinite(location.coordinate.y)
   ).length;
-  // Keys are derived from the location id, not list position, so archiving,
-  // merging, or a rehydrated change elsewhere cannot re-point a kept selection
-  // (or an open edit form) at a different place.
-  const spatialKeyOf = loc => 'sloc-' + hashText(loc.id).slice(0, 12);
-  const locBySpatialKey = new Map(effectiveLocations.map(loc => [spatialKeyOf(loc), loc]));
-
   const spatialNeedle = clean(spatialSearch, 120).toLowerCase();
-  const allSpatialProjected = effectiveLocations.map(loc => projectSpatialLocation(loc, spatialKeyOf(loc)));
-  const placeParents = placeParentKeys(allSpatialProjected);
-  const activeSpatialProjected = allSpatialProjected.filter(loc => !loc.archived);
-  const duplicatePool = activeSpatialProjected.length <= PLACE_DUPLICATE_POOL
-    ? activeSpatialProjected
-    : activeSpatialProjected.filter(loc => loc.campaignId).slice(0, PLACE_DUPLICATE_POOL);
-  const duplicateKeys = possibleDuplicatePlaceKeys(duplicatePool, placeParents);
 
   const searchedSpatial = spatialNeedle
     ? allSpatialProjected.filter(l => l.name.toLowerCase().includes(spatialNeedle)
@@ -717,9 +741,8 @@ export function buildWorldStateUiModel(state, {
           const bootstrapRequired = Boolean(runtimeInfo?.bootstrapRequired);
           return {
             count: ids.length,
-            messageIds: ids.slice(0, 12),
-            // Forfeit is offered per message, for more of them than the notice names.
-            forfeitIds: ids.slice(0, FORFEIT_BUTTON_LIMIT),
+            // The earliest listed messages: the notice names the first twelve, Forfeit offers all of these.
+            messageIds: ids.slice(0, FORFEIT_BUTTON_LIMIT),
             fromMessageId: ids[0],
             bootstrapRequired,
             // Starting at message 0 is a clean-root rebuild; later starts need their exact prefix still journaled.
@@ -1538,13 +1561,16 @@ function numberInput(value) {
 }
 
 const FORFEIT_BUTTON_LIMIT = 40;
+// Messages the notice names in its sentence.
+const FAILURES_NAMED = 12;
 // Forfeit buttons shown before "Show all": a phone screen is not filled by up to 40 of them.
 const FORFEIT_BUTTONS_SHOWN = 6;
 
 function captureFailuresHtml(failures, { running = false, inSheet = false, forfeitExpanded = false } = {}) {
   if (!failures) return '';
   const count = failures.count;
-  const listed = failures.messageIds.join(', ') + (count > failures.messageIds.length ? ', …' : '');
+  const named = failures.messageIds.slice(0, FAILURES_NAMED);
+  const listed = named.join(', ') + (count > named.length ? ', …' : '');
   const lead = count + ' live capture' + (count === 1 ? '' : 's') + ' failed and ' + (count === 1 ? 'was' : 'were') +
     ' never recovered (message' + (count === 1 ? ' ' : 's ') + listed + ').';
   const action = running
@@ -1562,7 +1588,7 @@ function captureFailuresHtml(failures, { running = false, inSheet = false, forfe
       ? 'This chat has no durable World State baseline yet, so recovering it needs a Full chat rebuild.'
       : 'History before message ' + failures.fromMessageId + ' is no longer journaled, so recovering it needs a Full chat rebuild.';
   // Forfeit gives a listed capture up without a rebuild (not offered inside the rebuild sheet or while one runs).
-  const forfeitIds = Array.isArray(failures.forfeitIds) ? failures.forfeitIds : failures.messageIds;
+  const forfeitIds = failures.messageIds;
   const unlisted = count - forfeitIds.length;
   const shownIds = forfeitExpanded ? forfeitIds : forfeitIds.slice(0, FORFEIT_BUTTONS_SHOWN);
   const more = forfeitIds.length - shownIds.length;
@@ -1737,12 +1763,7 @@ function bootstrapRecoveryBannerHtml(model) {
 }
 
 function continuityIconHtml() {
-  return '<span class="wsa-brand-icon" aria-hidden="true">' +
-    '<svg viewBox="0 0 48 48" focusable="false"><circle cx="24" cy="24" r="15"></circle>' +
-    '<path d="M12 19l8-7 11 3 6 9-5 10-12 2-9-8z"></path>' +
-    '<circle cx="20" cy="12" r="2.5"></circle><circle cx="31" cy="15" r="2.5"></circle>' +
-    '<circle cx="37" cy="24" r="2.5"></circle><circle cx="32" cy="34" r="2.5"></circle>' +
-    '<circle cx="20" cy="36" r="2.5"></circle><circle cx="11" cy="28" r="2.5"></circle></svg></span>';
+  return '<span class="wsa-brand-icon" aria-hidden="true">' + CONTINUITY_ICON_SVG + '</span>';
 }
 
 function navTab(tab, label, active, count = null) {

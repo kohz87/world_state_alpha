@@ -4,7 +4,7 @@ import { detectElapsedHintFromExchange, normalizeElapsedHint } from './elapsed.j
 import { EVOLUTION_WIRE_LIMITS, EvolutionWireError, parseEvolutionJson, validateEvolutionEnvelope } from './evolution-wire.js';
 import { buildWorldStateInjection } from './injection.js';
 import { dispatchWorldStateRequest } from './provider-routing.js';
-import { selectBackgroundDevelopments, updateRelevanceIndex } from './relevance.js';
+import { evaluationBoundary, selectBackgroundDevelopments, updateRelevanceIndex } from './relevance.js';
 import { captureExchangeIndex, evidenceClaimGrounded } from './source-firewall.js';
 import { clipMiddle } from './common.js';
 import { reduceMutations } from './state-core.js';
@@ -38,13 +38,6 @@ export const EVOLUTION_SYSTEM_PROMPT = [
 
 function recordFromEntry(entry) {
   return entry?.record || entry || null;
-}
-
-function lastEvaluationBoundary(record) {
-  if (Number.isInteger(record?.lastEvaluatedMessage)) return record.lastEvaluatedMessage;
-  if (Number.isInteger(record?.lastChangedMessage)) return record.lastChangedMessage;
-  if (Number.isInteger(record?.createdAtMessage)) return record.createdAtMessage;
-  return -1;
 }
 
 function normalizeAffectingEvidence(rawItems, targetIds, exchange) {
@@ -124,7 +117,7 @@ export function planLazyEvolution(state, {
 
   const targets = [];
   for (const record of selectedDevelopments) {
-    const lastEvaluated = lastEvaluationBoundary(record);
+    const lastEvaluated = evaluationBoundary(record);
     const directEvidence = (evidenceByRecord.get(record.id) || [])
       .filter(item => item.sourceMessageId > lastEvaluated);
     const elapsedBoundary = Number.isInteger(elapsed?.sourceMessageId) ? elapsed.sourceMessageId : sourceMessageId;

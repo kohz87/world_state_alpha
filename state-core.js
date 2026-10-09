@@ -8,7 +8,7 @@ import {
   ROLLBACK_JOURNAL_VERSION,
   SCHEMA_VERSION,
 } from './constants.js';
-import { boundedText, clone, uniqueStrings } from './common.js';
+import { boundedText, clone, keyedUndo, restoreKeyed, uniqueStrings } from './common.js';
 import { deterministicId, stableStringify } from './hash.js';
 import {
   applySpatialUndoPatch,
@@ -278,30 +278,6 @@ function domainSnapshot(state) {
   };
 }
 
-function keyedBy(items) {
-  return new Map(items.map(item => [item.id, item]));
-}
-
-// A removed entry also records where it stood (`at`), so undoing the removal puts it back in place: list
-// order is part of the state a checkpoint is compared with.
-function keyedUndo(beforeItems, afterItems) {
-  const before = keyedBy(beforeItems);
-  const after = keyedBy(afterItems);
-  const positions = new Map(beforeItems.map((item, index) => [item.id, index]));
-  const ids = new Set([...before.keys(), ...after.keys()]);
-  const out = [];
-  for (const id of ids) {
-    const left = before.get(id) ?? null;
-    const right = after.get(id) ?? null;
-    if (left && !right) {
-      out.push({ id, before: clone(left), at: positions.get(id) });
-      continue;
-    }
-    if (stableStringify(left) !== stableStringify(right)) out.push({ id, before: left ? clone(left) : null });
-  }
-  return out;
-}
-
 export function buildUndoPatch(beforeState, afterState) {
   const before = domainSnapshot(beforeState);
   const after = domainSnapshot(afterState);
@@ -319,22 +295,6 @@ export function buildUndoPatch(beforeState, afterState) {
     || before.lastCaptureMessage !== after.lastCaptureMessage
     || Boolean(spatialUndo);
   return changed ? patch : null;
-}
-
-function restoreKeyed(items, changes) {
-  const map = keyedBy(items);
-  const reinserted = [];
-  for (const change of changes || []) {
-    if (change.before === null) map.delete(change.id);
-    else if (!map.has(change.id) && Number.isInteger(change.at)) reinserted.push(change);
-    else map.set(change.id, clone(change.before));
-  }
-  const out = [...map.values()];
-  // Ascending, so each lands where it stood before the removal (older patches without `at` append).
-  for (const change of reinserted.sort((left, right) => left.at - right.at)) {
-    out.splice(Math.min(change.at, out.length), 0, clone(change.before));
-  }
-  return out;
 }
 
 export function applyUndoPatch(inputState, patch) {
@@ -408,10 +368,9 @@ function addEvidence(state, record, mutation, context, counter) {
   record.evidenceIds = boundedEvidenceRefs([...record.evidenceIds, ...added]);
 }
 
-function addRelatedLinks(state, record, mutation, context, counter, appendedLinks = null) {
+function addRelatedLinks(state, record, mutation, context, appendedLinks = null) {
   for (const relatedId of uniqueStrings(mutation.relatedRecordIds, LIMITS.linksPerRecord, 120)) {
     if (relatedId === record.id || !state.records.some(item => item.id === relatedId)) continue;
-    counter.value += 1;
     const id = linkIdFor(state, relatedId, record.id, 'related', context);
     if (!state.links.some(link => link.id === id)) {
       const link = normalizeLink({
@@ -460,7 +419,6 @@ export function reduceMutations(inputState, batch) {
   const upsertedRecords = [];
   const appendedLinks = [];
   const evidenceCounter = { value: 0 };
-  const linkCounter = { value: 0 };
   const endedInBatch = new Set();
 
   if (proposals.some(item => item?.action && item.action !== 'noop')
@@ -515,7 +473,7 @@ export function reduceMutations(inputState, batch) {
       });
       state.records.push(record);
       addEvidence(state, record, mutation, context, evidenceCounter);
-      addRelatedLinks(state, record, mutation, context, linkCounter, appendedLinks);
+      addRelatedLinks(state, record, mutation, context, appendedLinks);
       applied.push({ action, recordId: id });
       upsertedRecords.push(clone(record));
       continue;
@@ -573,7 +531,7 @@ export function reduceMutations(inputState, batch) {
     }
 
     addEvidence(state, record, mutation, context, evidenceCounter);
-    addRelatedLinks(state, record, mutation, context, linkCounter, appendedLinks);
+    addRelatedLinks(state, record, mutation, context, appendedLinks);
     record.lastEvaluatedMessage = context.messageId;
     const nextDomain = stableStringify({
       summary: record.summary,

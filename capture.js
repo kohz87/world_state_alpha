@@ -6,7 +6,7 @@ import { dispatchWorldStateRequest } from './provider-routing.js';
 import { sanitizeAssistantNarration } from './narrative-sanitizer.js';
 import { processSpatialCapture } from './spatial-capture.js';
 import { SPATIAL_WIRE_LIMITS } from './spatial-wire.js';
-import { applyCaptureSourceFirewall } from './source-firewall.js';
+import { applyCaptureSourceFirewall, createCaptureFirewallContext } from './source-firewall.js';
 import { clone, clipMiddle, hostMessageText, messageRole as roleOf, messageText } from './common.js';
 import { cloneState, reduceMutations } from './state-core.js';
 
@@ -217,16 +217,23 @@ export function assistantBoundaryExchange(chat = [], endMessageId, knownLineage 
 
 // The relevance view of an exchange, bounded exactly like the capture exchange: newest message first within
 // the exchange budget, each message clipped to keep its start and its end (the newest text).
-export function boundedExchangeText(contents = []) {
-  const rows = (Array.isArray(contents) ? contents : []).map(value => String(value ?? '').trim()).filter(Boolean);
+// The newest texts within the exchange budget, each cut to one message's share or to what the budget leaves,
+// with `separator` characters counted between them. The result is aligned with the last texts. Shared by the
+// capture exchange and the relevance view, so both keep the same newest end.
+function newestWithinBudget(texts, separator = 0) {
   let remaining = CAPTURE_LIMITS.exchangeChars;
   const out = [];
-  for (let index = rows.length - 1; index >= 0 && remaining > 0; index -= 1) {
-    const text = clipMiddle(rows[index], Math.min(CAPTURE_LIMITS.perMessageChars, remaining));
-    remaining -= text.length + 1;
+  for (let index = texts.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const text = clipMiddle(texts[index], Math.min(CAPTURE_LIMITS.perMessageChars, remaining));
+    remaining -= text.length + separator;
     out.unshift(text);
   }
-  return out.join('\n');
+  return out;
+}
+
+export function boundedExchangeText(contents = []) {
+  const rows = (Array.isArray(contents) ? contents : []).map(value => String(value ?? '').trim()).filter(Boolean);
+  return newestWithinBudget(rows, 1).join('\n');
 }
 
 export function normalizeCaptureExchange(exchange = []) {
@@ -245,16 +252,9 @@ export function normalizeCaptureExchange(exchange = []) {
       ),
     }));
 
-  let remaining = CAPTURE_LIMITS.exchangeChars;
-  const out = [];
-  for (let i = candidates.length - 1; i >= 0; i -= 1) {
-    if (remaining <= 0) break;
-    const message = candidates[i];
-    const content = clipMiddle(message.content, remaining);
-    remaining -= content.length;
-    out.unshift({ ...message, content });
-  }
-  return out;
+  const contents = newestWithinBudget(candidates.map(message => message.content));
+  const offset = candidates.length - contents.length;
+  return contents.map((content, index) => ({ ...candidates[offset + index], content }));
 }
 
 export function captureDue({ exchange = [], lastCaptureMessage = null, sourceMessageId = null } = {}) {
@@ -407,6 +407,8 @@ export function processCaptureResponse({
     );
   }
   const boundedRecords = boundedVisibleRecords(visibleRecords);
+  // One sanitized exchange and record lookup for every row of this response.
+  const firewallContext = createCaptureFirewallContext({ exchange, visibleRecords: boundedRecords, state });
   // Rows past the cap are rejected one by one; the response's other rows still count.
   const rejected = (wire.capped || []).map(item => rejectedEntry('wire-limit', item.reason, { index: item.index }));
   const accepted = [];
@@ -416,7 +418,7 @@ export function processCaptureResponse({
   // create still meets it in the duplicate gate.
   const endingIds = new Set(wire.mutations
     .filter(item => (['resolve', 'supersede'].includes(item.action) || ['resolved', 'superseded'].includes(item.status))
-      && applyCaptureSourceFirewall(item, { exchange, visibleRecords: boundedRecords, lifecycleContextRecordIds, state }).ok)
+      && applyCaptureSourceFirewall(item, { lifecycleContextRecordIds, context: firewallContext }).ok)
     .map(item => item.recordId)
     .filter(Boolean));
   const consolidationRecords = endingIds.size ? boundedRecords.filter(record => !endingIds.has(record?.id)) : boundedRecords;
@@ -424,12 +426,7 @@ export function processCaptureResponse({
   for (let index = 0; index < wire.mutations.length; index += 1) {
     const proposal = wire.mutations[index];
     if (proposal.action === 'noop') continue;
-    const firewalled = applyCaptureSourceFirewall(proposal, {
-      exchange,
-      visibleRecords: boundedRecords,
-      lifecycleContextRecordIds,
-      state,
-    });
+    const firewalled = applyCaptureSourceFirewall(proposal, { lifecycleContextRecordIds, context: firewallContext });
     if (!firewalled.ok) {
       rejected.push(rejectedEntry('source-firewall', firewalled.reason, { index }));
       continue;
@@ -445,12 +442,7 @@ export function processCaptureResponse({
 
     let admittedMutation = consolidated.mutation;
     if (firewalled.mutation.action === 'create' && admittedMutation.action !== 'create') {
-      const rebound = applyCaptureSourceFirewall(admittedMutation, {
-        exchange,
-        visibleRecords: boundedRecords,
-        lifecycleContextRecordIds,
-        state,
-      });
+      const rebound = applyCaptureSourceFirewall(admittedMutation, { lifecycleContextRecordIds, context: firewallContext });
       if (!rebound.ok) {
         rejected.push(rejectedEntry('source-firewall', rebound.reason, {
           index,

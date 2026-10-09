@@ -361,6 +361,6 @@ test('review hardening: lineage-only reconciles compare lineage fields, the repl
   const changed = index.slice(index.indexOf('function stateChanged('), index.indexOf('function pointerFor('));
   assert.match(changed, /return !sameLineage\(left\?\.lineage, right\?\.lineage\);/);
   assert.match(index, /assistantBoundaryMemo = \{ chatKey, length: chat\.length, events, at: Date\.now\(\), count \};/);
-  assert.match(index, /import \{ clone, hostMessageText as messageText \} from '\.\/common\.js';/);
+  assert.match(index, /import \{ clone, hostMessageText as messageText(?:, [^}]*)? \} from '\.\/common\.js';/);
   assert.doesNotMatch(fs.readFileSync('source-firewall.js', 'utf8'), /Object\.freeze\(new Set/);
 });

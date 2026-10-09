@@ -1040,7 +1040,7 @@ test('missed live captures show a Recapture button only when the partial rebuild
   const state = createState('chat:test:missed');
   const runtimeInfo = { chatMessages: 60, earliestPartialStart: 1, captureFailures: [21, 33] };
   const model = buildWorldStateUiModel(state, { runtimeInfo });
-  assert.deepEqual(model.maintenance.rebuild.captureFailures, { count: 2, messageIds: [21, 33], forfeitIds: [21, 33], fromMessageId: 21, bootstrapRequired: false, recoverable: true });
+  assert.deepEqual(model.maintenance.rebuild.captureFailures, { count: 2, messageIds: [21, 33], fromMessageId: 21, bootstrapRequired: false, recoverable: true });
 
   const world = renderWorldStatePanel(model, {});
   assert.match(world, /2 live captures failed and were never recovered \(messages 21, 33\)/);

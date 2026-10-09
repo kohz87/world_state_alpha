@@ -48,9 +48,7 @@ function bytesToBase64(bytes) {
   const parts = [];
   for (let offset = 0; offset < input.length; offset += chunkSize) {
     const chunk = input.subarray(offset, Math.min(offset + chunkSize, input.length));
-    let part = '';
-    for (let index = 0; index < chunk.length; index += 1) part += String.fromCharCode(chunk[index]);
-    parts.push(part);
+    parts.push(String.fromCharCode.apply(null, chunk));
   }
   return globalThis.btoa(parts.join(''));
 }

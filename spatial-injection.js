@@ -1,4 +1,5 @@
 import { selectRelevantLocations } from './spatial-relevance.js';
+import { singleLine, tokenBudget } from './common.js';
 import { estimateInjectionTokens, fitLine } from './injection.js';
 import { SPATIAL_LIMITS } from './constants.js';
 import { resolveSpatialProfile } from './spatial-core.js';
@@ -9,17 +10,7 @@ export const WORLD_STATE_SPATIAL_HEADER = [
   'Established places, known coordinates, and travel routes:',
 ].join('\n');
 
-function singleLine(value) {
-  return String(value ?? '').replace(/\s+/g, ' ').trim();
-}
-
-function normalizeBudget(value) {
-  // An unset budget (null, '') is the default, never 1.
-  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return SPATIAL_LIMITS.promptBudgetTokens;
-  const number = Number(value);
-  if (!Number.isFinite(number)) return SPATIAL_LIMITS.promptBudgetTokens;
-  return Math.max(1, Math.min(2400, Math.trunc(number)));
-}
+const normalizeBudget = value => tokenBudget(value, SPATIAL_LIMITS.promptBudgetTokens);
 
 function locationLine(loc) {
   const name = singleLine(loc.name);
@@ -102,7 +93,8 @@ export function renderSpatialInjection(selectedLocations = [], relations = [], r
 
   // Add relations if space permits
   for (const rel of Array.isArray(relations) ? relations : []) {
-    if (!rel || (!locMap.has(rel.fromId) && !locMap.has(rel.toId))) continue;
+    // relationLine itself requires both ends to be shown places.
+    if (!rel) continue;
     const line = fitLine(relationLine(rel, locMap), text, budget);
     if (line) text += `\n${line}`;
   }

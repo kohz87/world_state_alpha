@@ -51,7 +51,7 @@ for (const required of [
   "disabledSpatialTimeline(original, chat, { lineage: plan.lineage })",
   "'WORLD_STATE_REBUILD_SPATIAL_HISTORY_UNVERIFIED'",
   "'WORLD_STATE_REBUILD_RANGE_BASE_UNAVAILABLE'",
-  "reconcileBranch(original, prefix)",
+  "reconcileBranch(original, prefix, { lineage:",
   "startMessageId",
   "onProgress",
 ]) {

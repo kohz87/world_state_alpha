@@ -5,7 +5,7 @@ import { RELEVANCE_STOPWORDS, extractContextTerms, functionWordNames, normalizeA
 import { SUPPORT_STOPWORDS, significantTokens } from './source-firewall.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
 import { activeCampaignPlaceCount, applySpatialUndoPatch, compactSpatialEvidence, createSpatialState, normalizeSpatialState, placeNameKey } from './spatial-core.js';
-import { clone, compareText, hostMessageText, messageRole as roleOf } from './common.js';
+import { boundedInt, clone, compareText, hostMessageText, messageRole as roleOf } from './common.js';
 import { canonicalDomain, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
@@ -24,8 +24,9 @@ function rebuildRoleOf(message, includeHiddenMessages) {
   return roleOf(message);
 }
 
+// A shallow copy: the exchange row only reads the message's top-level fields and never edits nested ones.
 function virtualizeRebuildMessage(message, role) {
-  const copy = clone(message);
+  const copy = { ...message };
   if (role === 'user') {
     copy.role = 'user';
     copy.is_user = true;
@@ -38,11 +39,6 @@ function virtualizeRebuildMessage(message, role) {
   return copy;
 }
 
-function boundedInt(value, fallback, min, max) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(number)));
-}
 
 function exchangeText(exchange) {
   return normalizeCaptureExchange(exchange)
@@ -97,7 +93,7 @@ export function planChronologicalRebuild(chat = [], {
       // A row that stays out of the conversation (genuine system rows, or hidden rows when hidden messages
       // are excluded) is marked as system so capture never reads a hidden user turn as current evidence.
       const virtual = role === 'system'
-        ? { ...clone(message), role: 'system', is_user: false, is_system: true }
+        ? { ...message, role: 'system', is_user: false, is_system: true }
         : virtualizeRebuildMessage(message, role);
       if (message?.is_system === true && role !== 'system') hiddenMessagesIncluded += 1;
       return {
@@ -204,10 +200,6 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
     const lastChanged = Number.isInteger(record?.lastChangedMessage) ? record.lastChangedMessage : -1;
     const overlap = exchangeOverlap(record, context);
     const overlapsExchange = overlap.relevant;
-    const directlyAddressed = record?.kind === 'development' && record?.status === 'active'
-      ? rebuildDirectlyAddresses(record, context)
-      : false;
-
     if (record?.kind === 'development' && record?.status === 'active') {
       const recentlyChanged = Number.isInteger(boundaryMessageId)
         && lastChanged >= 0
@@ -217,6 +209,8 @@ function rebuildLifecycleAndHistoryCandidates(state, recentText, boundaryMessage
       // A recently changed development stays visible (an ending may name it by a synonym), after those the
       // exchange touches.
       if (overlapsExchange || recentlyChanged) {
+        // Judged only for the developments shown, not every active one.
+        const directlyAddressed = rebuildDirectlyAddresses(record, context);
         lifecycle.push({ record, overlapsExchange, touched: overlap.touched, directlyAddressed, lastChanged });
       }
       continue;
@@ -320,6 +314,8 @@ function semanticSnapshot(state) {
   };
 }
 
+// A validation and test helper (the runtime never calls it): whether two states hold the same current world,
+// ignoring ids of evidence, timestamps and history. Kept for scripts/validate-phase5.mjs and the rebuild tests.
 export function compareWorldStateSemantics(left, right) {
   const leftSnapshot = semanticSnapshot(left);
   const rightSnapshot = semanticSnapshot(right);
@@ -364,7 +360,7 @@ function disabledSpatialTimeline(original, chat, { operatorOnly = false, lineage
       hasOperator: spatialHasOperatorContent(original.spatial),
       unprovableBelow: heldBeforeFloor ? floor : -1,
       unverified: heldBeforeFloor && firstStoryChange(original.lineage, chat, lineage) <= floor,
-      at: () => clone(original.spatial),
+      at: () => original.spatial,
       changesAfter: () => false,
       changesBetween: () => false,
     };
@@ -395,7 +391,9 @@ function disabledSpatialTimeline(original, chat, { operatorOnly = false, lineage
     at(messageId, last = false) {
       let current = base;
       for (const step of steps) if (last || step.messageId <= messageId) current = step.spatial;
-      return clone(current);
+      // Read-only: every caller copies it (the commit normalizes its state, the overlay clones what it keeps),
+      // so no copy is made per boundary.
+      return current;
     },
     // Whether a replayed change was made after `messageId` (after every boundary when it is null).
     changesAfter: messageId => steps.some(step => messageId === null || step.messageId > messageId),
@@ -485,7 +483,6 @@ export async function runManualRebuild({
   isCurrent = undefined,
   dispatcher = undefined,
   diagnostics = undefined,
-  loreResolver = undefined,
   onProgress = undefined,
   maxBoundaries = REBUILD_LIMITS.maxBoundaries,
   startMessageId = 0,
@@ -545,7 +542,9 @@ export async function runManualRebuild({
     : [];
   const lastWindowMessageId = plan.windows.length ? plan.windows[plan.windows.length - 1].messageId : null;
   // The candidate's Spatial after boundary `messageId`: replayed as it was when extraction is off, or the
-  // model's places with the operator's own as they stood there when it is on.
+  // model's places with the operator's own as they stood there when it is on. The replayed Places are the
+  // timeline's own objects (shared with `original`, not copied per boundary): the result is only ever passed
+  // to commitMutationBoundary, which normalizes (copies) it. Never modify it in place.
   const spatialAtBoundary = (state, messageId, last = false) => {
     if (spatialTimeline) return { ...state, spatial: spatialTimeline.at(messageId, last) };
     if (operatorTimeline) return { ...state, spatial: overlayOperatorSpatial(state.spatial, operatorTimeline.at(messageId, last)) };
@@ -605,7 +604,7 @@ export async function runManualRebuild({
         errorMessage: 'Partial rebuild requires exact canonical history before the selected start message. Stored lineage does not match the live prefix; reconcile the branch or use Full chat.',
       };
     }
-    const restored = reconcileBranch(original, prefix);
+    const restored = reconcileBranch(original, prefix, { lineage: currentLineage.slice(0, plan.metrics.startMessageId) });
     if (restored.failClosed || !restored.exactRestored) {
       return {
         outcome: 'failure',
@@ -710,8 +709,9 @@ export async function runManualRebuild({
     if (!captureDue({ exchange: window.exchange, sourceMessageId: window.messageId })) {
       // Committed only when replayed Places change there: a no-op commit would add a checkpoint and evict a
       // real one.
+      // The plan's lineage stands for the chat (no prefix copy per boundary).
       if (historyTimeline?.changesBetween?.(lastCommittedBoundary, window.messageId)) {
-        candidate = commitMutationBoundary(candidate, spatialAtBoundary(candidate, window.messageId), chat.slice(0, window.messageId + 1), window.messageId, 'rebuild', { lineage: plan.lineage.slice(0, window.messageId + 1) });
+        candidate = commitMutationBoundary(candidate, spatialAtBoundary(candidate, window.messageId), null, window.messageId, 'rebuild', { lineage: plan.lineage.slice(0, window.messageId + 1) });
       }
       receipts.push({ messageId: window.messageId, outcome: 'empty-boundary', providerCalls: 0, applied: 0, rejected: 0, aliasRepairs: 0, completenessHints: 0, rejections: [] });
       processedBoundaries += 1;
@@ -719,31 +719,8 @@ export async function runManualRebuild({
       continue;
     }
 
-    let loreText = '';
-    if (typeof loreResolver === 'function') {
-      try {
-        loreText = String(await loreResolver({
-          messageId: window.messageId,
-          exchange: clone(window.exchange),
-          state: clone(candidate),
-        }) || '');
-      } catch (error) {
-        return {
-          outcome: 'failure',
-          state: clone(original),
-          providerCalls,
-          processedBoundaries,
-          plan: plan.metrics,
-          snapshotToken,
-          failedBoundary: window.messageId,
-          receipts,
-          errorCode: error?.code || 'WORLD_STATE_REBUILD_LORE_FAILURE',
-          errorMessage: String(error?.message || error),
-          resume: resumePoint(window.messageId, candidate),
-        };
-      }
-    }
-
+    // Rebuild reads no lore: a boundary is judged on its own exchange (lore is never evidence), so neither the
+    // Places selection nor the capture request is given any.
     const visibleSelection = visibleForRebuild(candidate, window.exchange, window.messageId);
     const visibleRecords = visibleSelection.records;
     const lifecycleContextRecordIds = visibleSelection.lifecycleContextRecordIds;
@@ -752,7 +729,6 @@ export async function runManualRebuild({
       const spatialRel = selectRelevantLocations(candidate.spatial, {
         baseMap,
         recentText: exchangeText(window.exchange),
-        loreText,
         maxLocations: 6,
       });
       visibleLocations = spatialRel.selected.map(item => item.location);
@@ -764,7 +740,6 @@ export async function runManualRebuild({
       exchange: window.exchange,
       visibleRecords,
       lifecycleContextRecordIds,
-      loreText,
       chatKey: owner,
       sourceMessageId: window.messageId,
       sourceLineageKey: window.lineageKey,
@@ -826,17 +801,16 @@ export async function runManualRebuild({
       };
     }
 
-    {
-      candidate = commitMutationBoundary(
-        beforeStep,
-        spatialAtBoundary(result.state, window.messageId),
-        chat.slice(0, window.messageId + 1),
-        window.messageId,
-        'rebuild',
-        // The plan already holds the chat's lineage; re-hashing the prefix at every step was quadratic.
-        { lineage: plan.lineage.slice(0, window.messageId + 1) },
-      );
-    }
+    candidate = commitMutationBoundary(
+      beforeStep,
+      spatialAtBoundary(result.state, window.messageId),
+      // The plan already holds the chat's lineage, which stands for the chat: re-hashing (or copying) the
+      // prefix at every step was quadratic.
+      null,
+      window.messageId,
+      'rebuild',
+      { lineage: plan.lineage.slice(0, window.messageId + 1) },
+    );
     processedBoundaries += 1;
     await reportProgress(window.messageId, {
       boundaryApplied,

@@ -1,7 +1,8 @@
-import { compareText } from './common.js';
+import { addPosting, boundedInt, compareText, deletePosting } from './common.js';
 import { INFIX_NAME_SCRIPT, canonicalText as normalizeText } from './hash.js';
 
-function tokens(value) {
+// Letter-and-digit words of a text, folded (shared with Places relevance).
+export function tokens(value) {
   return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];
 }
 
@@ -51,12 +52,6 @@ export function functionWordNames(value) {
     if (next && !RELEVANCE_STOPWORDS.has(next) && !question) out.add(word);
   }
   return out;
-}
-
-function boundedInt(value, fallback, min, max) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(number)));
 }
 
 // The right side is the context's token set, tokenised once per context rather than once per record.
@@ -247,18 +242,6 @@ function rankedCompare(left, right) {
   return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
 }
 
-function addPosting(map, key, recordId) {
-  if (!key) return;
-  if (!map.has(key)) map.set(key, new Set());
-  map.get(key).add(recordId);
-}
-
-function deletePosting(map, key, recordId) {
-  const posting = map.get(key);
-  if (!posting) return;
-  posting.delete(recordId);
-  if (!posting.size) map.delete(key);
-}
 
 // newestFirst walks from the end, so a bounded query covers the newest mention first.
 export function nonAsciiBigrams(value, max = 64, { newestFirst = false } = {}) {
@@ -413,6 +396,8 @@ export function latestElapsedEvolutionBoundary(state) {
 
 export function buildRelevanceIndex(state) {
   const records = activeRecords(state);
+  // One scan of the evidence map serves both boundaries below.
+  const elapsedBoundary = latestElapsedEvolutionBoundary(state);
   const index = {
     byId: new Map(),
     anchorPhrases: new Map(),
@@ -426,11 +411,11 @@ export function buildRelevanceIndex(state) {
     backgroundDevelopmentIds: [],
     backgroundDevelopmentSet: new Set(),
     backgroundCursor: 0,
-    backgroundElapsedBoundary: latestElapsedEvolutionBoundary(state),
+    backgroundElapsedBoundary: elapsedBoundary,
     // Latest persisted elapsed_hint evidence boundary. Computed once during the
     // already-authorized full build, then advanced from reducer deltas so the
     // per-turn accumulated-time walk never scans the evidence map.
-    elapsedEvidenceBoundary: latestElapsedEvolutionBoundary(state),
+    elapsedEvidenceBoundary: elapsedBoundary,
     tombstones: createTombstoneIndex(),
     corpusRecords: Array.isArray(state?.records) ? state.records.length : 0,
     activeCount: records.length,
@@ -532,7 +517,8 @@ export function updateRelevanceIndex(index, delta = {}) {
   return index;
 }
 
-function evaluationBoundary(record) {
+// The last message a development was judged at (evaluated, changed or created); shared with evolution.
+export function evaluationBoundary(record) {
   if (Number.isInteger(record?.lastEvaluatedMessage)) return record.lastEvaluatedMessage;
   if (Number.isInteger(record?.lastChangedMessage)) return record.lastChangedMessage;
   if (Number.isInteger(record?.createdAtMessage)) return record.createdAtMessage;
