@@ -69,7 +69,22 @@ function recordLine(record) {
   return `- ${summary}`;
 }
 
-function fitLine(line, currentText, budgetTokens) {
+// A cut body of `chars` at `mid` that never ends inside a word or number ("12.4" is never "12.") nor inside a
+// bracketed coordinate pair ("[12, 4]" is never "[12,").
+function cutBody(chars, mid) {
+  let body = chars.slice(0, mid).join('');
+  if (mid < chars.length && /[\p{L}\p{N}.,'’-]/u.test(chars[mid]) && /[\p{L}\p{N}.,'’-]$/u.test(body)) {
+    const space = body.search(/\s\S*$/u);
+    body = space > 0 ? body.slice(0, space) : body;
+  }
+  const open = Math.max(body.lastIndexOf('['), body.lastIndexOf('('));
+  if (open >= 0 && open > Math.max(body.lastIndexOf(']'), body.lastIndexOf(')'))) body = body.slice(0, open);
+  return body.trimEnd();
+}
+
+// One list line within the token budget: whole, or cut on a word boundary with an ellipsis (shared by the
+// Reality and Places injections).
+export function fitLine(line, currentText, budgetTokens) {
   if (!line) return '';
   const proposed = `${currentText}\n${line}`;
   if (estimateInjectionTokens(proposed) <= budgetTokens) return line;
@@ -84,7 +99,7 @@ function fitLine(line, currentText, budgetTokens) {
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
     const candidateBody = mid < chars.length
-      ? `${chars.slice(0, mid).join('').trimEnd()}…`
+      ? `${cutBody(chars, mid)}…`
       : raw;
     const candidate = `${prefix}${candidateBody}`;
     const next = `${currentText}\n${candidate}`;

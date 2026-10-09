@@ -8,6 +8,7 @@ import {
   directionFromDelta,
   effectiveLocationId,
   normalizeCoordinate,
+  OPPOSITE_DIRECTION,
   normalizeSpatialState,
   placeNameKey,
   reduceSpatialMutations,
@@ -16,7 +17,7 @@ import {
   validateBounds,
 } from './spatial-core.js';
 import { validateSpatialEnvelope } from './spatial-wire.js';
-import { canonicalText as norm } from './hash.js';
+import { boundedExcerpt, canonicalText as norm } from './hash.js';
 
 const GENERIC_SCENERY = new Set([
   'clearing', 'a clearing', 'the clearing',
@@ -78,6 +79,7 @@ function campaignPlaces(spatial) {
   const byId = new Map();
   const activeByName = new Map();
   const mergedByName = new Map();
+  const archivedByName = new Map();
   for (const loc of Array.isArray(spatial?.locations) ? spatial.locations : []) {
     if (loc?.id && !byId.has(loc.id)) byId.set(loc.id, loc);
     const key = placeNameKey(loc?.name);
@@ -86,9 +88,11 @@ function campaignPlaces(spatial) {
       if (!activeByName.has(key)) activeByName.set(key, loc);
     } else if (loc.status === 'archived' && loc.mergedInto && !mergedByName.has(key)) {
       mergedByName.set(key, loc);
+    } else if (loc.status === 'archived' && !loc.mergedInto && !archivedByName.has(key)) {
+      archivedByName.set(key, loc);
     }
   }
-  return { byId, activeByName, mergedByName };
+  return { byId, activeByName, mergedByName, archivedByName };
 }
 
 // The active place a merged-away duplicate named `name` ended up in (following chained merges), or null.
@@ -304,8 +308,42 @@ function directionStated(sentence, form) {
 }
 
 function directionGroundedInNarration(direction, sentences) {
-  const forms = DIRECTION_TEXT_FORMS[canonicalDirection(direction)] || [];
+  // Own keys only: a direction such as "constructor" is no compass point (and never a crash).
+  const key = canonicalDirection(direction);
+  const forms = Object.hasOwn(DIRECTION_TEXT_FORMS, key) ? DIRECTION_TEXT_FORMS[key] : [];
   return forms.length > 0 && sentences.some(sentence => forms.some(form => directionStated(sentence, form)));
+}
+
+// Which way round the narration states a direction: in "<direction> of <place>" the place after "of" (or
+// "from") is the reference point. True when the sentences name the subject there instead (the relation is
+// stated the other way round); false when they name the reference, or say nothing either way.
+function directionReversed(direction, sentences, subjectName, referenceName) {
+  const key = canonicalDirection(direction);
+  const forms = Object.hasOwn(DIRECTION_TEXT_FORMS, key) ? DIRECTION_TEXT_FORMS[key] : [];
+  const position = (tail, name) => {
+    const needle = norm(name);
+    return needle ? ` ${tail} `.indexOf(` ${needle} `) : -1;
+  };
+  for (const sentence of sentences) {
+    for (const form of forms) {
+      const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${form.replace(' ', '[\\s-]+')}\\s+(?:of|from)\\s+([^.;!?]{0,120})`, 'giu');
+      for (const match of String(sentence).matchAll(pattern)) {
+        const tail = norm(match[1]);
+        const subject = position(tail, subjectName);
+        const reference = position(tail, referenceName);
+        if (reference >= 0 && (subject < 0 || reference < subject)) return false;
+        if (subject >= 0) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The direction as the narration states it: a relation stated the other way round takes the opposite
+// compass point (a free-text direction has none and is kept).
+function orientedDirection(direction, sentences, subjectName, referenceName) {
+  const key = canonicalDirection(direction);
+  return OPPOSITE_DIRECTION[key] && directionReversed(key, sentences, subjectName, referenceName) ? OPPOSITE_DIRECTION[key] : key;
 }
 
 // Narrated kilometre distances; thousands separators belong to the number ("1,200 km" is 1200, not 200).
@@ -345,8 +383,9 @@ function groundDirectRelationProposal(proposal, from, to, evidence, exchangeById
   }
 
   const sentences = relationSentences(evidence, exchangeById, [from.name, to.name]);
+  // The relation reads "to lies <direction> of from".
   const direction = proposal.direction && directionGroundedInNarration(proposal.direction, sentences)
-    ? canonicalDirection(proposal.direction)
+    ? orientedDirection(proposal.direction, sentences, to.name, from.name)
     : null;
   const distanceGrounded = Number.isFinite(proposal.distanceKm)
     && distanceSentences(proposal.distanceKm, sentences).length > 0;
@@ -387,7 +426,8 @@ function groundRelativeProposal(relative, anchor, evidence, exchangeById, placeN
     ok: true,
     relative: {
       ...relative,
-      direction: canonicalDirection(relative.direction),
+      // The place lies <direction> of its anchor.
+      direction: placeName ? orientedDirection(relative.direction, sentences, placeName, anchor.name) : canonicalDirection(relative.direction),
       distanceKm,
       distanceMode,
     },
@@ -448,7 +488,13 @@ function explicitWorldStateLocationHeaders(exchangeById) {
           if (contextParts.length >= 2) break;
         }
 
-        const coords = uniqueCoordinates(extractExplicitCoordinatesFromText(rawLine));
+        // A coordinate counts in the Loc part, or a later part that is unlabelled, an axis or a position field
+        // ("Date: (3, 12)" is a date, not a position).
+        const positionText = parts.slice(locIndex)
+          .filter((part, at) => at === 0 || !/^\s*\**\s*[\p{L}][\p{L} ]{0,24}\**\s*:/u.test(part)
+            || /^\s*\**\s*(?:x|y|coords?|coordinates?|pos(?:ition)?|xy|grid|map)\b/iu.test(part))
+          .join(' | ');
+        const coords = uniqueCoordinates(extractExplicitCoordinatesFromText(positionText));
         headers.push({
           sourceMessageId: source.messageId,
           lineageKey: source.lineageKey,
@@ -458,7 +504,8 @@ function explicitWorldStateLocationHeaders(exchangeById) {
             ? { x: coords[0].x, y: coords[0].y, authority: 'narrative_explicit', locked: false }
             : null,
           ambiguousCoordinate: coords.length > 1,
-          claim: String(rawLine).trim().slice(0, 500),
+          // Cut on a word (and never inside an emoji), so the claim still grounds in its line.
+          claim: boundedExcerpt(String(rawLine).trim(), 500),
         });
       }
     }
@@ -615,6 +662,12 @@ export function processSpatialCapture({
       // An update may rename a place only to a name the narration actually uses; otherwise it keeps its name.
       if (isUpdate) {
         const known = visibleById.get(proposal.locationId);
+        // The evidence must name the place it updates (by its name, or the new name it is given).
+        if (known?.name && !locationNameGrounded(known.name, proposal.evidence, exchangeById)
+          && !locationNameGrounded(proposal.name, proposal.evidence, exchangeById)) {
+          rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'evidence does not name the place being updated' });
+          continue;
+        }
         if (known?.name && norm(known.name) !== norm(proposal.name)
           && !locationNameGrounded(proposal.name, proposal.evidence, exchangeById)) {
           proposal.name = known.name;
@@ -628,6 +681,11 @@ export function processSpatialCapture({
         // A base-map place outside the visible set is that place, not a new campaign one (a campaign place
         // of the same name is matched by the reducer).
         places ||= campaignPlaces(spatial);
+        // A campaign place the operator archived (not merged) is retired: narration does not re-create it.
+        if (!visibleMatch && !places.activeByName.has(placeNameKey(proposal.name)) && places.archivedByName.has(placeNameKey(proposal.name))) {
+          rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'the operator archived this place' });
+          continue;
+        }
         const base = !visibleMatch && baseMap && !places.activeByName.has(nameKey)
           ? baseLocationByName(baseMap, proposal.name)
           : null;
@@ -661,6 +719,10 @@ export function processSpatialCapture({
       }
 
       const targetIsUpdate = Boolean(proposal.locationId);
+      // A base-map place without an override is read-only geography: naming it changes nothing (and is no
+      // rejection to log each turn); a relation to it below still counts.
+      const targetEffective = proposal.locationId ? visibleById.get(proposal.locationId) : null;
+      const baseOnly = Boolean(targetEffective?.isBase && !targetEffective.overrideId);
 
       // Route names the place lies on are kept only when the narration names them.
       if (Array.isArray(proposal.routeRefs)) {
@@ -739,7 +801,9 @@ export function processSpatialCapture({
 
           // Deterministic derived coordinate computed in code ONLY from a
           // grounded anchor + direction + admissible straight/direct distance.
-          if (!finalCoord && activeProfile && coordKnown(anchor.coordinate) && groundedRelative.mayDeriveStraight) {
+          // Never from an anchor this reply moves: its coordinate here is the one from before the reply.
+          if (!finalCoord && activeProfile && coordKnown(anchor.coordinate) && groundedRelative.mayDeriveStraight
+            && !movedThisReply.has(anchor.id)) {
             const derived = deriveCoordinate(anchor.coordinate, {
               direction: proposal.relative.direction,
               distanceKm: proposal.relative.distanceKm,
@@ -803,7 +867,7 @@ export function processSpatialCapture({
 
       proposal.coordinate = finalCoord;
 
-      accepted.push({ ...proposal, __row: rowIndex });
+      if (!baseOnly) accepted.push({ ...proposal, __row: rowIndex });
       continue;
     }
 
@@ -834,12 +898,17 @@ export function processSpatialCapture({
         rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'route name is not grounded in accepted narration' });
         continue;
       }
-      // A base-map route is read-only geography: narrating its name never replaces it with a campaign route.
-      if (!proposal.routeId && baseRouteByName(baseMap, proposal.name)
-        && !(spatial?.routes || []).some(route => placeNameKey(route.name) === placeNameKey(proposal.name))) {
+      // A base-map route is read-only geography: narrating its name, or naming its id, never replaces it with a
+      // campaign route. A route id the campaign does not hold is the model's invention and is dropped.
+      const campaignRoute = (spatial?.routes || []).find(route => (proposal.routeId && route.id === proposal.routeId)
+        || placeNameKey(route.name) === placeNameKey(proposal.name));
+      const baseRoute = (proposal.routeId && Array.isArray(baseMap?.routes) && baseMap.routes.find(route => route?.id === proposal.routeId))
+        || baseRouteByName(baseMap, proposal.name);
+      if (baseRoute && !campaignRoute) {
         rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'route is a read-only base-map route' });
         continue;
       }
+      if (proposal.routeId && campaignRoute?.id !== proposal.routeId) delete proposal.routeId;
       if ((proposal.endpoints || []).some(id => !visibleById.has(id))) {
         rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'route endpoints must be visible established locations' });
         continue;
@@ -886,7 +955,7 @@ export function processSpatialCapture({
   for (const deferred of accepted.filter(item => item.__deferredTargetName)) {
     const targetId = savedNameToId.get(norm(deferred.__deferredTargetName));
     if (targetId) otherMutations.push(withoutRow({ ...deferred, toId: targetId, __deferredTargetName: undefined }));
-    else rejected.push({ stage: 'spatial-relative', reason: 'relative relation dropped: its place was not saved' });
+    else rejected.push({ stage: 'spatial-relative', ...rowOf(deferred), reason: 'relative relation dropped: its place was not saved' });
   }
 
   const reducedOther = !otherMutations.length ? unchanged(reducedLocations.spatial) : reduceSpatialMutations(reducedLocations.spatial, {

@@ -484,6 +484,13 @@ export const OPPOSITE_DIRECTION = Object.freeze(Object.assign(Object.create(null
   northeast: 'southwest', southwest: 'northeast', northwest: 'southeast', southeast: 'northwest',
 }));
 
+// The coordinate of the place an effective id names as the state holds it now: its active campaign entry (an
+// override answers to the base id it shadows), else its visible projection.
+function currentCoordinateFor(id, effectiveById, spatial, baseMap) {
+  const campaign = spatial.locations.find(loc => loc.status !== 'archived' && effectiveLocationId(loc, baseMap, spatial) === id);
+  return campaign?.coordinate || effectiveCoordinateFor(id, effectiveById, spatial);
+}
+
 function effectiveCoordinateFor(id, effectiveById, spatial) {
   const effective = effectiveById.get(id);
   if (effective?.coordinate) return effective.coordinate;
@@ -1113,6 +1120,13 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         continue;
       }
 
+      // A base place changes only through an explicit override: a plain upsert at its id would otherwise create a
+      // campaign place under the base id that shadows it.
+      if (isBaseLoc && !proposal.createOverride) {
+        rejected.push({ proposal, reason: 'a base-map place is changed only through an override (createOverride)' });
+        continue;
+      }
+
       // If manual create override of a base location
       if (isBaseLoc && proposal.createOverride) {
         if (spatial.locations.length >= SPATIAL_LIMITS.maxLocations) {
@@ -1213,6 +1227,10 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       const targetId = boundedText(proposal.targetId, 120);
       const sourceLoc = spatial.locations.find(l => l.id === sourceId);
       const targetLoc = spatial.locations.find(l => l.id === targetId);
+      if (targetLoc && targetLoc.status !== 'active') {
+        rejected.push({ proposal, reason: 'cannot merge into an archived place' });
+        continue;
+      }
       if (sourceLoc && targetLoc && sourceId !== targetId) {
         targetLoc.routeRefs = uniqueStrings([...targetLoc.routeRefs, ...sourceLoc.routeRefs], SPATIAL_LIMITS.routeRefsPerLocation, 120);
         targetLoc.evidenceIds = boundedEvidenceRefs([...targetLoc.evidenceIds, ...sourceLoc.evidenceIds]);
@@ -1287,9 +1305,12 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
 
       const direction = proposal.direction ? canonicalSpatialDirection(proposal.direction) : null;
       const profile = resolveSpatialProfile(spatial, baseMap);
-      const fromCoord = effectiveCoordinateFor(fromId, effectiveById, spatial);
-      const toCoord = effectiveCoordinateFor(toId, effectiveById, spatial);
-      if (direction
+      // Where the places are now (an override created or moved earlier in this batch included), not where the
+      // visible projection saw them before the reply.
+      const fromCoord = currentCoordinateFor(fromId, effectiveById, spatial, baseMap);
+      const toCoord = currentCoordinateFor(toId, effectiveById, spatial, baseMap);
+      // Only a compass point can contradict a coordinate delta: a free-text direction ("upriver") is kept.
+      if (direction && OPPOSITE_DIRECTION[direction]
         && profile?.trueNorthLocked === true
         && Number.isFinite(fromCoord?.x) && Number.isFinite(fromCoord?.y)
         && Number.isFinite(toCoord?.x) && Number.isFinite(toCoord?.y)) {
@@ -1305,6 +1326,13 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       }
 
       const id = boundedText(proposal.relationId, 140) || relationIdFor(chatKey, fromId, toId, context);
+      // A relation id names that relation only between its own places (either way round): one between other
+      // places is never overwritten through it.
+      const byId = spatial.relations.find(r => r.id === id);
+      if (byId && !((byId.fromId === fromId && byId.toId === toId) || (byId.fromId === toId && byId.toId === fromId))) {
+        rejected.push({ proposal, reason: 'relationId names a relation between other places' });
+        continue;
+      }
       let existingRel = spatial.relations.find(r => r.id === id || (r.fromId === fromId && r.toId === toId));
       let stated = direction;
       if (!existingRel && (!direction || OPPOSITE_DIRECTION[direction])) {
@@ -1378,7 +1406,8 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         continue;
       }
       const id = boundedText(proposal.routeId, 140) || routeIdFor(chatKey, name, context);
-      let existingRt = spatial.routes.find(r => r.id === id || r.name.toLowerCase() === name.toLowerCase());
+      // Names fold like place names ("North-Road" is "North Road").
+      let existingRt = spatial.routes.find(r => r.id === id || placeNameKey(r.name) === placeNameKey(name));
 
       if (existingRt) {
         const hasManualEvidence = existingRt.operatorOwned === true || (existingRt.evidenceIds || [])

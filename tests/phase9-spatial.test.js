@@ -1979,7 +1979,8 @@ test('Name-only capture cannot duplicate or automatically override a visible bas
 
   assert.equal(result.spatial.locations.length, 0, 'automatic capture must not mint a campaign duplicate');
   assert.equal(result.applied.length, 0, 'base canonical location requires explicit campaign override');
-  assert.ok(result.rejected.some(item => /base/i.test(item.reason)));
+  // alpha.63: naming a read-only base place is no rejection to log each turn; it simply changes nothing.
+  assert.deepEqual(result.rejected, []);
 });
 
 test('Host Spatial lifecycle preloads base authority and fails closed when attached source is unavailable', () => {
