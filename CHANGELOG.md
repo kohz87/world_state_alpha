@@ -22,7 +22,15 @@
 
 ### Validation
 
-- `tests/audit-alpha67.test.js` (7 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+- `tests/audit-alpha67.test.js` (11 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+
+### Code review hardening
+
+- A coordinate belongs to the place named nearest to it, so lists ("Northford: [1, 2]; Southford: [5, 6]"), appositions and names containing "and" keep their own coordinates (the first clause-splitting rule dropped them), and a sentence referring back ("It sits at ...") gives its subject only the pair it opens with.
+- A move by a merged-away name, or of a base-map place whose override is elsewhere, is recognised before positions are derived; each row's grounding and narrated coordinate are read once.
+- A merge marks only the merged-away place as the operator's (the surviving place keeps taking narrated updates), and a Places rebuild points the retired copy's relations and routes at the archived place or the merge target instead of leaving them dangling.
+- Links saved before this release are loaded as they are, so checkpoints still match their states; only new repeats are prevented.
+- A waypoint list naming an unknown place is not applied to an existing route (a partial list would drop the others), and historical and current support citing one claim become one evidence entry.
 
 ## 0.9.0-alpha.66 - Data and ownership (Astra Pro audit A01-A05, A10, A18, A19)
 

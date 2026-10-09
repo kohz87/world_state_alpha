@@ -208,7 +208,6 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
     }
   }
   const linkIds = new Set();
-  const relatedPairs = new Set();
   for (const item of Array.isArray(raw.links) ? raw.links : []) {
     try {
       const link = normalizeLink(item);
@@ -217,13 +216,8 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
         continue;
       }
       linkIds.add(link.id);
-      // A "related" pair repeated on later messages (saved before links were deduplicated) is one edge: the
-      // first is kept.
-      if (link.type === 'related') {
-        const pair = [link.from, link.to].sort().join('\u0000');
-        if (relatedPairs.has(pair)) continue;
-        relatedPairs.add(pair);
-      }
+      // Links saved before related pairs were deduplicated are kept as they are: dropping them here would
+      // change the canonical domain under the checkpoints that recorded it (and their exact restores).
       state.links.push(link);
     } catch (error) {
       if (strictSchema) throw error;

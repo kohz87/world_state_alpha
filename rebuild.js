@@ -417,21 +417,36 @@ function overlayOperatorSpatial(spatial, source) {
   const routes = owned(src.routes);
   const operatorIds = new Set(locations.map(loc => loc.id));
   const operatorNames = new Map(locations.filter(loc => loc.status === 'active').map(loc => [placeNameKey(loc.name), loc.id]));
-  // Places the operator archived or merged away: the model's copy of that name is retired too (a merged-away
-  // name points at the place it was merged into).
-  const retiredNames = new Map();
+  // Places the operator archived or merged away: the model's copy of that name is retired too. Its relations
+  // and routes point at the operator's archived place, or at the place a merged-away name was merged into (the
+  // rebuilt place of that name when the target is the model's own).
+  const retired = new Map();
   for (const loc of locations) {
     const key = placeNameKey(loc.name);
-    if (loc.status === 'archived' && key && !operatorNames.has(key) && !retiredNames.has(key)) retiredNames.set(key, loc.mergedInto || '');
+    if (loc.status === 'archived' && key && !operatorNames.has(key) && !retired.has(key)) retired.set(key, loc);
   }
+  const sourcePlaces = new Map((src.locations || []).map(loc => [loc.id, loc]));
+  const modelActiveByName = new Map();
+  for (const loc of next.locations) {
+    if (loc.status === 'active' && loc.operatorOwned !== true && !operatorIds.has(loc.id) && !modelActiveByName.has(placeNameKey(loc.name))) {
+      modelActiveByName.set(placeNameKey(loc.name), loc.id);
+    }
+  }
+  const retiredTarget = loc => {
+    if (!loc.mergedInto) return loc.id;
+    if (operatorIds.has(loc.mergedInto)) return loc.mergedInto;
+    const target = sourcePlaces.get(loc.mergedInto);
+    return (target && (operatorNames.get(placeNameKey(target.name)) || modelActiveByName.get(placeNameKey(target.name)))) || loc.mergedInto;
+  };
   const moved = new Map();
   next.locations = next.locations.filter(loc => {
     if (loc.operatorOwned === true || operatorIds.has(loc.id)) return false;
     const key = placeNameKey(loc.name);
     const operatorId = loc.status === 'active' ? operatorNames.get(key) : null;
     if (operatorId) moved.set(loc.id, operatorId);
-    if (!operatorId && loc.status === 'active' && retiredNames.has(key)) {
-      if (retiredNames.get(key)) moved.set(loc.id, retiredNames.get(key));
+    if (!operatorId && loc.status === 'active' && retired.has(key)) {
+      const target = retiredTarget(retired.get(key));
+      if (target !== loc.id) moved.set(loc.id, target);
       return false;
     }
     return !operatorId;

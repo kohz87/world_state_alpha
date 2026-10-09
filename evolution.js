@@ -336,7 +336,8 @@ function newEvidenceFromSupports(supports, currentTimeAnchor, { includeHistorica
   const seen = new Set();
   for (const support of supports) {
     if (includeHistorical && support.type === 'historical') {
-      const key = `historical|${support.sourceMessageId}|${support.claim}`;
+      // One key for historical and current support: the same message and claim cited both ways is one entry.
+      const key = `evidence|${support.sourceMessageId}|${support.claim}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({
@@ -349,7 +350,7 @@ function newEvidenceFromSupports(supports, currentTimeAnchor, { includeHistorica
       continue;
     }
     if (!['current', 'time'].includes(support.type)) continue;
-    const key = `${support.type}|${support.sourceMessageId}|${support.claim}`;
+    const key = `${support.type === 'current' ? 'evidence' : support.type}|${support.sourceMessageId}|${support.claim}`;
     if (seen.has(key)) continue;
     seen.add(key);
     if (support.type === 'current') {

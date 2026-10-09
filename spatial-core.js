@@ -1172,12 +1172,9 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       if (loc) {
         loc.status = 'archived';
         loc.lastChangedMessage = context.messageId;
-        // An operator's archive is operator intent: recorded with its evidence and kept by a rebuild that
-        // re-extracts Places (the model's copy of the place does not come back).
-        if (!automaticNarrative) {
-          addEntitySpatialEvidence(spatial, loc, [loc.id], proposal, context, chatKey, evidenceCounter);
-          loc.operatorOwned = true;
-        }
+        // An operator's archive is operator intent: recorded with its (manual) evidence, which makes the place
+        // operator-owned, so a rebuild that re-extracts Places does not bring the model's copy back.
+        if (!automaticNarrative) addEntitySpatialEvidence(spatial, loc, [loc.id], proposal, context, chatKey, evidenceCounter);
         applied.push({ action: 'archive_location', locationId: targetId });
       } else {
         rejected.push({ proposal, reason: 'location not found for archive' });
@@ -1266,13 +1263,10 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         sourceLoc.mergedInto = targetId;
         sourceLoc.lastChangedMessage = context.messageId;
         targetLoc.lastChangedMessage = context.messageId;
-        // An operator's merge is operator intent on both places: a rebuild keeps the merged-away name pointing
-        // at the place it was merged into instead of re-creating the duplicate.
-        if (!automaticNarrative) {
-          addEntitySpatialEvidence(spatial, targetLoc, [targetLoc.id, sourceLoc.id], proposal, context, chatKey, evidenceCounter);
-          sourceLoc.operatorOwned = true;
-          targetLoc.operatorOwned = true;
-        }
+        // An operator's merge is operator intent on the merged-away place (its manual evidence makes it
+        // operator-owned): a rebuild points that name at the place it was merged into instead of re-creating the
+        // duplicate. The surviving place stays the model's, so narration keeps updating it.
+        if (!automaticNarrative) addEntitySpatialEvidence(spatial, sourceLoc, [sourceLoc.id, targetLoc.id], proposal, context, chatKey, evidenceCounter);
         applied.push({ action: 'merge_locations', sourceId, targetId });
       } else {
         rejected.push({ proposal, reason: 'source or target location not found for merge' });

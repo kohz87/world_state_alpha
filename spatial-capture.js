@@ -163,25 +163,48 @@ function sentenceNamesPlace(sentence, name) {
   return distinctive.length > 0 && distinctive.every(token => haystack.includes(` ${token} `));
 }
 
-// The parts of a cited sentence that can give this place its coordinate. A sentence with one coordinate pair
-// gives it whole. With several ("Northford stands at [1,2], while Southford stands at [5,6]") a pair belongs to
-// the place only in a clause that names the place and holds that one pair; a pair that cannot be tied to the
-// place this way gives it nothing.
-const PAIR_MARK = /\u0000(\d+)\u0000/gu;
-function placeCoordinateClauses(sentence, name) {
+// The coordinate pairs of a cited sentence that can belong to this place. A sentence with one pair gives it
+// whole. With several ("Northford stands at [1, 2], while Southford stands at [5, 6]"), a pair belongs to the
+// place only when the place's name (or, for a sentence referring back, the sentence's start) is nearer to it
+// than to any other pair: "Northford: [1, 2]; Southford: [5, 6]" and "Northford, a mill town, lies at [1, 2],
+// while ..." keep Northford's own pair, and Southford's is never borrowed.
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+function placeCoordinatePairs(sentence, name, { fromStart = false } = {}) {
+  const text = String(sentence ?? '');
   const pairs = [];
-  let masked = String(sentence ?? '');
   for (const form of COORDINATE_FORMS) {
-    masked = masked.replace(form, match => {
-      pairs.push(match);
-      return ` \u0000${pairs.length - 1}\u0000 `;
-    });
+    for (const match of text.matchAll(form)) pairs.push({ from: match.index, to: match.index + match[0].length, text: match[0] });
   }
-  if (pairs.length < 2) return [sentence];
-  return masked
-    .split(/[,;:—–]|\s(?:while|whilst|whereas|and|but)\s/iu)
-    .filter(clause => (clause.match(PAIR_MARK) || []).length === 1 && sentenceNamesPlace(clause.replace(PAIR_MARK, ' '), name))
-    .map(clause => pairs[Number(/\u0000(\d+)\u0000/u.exec(clause)[1])]);
+  if (pairs.length < 2) return [text];
+  // Where the place is named: its whole name, else its distinctive words (as sentenceNamesPlace reads it).
+  let mentions = [];
+  if (fromStart) {
+    mentions = [{ from: 0, to: 0 }];
+  } else {
+    const words = norm(name).split(' ').filter(Boolean);
+    const distinctive = words.filter(token => token.length >= 3 && !GENERIC_PLACE_WORDS.has(token));
+    const patterns = [words.join(' '), ...distinctive].filter(Boolean)
+      .map(phrase => new RegExp('(?<![\\p{L}\\p{N}])' + phrase.split(' ').map(escapeRegExp).join('[^\\p{L}\\p{N}]+') + '(?![\\p{L}\\p{N}])', 'giu'));
+    for (const pattern of patterns) {
+      for (const match of text.matchAll(pattern)) mentions.push({ from: match.index, to: match.index + match[0].length });
+      if (mentions.length) break;
+    }
+  }
+  if (!mentions.length) return [];
+  const gap = (pair, mention) => (pair.from >= mention.to ? pair.from - mention.to : Math.max(0, mention.from - pair.to));
+  const owned = new Set();
+  for (const mention of mentions) {
+    let best = null;
+    for (const pair of pairs) {
+      const distance = gap(pair, mention);
+      if (!best || distance < best.distance) best = { pair, distance, tie: false };
+      else if (distance === best.distance) best.tie = true;
+    }
+    if (best && !best.tie) owned.add(best.pair);
+  }
+  return pairs.filter(pair => owned.has(pair)).map(pair => pair.text);
 }
 
 // A coordinate is narrative-explicit only where the narration states it for this
@@ -214,8 +237,8 @@ function narratedCoordinateFor(coord, evidence, exchangeById, decimalStep = 0.1,
         && (!name || sentenceNamesPlace(sentences[at - 1].sentence, name));
       if (!refersBack && !sentenceCited(text, parts)) return;
       if (name && !refersBack && !sentenceNamesPlace(sentence, name)) return;
-      if (name && !refersBack) {
-        for (const clause of placeCoordinateClauses(sentence, name)) matches(clause);
+      if (name || refersBack) {
+        for (const piece of placeCoordinatePairs(sentence, name, { fromStart: refersBack })) matches(piece);
         return;
       }
       matches(sentence);
@@ -649,15 +672,21 @@ export function processSpatialCapture({
   // them is judged after they are saved, and no position is derived from where it was. A restated or invented
   // coordinate moves nothing.
   // A place is found the way the rows below find it: by id, or by name among the visible places, the
-  // campaign's active places and the base map, so a name-only move counts as well as one by id.
+  // campaign's active places, a merged-away name's merge target and the base map (at its effective position,
+  // an override's included), so a name-only move counts as well as one by id. Each row's grounding and narrated
+  // coordinate are kept for the row loop, which reuses them.
   const movedThisReply = new Set();
   const movedNames = new Set();
+  const groundedRows = new Map();
+  const narratedRows = new Map();
   for (const item of supplemented.mutations) {
     if (item?.action !== 'upsert_location' || !coordKnown(item.coordinate)) continue;
     const grounded = groundEvidence(item.evidence, exchangeById, evidenceSourceClass);
+    groundedRows.set(item, grounded);
     const narrated = grounded.ok
       ? narratedCoordinateFor(normalizeCoordinate(item.coordinate), grounded.evidence, exchangeById, activeProfile?.decimalStep, item.name)
       : null;
+    narratedRows.set(item, { name: item.name, narrated });
     if (!narrated) continue;
     let known = item.locationId ? visibleById.get(item.locationId) : null;
     if (!known && !item.locationId && item.name) {
@@ -665,22 +694,30 @@ export function processSpatialCapture({
       places ||= campaignPlaces(spatial);
       known = [...visibleById.values()].find(entry => norm(entry?.name) === nameKey)
         || places.activeByName.get(nameKey)
-        || (baseMap ? baseLocationByName(baseMap, item.name) : null)
+        || mergeTargetByName(places, item.name)
         || null;
-      if (known?.ambiguous) known = null;
+      if (!known && baseMap) {
+        const base = baseLocationByName(baseMap, item.name);
+        known = base && !base.ambiguous ? resolveEffectiveLocations(spatial, baseMap, { onlyIds: new Set([base.id]) })[0] || null : null;
+      }
     }
     if (coordKnown(known?.coordinate) && known.coordinate.x === narrated.x && known.coordinate.y === narrated.y) continue;
     if (item.locationId) movedThisReply.add(item.locationId);
-    if (known?.id) movedThisReply.add(known.id);
+    if (known?.id) {
+      movedThisReply.add(known.id);
+      movedThisReply.add(effectiveLocationId(known, baseMap, spatial));
+    }
     if (known?.name || item.name) movedNames.add(norm(known?.name || item.name));
+    if (item.name) movedNames.add(norm(item.name));
   }
   const anchorMoved = anchor => movedThisReply.has(anchor?.id) || movedNames.has(norm(anchor?.name));
 
   for (let index = 0; index < supplemented.mutations.length; index += 1) {
-    const proposal = structuredClone(supplemented.mutations[index]);
+    const row = supplemented.mutations[index];
+    const proposal = structuredClone(row);
     const rowIndex = Number.isInteger(proposal.__row) ? proposal.__row : undefined;
     delete proposal.__row;
-    const grounded = groundEvidence(proposal.evidence, exchangeById, evidenceSourceClass);
+    const grounded = groundedRows.get(row) || groundEvidence(proposal.evidence, exchangeById, evidenceSourceClass);
     if (!grounded.ok) {
       rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: grounded.reason });
       continue;
@@ -801,9 +838,13 @@ export function processSpatialCapture({
         // Automatic coordinate firewall: narrative_explicit only if accepted source text explicitly contains matching x/y.
         // Grounding is checked first: an invented coordinate is simply dropped and never costs the place itself;
         // only a narrated coordinate outside the profile bounds rejects the proposal.
+        // The prepass already read this row's narrated coordinate (for the same name).
+        const known = narratedRows.get(row);
         const narrated = evidenceHypothetical()
           ? null
-          : narratedCoordinateFor(normCoord, proposal.evidence, exchangeById, activeProfile?.decimalStep, proposal.name);
+          : known && known.name === proposal.name
+            ? known.narrated
+            : narratedCoordinateFor(normCoord, proposal.evidence, exchangeById, activeProfile?.decimalStep, proposal.name);
         coordGrounded = Boolean(narrated);
         if (coordGrounded && activeProfile?.bounds && !validateBounds(narrated.x, narrated.y, activeProfile.bounds)) {
           rejected.push({ stage: 'spatial-coordinate', index: rowIndex, reason: 'explicit coordinate is outside profile bounds' });
@@ -970,14 +1011,14 @@ export function processSpatialCapture({
         rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'route endpoints must be visible established locations' });
         continue;
       }
-      // Waypoints are place ids like endpoints (merges and rebuilds remap them): one that names no visible
-      // established place is dropped, and the route keeps its other waypoints.
+      // Waypoints are place ids like endpoints (merges and rebuilds remap them). A list naming a place that is
+      // not visible is not applied: a new route keeps the known waypoints, an existing route keeps its own list
+      // (a partial list would silently drop the waypoints it left out). The route itself is still saved.
       if (Array.isArray(proposal.waypoints)) {
         const known = proposal.waypoints.filter(id => visibleById.has(id));
         if (known.length !== proposal.waypoints.length) {
-          rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'route waypoints must be visible established locations; unknown waypoints were dropped' });
-          // None left: the route keeps the waypoints it already has instead of having them cleared.
-          if (known.length) proposal.waypoints = known;
+          rejected.push({ stage: 'spatial-waypoints', index: rowIndex, reason: 'unknown route waypoints were not applied; the route was kept' });
+          if (known.length && !campaignRoute) proposal.waypoints = known;
           else delete proposal.waypoints;
         }
       }

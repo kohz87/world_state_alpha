@@ -62,9 +62,11 @@ test('A08: a manual archive or merge of model places is operator intent that reb
   assert.equal(oak.operatorOwned, true);
   const merged = manual(spatial, [{ action: 'merge_locations', sourceId: 'mill2', targetId: 'mill', evidence: [{ sourceClass: 'manual', claim: 'Same place' }] }]);
   assert.equal(merged.spatial.locations.find(item => item.id === 'mill2').operatorOwned, true);
-  assert.equal(merged.spatial.locations.find(item => item.id === 'mill').operatorOwned, true);
-  // A rebuild that re-extracts Places retires the model's copy of an archived or merged-away name.
-  assert.match(rebuild, /if \(!operatorId && loc\.status === 'active' && retiredNames\.has\(key\)\) \{\s*if \(retiredNames\.get\(key\)\) moved\.set\(loc\.id, retiredNames\.get\(key\)\);\s*return false;/);
+  // The surviving place stays the model's, so narration keeps updating it.
+  assert.notEqual(merged.spatial.locations.find(item => item.id === 'mill').operatorOwned, true);
+  // A rebuild that re-extracts Places retires the model's copy of an archived or merged-away name and points
+  // its relations at the archived place or the merge target.
+  assert.match(rebuild, /if \(!operatorId && loc\.status === 'active' && retired\.has\(key\)\) \{\s*const target = retiredTarget\(retired\.get\(key\)\);\s*if \(target !== loc\.id\) moved\.set\(loc\.id, target\);\s*return false;/);
 });
 
 test('A14: route waypoints are checked like endpoints', () => {
@@ -72,7 +74,11 @@ test('A14: route waypoints are checked like endpoints', () => {
   const text = 'The Mill Road runs from Millbrook to Oakvale.';
   const out = spatialCapture(text, [{ action: 'upsert_route', name: 'Mill Road', type: 'road', endpoints: ['mill', 'oak'], waypoints: ['invented_id', 'oak'], evidence: [{ sourceMessageId: 2, claim: text }] }], spatial);
   assert.deepEqual(out.spatial.routes[0].waypoints, ['oak']);
-  assert.ok(out.rejected.some(item => /waypoints must be visible/.test(item.reason)));
+  assert.ok(out.rejected.some(item => /unknown route waypoints were not applied/.test(item.reason)));
+  // An existing route keeps its own waypoints rather than a partial list.
+  const existing = normalizeSpatialState({ locations: [place('mill', 'Millbrook'), place('oak', 'Oakvale'), place('ford', 'Ford')], routes: [{ id: 'rt', name: 'Mill Road', type: 'road', endpoints: ['mill', 'oak'], waypoints: ['ford', 'oak'] }] });
+  const kept = spatialCapture(text, [{ action: 'upsert_route', name: 'Mill Road', type: 'road', endpoints: ['mill', 'oak'], waypoints: ['ford', 'invented_id'], evidence: [{ sourceMessageId: 2, claim: text }] }], existing);
+  assert.deepEqual(kept.spatial.routes[0].waypoints, ['ford', 'oak']);
 });
 
 test('A16: repeating a relationship on later messages keeps one link', () => {
@@ -91,9 +97,9 @@ test('A16: repeating a relationship on later messages keeps one link', () => {
     }).state;
   }
   assert.equal(state.links.filter(link => link.type === 'related').length, 1);
-  // Duplicates saved by an older version collapse on load.
+  // Links saved by an older version are loaded as they are (checkpoints recorded them that way).
   const duplicated = { ...state, links: [...state.links, { ...state.links[0], id: 'wsl_dup', from: state.links[0].to, to: state.links[0].from }] };
-  assert.equal(normalizeState(duplicated).links.length, 1);
+  assert.equal(normalizeState(duplicated).links.length, 2);
 });
 
 test('A17: a merge that collapses two relations keeps both relations\' evidence', () => {
@@ -164,4 +170,42 @@ test('A09: a derived development keeps the historical evidence it was derived fr
   });
   const context = buildEvolutionContext(result.state, plan);
   assert.ok(Object.values(context.supportCatalog).some(item => item.type === 'historical' && item.recordIds.includes(derived.id)));
+});
+
+test('review: a coordinate stays with its place in lists, appositions and names with "and"', () => {
+  const spatial = normalizeSpatialState({ locations: [] });
+  const coordOf = (text, name, coordinate) => spatialCapture(text, [location(name, text, { coordinate })], spatial).spatial.locations.find(item => item.name === name)?.coordinate;
+  assert.equal(coordOf('Northford: [1, 2]; Southford: [5, 6].', 'Northford', { x: 1, y: 2 }).x, 1);
+  assert.equal(coordOf('Northford, a mill town, lies at [1, 2], while Southford lies at [5, 6].', 'Northford', { x: 1, y: 2 }).x, 1);
+  assert.equal(coordOf('Salt and Iron Keep stands at [1, 2] and Southford at [5, 6].', 'Salt and Iron Keep', { x: 1, y: 2 }).x, 1);
+  assert.equal(coordOf('Northford, a mill town, lies at [1, 2], while Southford lies at [5, 6].', 'Northford', { x: 5, y: 6 }).x, null);
+});
+
+test('review: a sentence referring back gives its subject only the pair it opens with', () => {
+  const spatial = normalizeSpatialState({ locations: [] });
+  const text = 'The Old Mill stands by the river. It sits at [12, 4], while Southford sits at [5, 6].';
+  const wrong = spatialCapture(text, [location('Old Mill', text, { coordinate: { x: 5, y: 6 } })], spatial);
+  assert.equal(wrong.spatial.locations.find(item => item.name === 'Old Mill').coordinate.x, null);
+  const right = spatialCapture(text, [location('Old Mill', text, { coordinate: { x: 12, y: 4 } })], spatial);
+  assert.equal(right.spatial.locations.find(item => item.name === 'Old Mill').coordinate.x, 12);
+});
+
+test('review: a move by a merged-away name counts as moving its merge target', () => {
+  const spatial = normalizeSpatialState({ profile, locations: [
+    place('river', 'Riverford', at(0, 0)),
+    place('oldford', 'Old Ford', unknown, { status: 'archived', mergedInto: 'river' }),
+  ] });
+  const text = 'Old Ford now stands at [10, 0]. Oakvale lies 1 km north of Riverford in a straight line.';
+  const out = spatialCapture(text, [
+    location('Old Ford', 'Old Ford now stands at [10, 0]', { coordinate: { x: 10, y: 0 } }),
+    location('Oakvale', 'Oakvale lies 1 km north of Riverford in a straight line', { relative: { toLocationId: 'river', direction: 'north', distanceKm: 1, distanceMode: 'straight_line' } }),
+  ], spatial);
+  const oak = out.spatial.locations.find(item => item.name === 'Oakvale');
+  assert.notDeepEqual([oak?.coordinate.x, oak?.coordinate.y], [0, 1]);
+});
+
+test('review: historical and current support citing one claim become one evidence entry', () => {
+  const evolution = fs.readFileSync('evolution.js', 'utf8');
+  assert.match(evolution, /const key = `evidence\|\$\{support\.sourceMessageId\}\|\$\{support\.claim\}`;/);
+  assert.match(evolution, /const key = `\$\{support\.type === 'current' \? 'evidence' : support\.type\}\|/);
 });
