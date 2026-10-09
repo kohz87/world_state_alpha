@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.9.0-alpha.62 - Capture firewall, wire and elapsed time (deep pass on alpha.60)
+
+### Fixed
+
+- **Hearsay and plans**
+  - A threat, order, demand or promise cited together with what it asks for ("threatened to burn the granary") is no longer stored as done. The act itself can still be recorded, and a narrated act after it ("... and then burned the granary") still counts.
+  - Dialogue with an action beat ("the sentry shouted", "yelled", "cried", "screamed") stays attributed, like "said".
+  - "The guard said nothing, ..." reports nothing.
+  - In single-quoted dialogue, a plural possessive ("the soldiers' horses") no longer ends the quote, and an elision ('em, 'tis) no longer starts one.
+  - A sentence ends after a closing quote, so attribution no longer leaks into the next narrated sentence.
+  - "That" counts as introducing a report only right after the reporting verb. "Said nothing, but that night the river flooded" is narration.
+  - A clause that reports something of its own ("The captain announced the curfew, soldiers barred the gates") no longer makes the next clause hearsay. A frame such as "According to the scouts," still does.
+  - A statement narrated once and repeated in a report or an "if" sentence is still narration.
+  - "Going to the capital" is travel, not a plan.
+  - A character named Will or Hope no longer keeps a summary "prospective", and "refuses" no longer keeps a promoted summary "reported".
+  - A word repeated in a summary counts once toward its support.
+- **Model output**
+  - A supersede and its replacement create in one response both apply. Before, the create could turn into an update of the record being superseded and be lost with it.
+  - More than 8 Reality mutations no longer fail the whole capture. Rows past 8 are rejected one by one, and the prompt states the cap.
+  - An update that changes only the status or the related records is valid. Before, it failed the whole response.
+- **Narration cleanup**
+  - World_State planning sections now also end correctly at ▪ ‣ ◦ ● bullets, so planted seeds no longer leak into evidence.
+  - A stray `</think>` after the narration no longer wipes the whole reply.
+  - A spaced `</World_State >` closing tag closes the checklist and Places header blocks.
+  - Capture and elapsed-time detection read a SillyTavern message's `mes` first, as branch tracking does. A stale `content` field is never captured.
+  - A hidden user turn is no longer capture evidence, just like a hidden reply.
+- **Elapsed time**
+  - Dialogue is paired as the capture firewall pairs it: wrapped quotes, and curly-single quotes with contractions inside, are dialogue.
+  - These no longer cancel a real skip: "could" or "would" after the phrase ("Three days later, she could walk"), an adjective ("the expected caravan"), a noun ("against their will"), and "as if".
+  - A user repeating the narrator's day step no longer uses up the exchange's day count.
+  - Each phrase is judged at its own position, not where the same words first occur.
+  - The newest meaningful skip of a message is reported, not the first.
+  - A fortnight or a decade given as a hint's unit is converted (two weeks, ten years).
+  - Matching lowercases without the device locale throughout.
+
+### Architecture
+
+- No durable format change (schema 2; envelopes 1).
+- The elapsed detector reuses the source firewall's dialogue pairing.
+- The capture wire reports rows past the cap separately from malformed rows.
+- Core contract admission, wire, planning-material and elapsed sections record the rules.
+
+### Validation
+
+- New `tests/audit-alpha62.test.js` (22 tests, each failing on 0.9.0-alpha.61).
+- `npm test` (682) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
+- Live in SillyTavern, these behave as on alpha.61: the branch, rebuild, resume, hide, forfeit, alpha.59 and alpha.57 Places scripts.
+
 ## 0.9.0-alpha.61 - Data loss and wrong state (deep pass on alpha.60)
 
 ### Fixed
