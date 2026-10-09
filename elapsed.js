@@ -434,12 +434,17 @@ export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
   let exchangeCounted = false;
   let previousRole = '';
   let previousAssistantHadStep = false;
+  // The day step a user echoed in this exchange: the narrator repeating the same words names the same day.
+  let echoedStep = '';
 
   for (let messageId = start; messageId <= endMessageId; messageId += 1) {
     const raw = rows[messageId];
     const role = walkRole(raw);
     if (role === 'system') continue;
-    if (role === 'user' && previousRole === 'assistant') exchangeCounted = false;
+    if (role === 'user' && previousRole === 'assistant') {
+      exchangeCounted = false;
+      echoedStep = '';
+    }
     const followsAssistantStep = role === 'user' && previousRole === 'assistant' && previousAssistantHadStep;
     previousRole = role;
 
@@ -459,8 +464,13 @@ export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
     if (!step) continue;
     if (role === 'assistant') previousAssistantHadStep = true;
     if (followsAssistantStep) {
-      // The user is acting on the day the narrator just opened, not a new one; the narrator's own next step
-      // in this exchange still counts.
+      // The user is acting on the day the narrator just opened, not a new one. It uses up nothing: the
+      // narrator's next step in this exchange counts, unless it repeats the same words (the same day).
+      echoedStep = step.phrase.toLowerCase().replace(/\s+/gu, ' ');
+      continue;
+    }
+    if (role === 'assistant' && echoedStep && step.phrase.toLowerCase().replace(/\s+/gu, ' ') === echoedStep) {
+      exchangeCounted = true;
       continue;
     }
     if (exchangeCounted) continue;

@@ -5,10 +5,10 @@
 ### Fixed
 
 - **Hearsay and plans**
-  - A threat, order, demand or promise cited together with what it asks for ("threatened to burn the granary") is no longer stored as done. The act itself can still be recorded, and a narrated act after it ("... and then burned the granary") still counts.
+  - A threat or promise cited together with what it threatens or promises ("threatened to burn the granary") is no longer stored as done. The act itself can still be recorded, and a narrated act after it ("... and then burned the granary") still counts. A demand or order stays a narrated act, so one shown demand can still establish a levy or toll.
   - Dialogue with an action beat ("the sentry shouted", "yelled", "cried", "screamed") stays attributed, like "said".
   - "The guard said nothing, ..." reports nothing.
-  - In single-quoted dialogue, a plural possessive ("the soldiers' horses") no longer ends the quote, and an elision ('em, 'tis) no longer starts one.
+  - In single-quoted dialogue, a plural possessive ("the soldiers' horses") no longer ends the quote when the quote closes later. A lower-case elision in mid-sentence ("drove 'em off") no longer starts one.
   - A sentence ends after a closing quote, so attribution no longer leaks into the next narrated sentence.
   - "That" counts as introducing a report only right after the reporting verb. "Said nothing, but that night the river flooded" is narration.
   - A clause that reports something of its own ("The captain announced the curfew, soldiers barred the gates") no longer makes the next clause hearsay. A frame such as "According to the scouts," still does.
@@ -22,7 +22,7 @@
   - An update that changes only the status or the related records is valid. Before, it failed the whole response.
 - **Narration cleanup**
   - World_State planning sections now also end correctly at ▪ ‣ ◦ ● bullets, so planted seeds no longer leak into evidence.
-  - A stray `</think>` after the narration no longer wipes the whole reply.
+  - A stray `</think>` after narration that an earlier closing tag already ended no longer wipes the reply. A reply that ends at its only closing tag is still treated as reasoning.
   - A spaced `</World_State >` closing tag closes the checklist and Places header blocks.
   - Capture and elapsed-time detection read a SillyTavern message's `mes` first, as branch tracking does. A stale `content` field is never captured.
   - A hidden user turn is no longer capture evidence, just like a hidden reply.
@@ -44,9 +44,22 @@
 
 ### Validation
 
-- New `tests/audit-alpha62.test.js` (22 tests, each failing on 0.9.0-alpha.61).
-- `npm test` (682) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
+- New `tests/audit-alpha62.test.js` (26 tests). The first 22 each fail on 0.9.0-alpha.61, and the 4 review-hardening tests fail on the pre-review code.
+- `npm test` (686) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
 - Live in SillyTavern, these behave as on alpha.61: the branch, rebuild, resume, hide, forfeit, alpha.59 and alpha.57 Places scripts.
+
+### Code review hardening
+
+- A resolve that the firewall rejects (for example one resting on a rumour) leaves its record in the duplicate gate. A near-duplicate create then updates that record instead of creating a second one.
+- A reply that ends at its only closing `</think>` stays reasoning, so planning never becomes evidence.
+- The threat-and-promise rule no longer covers demands and orders, so a shown demand can still establish a levy. It also no longer catches a relative "that" ("threatened the caravan that crossed the pass").
+- Speech verbs that are also nouns or other verbs are no longer attribution words, so "screams echoed", "cries" and "the council answered the petition" stay narration.
+- A plural possessive keeps a single quote open only when the quote closes again later in its paragraph ("'Fetch the horses' ordered Mira." closes).
+- An elision opens dialogue at the start of a line ("'Cause the duke sealed the gate,' ..."), and blocks a quote only mid-sentence in lower case.
+- A reporting verb may reach its "that" across up to twelve words ("reported to the captain of the northern garrison that ...").
+- A narrator repeating the exact day step the user echoed names the same day and does not count twice.
+- Rebuild windows read `mes` first like live capture.
+- Hidden rows are not scene context for lifecycle selection.
 
 ## 0.9.0-alpha.61 - Data loss and wrong state (deep pass on alpha.60)
 

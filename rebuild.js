@@ -5,7 +5,7 @@ import { RELEVANCE_STOPWORDS, extractContextTerms, functionWordNames, normalizeA
 import { SUPPORT_STOPWORDS, significantTokens } from './source-firewall.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
 import { activeCampaignPlaceCount, applySpatialUndoPatch, compactSpatialEvidence, createSpatialState, normalizeSpatialState, placeNameKey } from './spatial-core.js';
-import { clone, messageRole as roleOf } from './common.js';
+import { clone, hostMessageText, messageRole as roleOf } from './common.js';
 import { canonicalDomain, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
@@ -102,6 +102,8 @@ export function planChronologicalRebuild(chat = [], {
       if (message?.is_system === true && role !== 'system') hiddenMessagesIncluded += 1;
       return {
         ...virtual,
+        // The host text as lineage and live capture read it (`mes` first), never a stale `content`.
+        content: hostMessageText(message),
         messageId: sourceMessageId,
         lineageKey: lineage[sourceMessageId]?.lineageKey || '',
       };

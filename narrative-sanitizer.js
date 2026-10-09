@@ -61,14 +61,16 @@ export function sanitizeAssistantNarration(text) {
   for (const tagName of NON_CANONICAL_ASSISTANT_BLOCKS) {
     sanitized = stripTaggedBlock(sanitized, tagName);
   }
-  // Reasoning whose opening tag was in the prompt prefill ends at a lone closing tag. A stray closing tag after
-  // the narration (nothing follows it) ends no reasoning: only the tag goes.
+  // Reasoning whose opening tag was in the prompt prefill ends at a lone closing tag: the last one that
+  // narration follows, so a stray closing tag after the narration is dropped on its own. A reply that ends at
+  // its only closing tag is reasoning with no narration (planning never becomes evidence).
   const lone = /<\/(?:think|thinking|reasoning)\s*>/gi;
   const closings = [...sanitized.matchAll(lone)];
-  // The reasoning ends at the last closing tag that narration follows; later stray tags are dropped.
-  const end = closings.reverse().find(match => sanitized.slice(match.index + match[0].length).replace(lone, '').trim());
-  if (end) sanitized = sanitized.slice(end.index + end[0].length);
-  sanitized = sanitized.replace(lone, '');
+  if (closings.length) {
+    const end = [...closings].reverse().find(match => sanitized.slice(match.index + match[0].length).replace(lone, '').trim())
+      || closings[closings.length - 1];
+    sanitized = sanitized.slice(end.index + end[0].length).replace(lone, '');
+  }
   sanitized = sanitized.replace(/<!--\s*INVENTORY_BLOCK[\s\S]*?(?:-->|$)/gi, '');
   sanitized = stripWorldStatePlanning(sanitized);
   return sanitized.trim();

@@ -30,7 +30,7 @@ const elapsed = text => extractElapsedHint(text);
 
 test('24: a threat or promise cited with its verb is not a done deed', () => {
   assert.equal(created('The bandits threatened to burn the granary at dusk.', 'The granary is burned', 'threatened to burn the granary at dusk', ['granary']), 0);
-  assert.equal(created('The captain ordered the guards to seal the east gate.', 'The east gate is sealed', 'ordered the guards to seal the east gate', ['east gate']), 0);
+  assert.equal(created('The duke promised the miners that the east gate would be rebuilt.', 'The east gate is rebuilt', 'promised the miners that the east gate would be rebuilt', ['east gate']), 0);
   // The act itself may be recorded, and a coordinated narrated act is narration.
   assert.equal(created('The bandits threatened to burn the granary at dusk.', 'The bandits have threatened to burn the granary', 'threatened to burn the granary at dusk', ['granary']), 1);
   assert.equal(created('The bandits threatened the miller and then burned the granary.', 'The granary is burned', 'threatened the miller and then burned the granary', ['granary']), 1);
@@ -124,8 +124,11 @@ test('37-39: planning bullets, a stray closing think tag and a spaced World_Stat
   const planted = sanitizeAssistantNarration('<World_State>\n- **Planted Seeds:**\n▪ Seed: a dragon wakes\n‣ Seed: the duke betrays\n- **Off-Screen:**\n- The duke marches\n</World_State>');
   assert.doesNotMatch(planted, /dragon|betrays/);
   assert.match(planted, /The duke marches/);
-  assert.equal(sanitizeAssistantNarration('The bridge fell.</think>'), 'The bridge fell.');
+  // A stray closing tag after narration that an earlier tag ended is dropped on its own.
   assert.equal(sanitizeAssistantNarration('plan</think>The bridge fell.</think>'), 'The bridge fell.');
+  assert.equal(sanitizeAssistantNarration('plan</think>The bridge fell.</think>\n</think>'), 'The bridge fell.');
+  // A reply ending at its only closing tag is reasoning (fail closed: planning never becomes evidence).
+  assert.equal(sanitizeAssistantNarration('The duke must die tonight; plan it.</think>'), '');
   const hints = extractWorldStateCompletenessHints([{ messageId: 2, role: 'assistant', content: '<World_State>\n**Off-Screen:**\n- The duke marches on Karsk\n</World_State >\nThe tavern is quiet. Unresolved: everything after the block' }]);
   assert.deepEqual(hints.map(item => item.text), ['The duke marches on Karsk']);
 });
@@ -193,4 +196,49 @@ test('47: the newest meaningful skip of a message is reported', () => {
 test('48: a fortnight or a decade is converted when a hint is normalized', () => {
   assert.equal(normalizeElapsedHint({ raw: 'a fortnight', amount: 1, unit: 'fortnight' }).amount, 2);
   assert.equal(normalizeElapsedHint({ raw: 'two decades', amount: 2, unit: 'decades' }).amount, 20);
+});
+
+test('review hardening: a rejected resolve keeps its record in the duplicate gate', () => {
+  const state = seeded('The toll on the Karsk bridge is five silver', ['Karsk bridge', 'toll'], 'fact');
+  const text = 'A trader claims the toll on the Karsk bridge was dropped. The toll on the Karsk bridge is ten silver now.';
+  const result = capture(state, text, [
+    { action: 'resolve', recordId: state.records[0].id, summary: 'The toll on the Karsk bridge was dropped', evidence: [{ sourceMessageId: 2, claim: 'A trader claims the toll on the Karsk bridge was dropped' }] },
+    { action: 'create', kind: 'fact', summary: 'The toll on the Karsk bridge is ten silver', anchors: ['Karsk bridge', 'toll'], evidence: [{ sourceMessageId: 2, claim: 'The toll on the Karsk bridge is ten silver now' }] },
+  ]);
+  // The rumour cannot end the toll, so the new amount updates it rather than duplicating it.
+  assert.equal(result.state.records.length, 1);
+  assert.match(result.state.records[0].summary, /ten silver/);
+});
+
+test('review hardening: dialogue opening with an elided word, a dialogue tag after "s\'", a long report, nouns and demands', () => {
+  assert.equal(created("'Cause the duke sealed the north gate,' Bram grinned.", 'The duke sealed the north gate', 'the duke sealed the north gate', ['north gate']), 0);
+  assert.equal(elapsed("'Round here, three weeks later the river always floods,' Bram grinned."), null);
+  assert.deepEqual(sourceWithoutQuotedDialogue("'Fetch the horses' ordered Mira. The gate is open.").includes('Fetch the horses'), false);
+  assert.equal(created('The scout reported to the captain of the northern garrison that the stone bridge had fallen.', 'The stone bridge has fallen', 'the stone bridge had fallen', ['stone bridge']), 0);
+  assert.equal(created('Screams echoed through the hall as the north tower collapsed.', 'The north tower has collapsed', 'the north tower collapsed', ['north tower']), 1);
+  assert.equal(created('The council answered the petition by lowering the bridge toll.', 'The council lowered the bridge toll', 'The council answered the petition by lowering the bridge toll', ['bridge toll']), 1);
+  // One shown demand may establish a levy; a relative "that" after a threat is no content clause.
+  assert.equal(created("Orson's men demand that every vendor pay an unloading fee.", "Orson's men levy an unloading fee on every vendor", "Orson's men demand that every vendor pay an unloading fee", ['unloading fee']), 1);
+  assert.equal(created('The bandits threatened the caravan that crossed the pass.', 'Bandits harass caravans crossing the pass', 'The bandits threatened the caravan that crossed the pass', ['pass']), 1);
+});
+
+test('review hardening: the narrator repeating the echoed day step names the same day', () => {
+  const chat = [
+    { is_user: false, is_system: false, mes: 'The next morning, the sun rises.' },
+    { is_user: true, is_system: false, mes: 'The next morning I head to the market.' },
+    { is_user: false, is_system: false, mes: 'The next morning is bright as you reach the market.' },
+  ];
+  assert.equal(detectAccumulatedDayStepHint(chat, 2, { lineage: chatLineage(chat) }), null);
+});
+
+test('review hardening: rebuild windows read mes first, and hidden rows are no scene context', async () => {
+  const { planChronologicalRebuild } = await import('../rebuild.js');
+  const chat = [
+    { is_user: true, is_system: false, mes: 'We wait.' },
+    { is_user: false, is_system: false, mes: 'The north bridge collapsed.', content: 'stale' },
+  ];
+  const plan = planChronologicalRebuild(chat, {});
+  assert.equal(plan.windows[0].exchange.at(-1).content, 'The north bridge collapsed.');
+  const fs = await import('node:fs');
+  assert.match(fs.readFileSync('index.js', 'utf8'), /\.filter\(row => !currentExchangeIds\.has\(row\?\.messageId\) && row\?\.is_system !== true\)/);
 });

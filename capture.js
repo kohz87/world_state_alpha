@@ -412,8 +412,11 @@ export function processCaptureResponse({
   const accepted = [];
   // Records this response ends: a create in the same response is their replacement, never an update of them
   // (folded into a record being superseded, the new condition would be lost with it).
+  // Only an ending the firewall admits counts: a rejected resolve leaves its record active, and a near-duplicate
+  // create still meets it in the duplicate gate.
   const endingIds = new Set(wire.mutations
-    .filter(item => ['resolve', 'supersede'].includes(item.action) || ['resolved', 'superseded'].includes(item.status))
+    .filter(item => (['resolve', 'supersede'].includes(item.action) || ['resolved', 'superseded'].includes(item.status))
+      && applyCaptureSourceFirewall(item, { exchange, visibleRecords: boundedRecords, lifecycleContextRecordIds, state }).ok)
     .map(item => item.recordId)
     .filter(Boolean));
   const consolidationRecords = endingIds.size ? boundedRecords.filter(record => !endingIds.has(record?.id)) : boundedRecords;

@@ -129,9 +129,10 @@ const SPEECH_ACT_SUMMARY_RE = new RegExp('\\b(?:demands?|demanded|demanding|orde
 // Modal verbs and "hope" count in lower case only, so a name (Will, Hope, May) does not keep a summary
 // prospective; "going to" counts only before a verb ("going to the capital" is travel).
 const PROSPECTIVE_SUMMARY_RE = /\b(?:will|shall|might|hopes?)\b|\b(?:[Gg]oing to(?!\s+(?:the|a|an|his|her|their|its|my|our|your|this|that|these|those)\b|\s+\p{Lu})|[Aa]bout to|[Pp]lans?|[Pp]lanned|[Pp]lanning|[Pp]lotting|[Ii]ntends?|[Ii]ntended|[Ii]ntending|[Ii]ntention|[Aa]ims?|[Ee]xpects?|[Ee]xpected|[Ee]xpecting|[Pp]repares?|[Pp]reparing|[Ii]f|[Uu]nless|[Tt]hreat|[Tt]hreatened|[Tt]omorrow|[Tt]onight)\b/u;
-// Speech verbs of an action beat ("the guard shouted") attribute dialogue like "said".
+// Speech verbs of an action beat ("the guard shouted") attribute dialogue like "said". Forms that are also
+// nouns or other verbs ("screams echoed", "the council answered the petition") are left out.
 const ATTRIBUTION_RE = new RegExp('\\b(?:' + REPORTING_WORDS + '|insists?|insisted|tells?|(?<!\\ball )told|explains?|explained|mentions?|mentioned|whispers?|whispered|informs?|informed'
-  + '|shouts?|shouted|yells?|yelled|cries|cried|screams?|screamed|calls?\\s+out|called\\s+out|mutters?|muttered|murmurs?|murmured|replies|replied|answers?|answered|exclaims?|exclaimed)\\b', 'iu');
+  + '|shouts|shouted|yells|yelled|cried|screamed|called\\s+out|muttered|murmured|replied|exclaimed)\\b', 'iu');
 // A demand, order, threat or promise is itself a narrated act ("Orson demands an unloading fee" shows the
 // extortion); only what is demanded, ordered, threatened or promised (the text after the verb) is not
 // established by it.
@@ -148,26 +149,31 @@ const PAIRED_QUOTES = Object.freeze({ '“': '”', '„': '“', '「': '」', 
 const NEW_QUOTED_LINE = /^[ \t]*(?:["“„「『«‘']|\r?\n)/u;
 const LETTER = /[\p{L}\p{N}]/u;
 
-// A plural possessive ("the soldiers' horses") is no closing quote: an apostrophe after "s" followed by a
-// lower-case word that does not start a dialogue tag ("..., the soldiers' he said" still closes).
-const DIALOGUE_TAG_START = new Set(['he', 'she', 'they', 'it', 'i', 'we', 'you', 'the', 'a', 'an', 'his', 'her', 'their', 'someone', 'one',
-  'said', 'says', 'asked', 'asks', 'shouted', 'replied', 'whispered', 'muttered', 'called', 'cried', 'and', 'but', 'then']);
-function pluralPossessive(source, index) {
-  if (!/s/iu.test(source[index - 1] || '')) return false;
-  const next = /^ (\p{Ll}+)/u.exec(source.slice(index + 1, index + 24));
-  return Boolean(next && !DIALOGUE_TAG_START.has(next[1]));
-}
-// Elided words open no quotation ('em, 'tis, 'twas, 'til, 'cause).
-const ELISION = /^(?:em|tis|twas|til|cause|bout|round|nuff|neath|cept|ere)\b/iu;
+// Elided words open no quotation mid-sentence in lower case ("we drove 'em off"); at the start of a line or
+// sentence ('Cause the duke ...', 'Round here ...) they may open dialogue.
+const ELISION = /^(?:em|tis|twas|til|cause|bout|round|nuff|neath|cept|ere)\b/u;
 
+function closingSingleQuote(source, index) {
+  const char = source[index];
+  return (char === "'" || char === '’') && !LETTER.test(source[index + 1] || '') && /[\p{L}\p{N}.,!?;:…\-—]/u.test(source[index - 1] || '');
+}
+
+// A plural possessive ("'The soldiers' horses are gone,' ...") is no closing quote: an apostrophe after "s"
+// and before a lower-case word, when the quotation closes again later in its paragraph. Without a later
+// close it is the end of the line ("'Fetch the horses' ordered Mira.").
 function singleQuoteEnd(source, from) {
+  let possessive = -1;
   for (let index = from + 1; index < source.length; index += 1) {
     const char = source[index];
-    if (char === '\n' && NEW_QUOTED_LINE.test(source.slice(index + 1, index + 4))) return -1;
-    if ((char === "'" || char === '’') && !LETTER.test(source[index + 1] || '') && /[\p{L}\p{N}.,!?;:…\-—]/u.test(source[index - 1] || '')
-      && !pluralPossessive(source, index)) return index;
+    if (char === '\n' && NEW_QUOTED_LINE.test(source.slice(index + 1, index + 4))) break;
+    if (!closingSingleQuote(source, index)) continue;
+    if (/s/iu.test(source[index - 1] || '') && /^ \p{Ll}/u.test(source.slice(index + 1, index + 3))) {
+      if (possessive < 0) possessive = index;
+      continue;
+    }
+    return index;
   }
-  return -1;
+  return possessive;
 }
 
 // A short title-cased quotation introduced as a name ("the "Black Gull" anchors offshore", "a ship named
@@ -213,7 +219,7 @@ function quotedSpans(sourceText) {
       open = index;
       closer = PAIRED_QUOTES[char];
     } else if ((char === "'" || char === '‘') && !LETTER.test(source[index - 1] || '') && LETTER.test(source[index + 1] || '')
-      && !ELISION.test(source.slice(index + 1, index + 8))) {
+      && !(ELISION.test(source.slice(index + 1, index + 8)) && /\p{L}[\s,]*$/u.test(source.slice(Math.max(0, index - 12), index)))) {
       const end = singleQuoteEnd(source, index);
       if (end > index) {
         spans.push([index + 1, end]);
@@ -331,9 +337,9 @@ function clauseAttributes(sentence, claimTokens) {
 
 // "X reports that ..." / "X insisted ... that ...": everything after the
 // complementizer is the reported content, whatever turns it takes.
-// "that" is the complementizer only within a few words of the reporting verb, with no turn between, and not
+// "that" is the complementizer only within twelve words of the reporting verb, with no turn between, and not
 // as a demonstrative ("said nothing, but that night the river flooded").
-const COMPLEMENT_GAP = '(?:\\s+(?!but\\b|while\\b|yet\\b|although\\b|though\\b|whereas\\b|meanwhile\\b|and\\b|then\\b)\\S+){0,6}?';
+const COMPLEMENT_GAP = '(?:\\s+(?!but\\b|while\\b|yet\\b|although\\b|though\\b|whereas\\b|meanwhile\\b|and\\b|then\\b)\\S+){0,12}?';
 const DEMONSTRATIVE_THAT = '(?!\\s+(?:night|day|morning|evening|afternoon|dawn|dusk|week|month|year|time|moment|hour|winter|summer|spring|autumn|season|same)\\b)';
 const REPORTED_COMPLEMENT_RE = new RegExp(ATTRIBUTION_RE.source + COMPLEMENT_GAP + '\\s+that\\b' + DEMONSTRATIVE_THAT, 'iu');
 function claimInsideReportedComplement(claim, sentence) {
@@ -389,10 +395,11 @@ function claimInsideSpeechActComplement(claim, sentence) {
   });
 }
 
-// The excerpt is a demand, order, threat or promise together with what it asks for ("threatened to burn the
-// granary", "ordered the guards to seal the gate"): the act is narrated, its content is not done. A coordinated
-// narrated act after it ("... and burned the granary") is narration.
-const SPEECH_ACT_CONTENT_RE = new RegExp(SPEECH_ACT_RE.source + '(?:\\s+\\S+){0,3}?\\s+(?:to|that)\\s+\\S+', 'iu');
+// The excerpt is a threat or promise together with what it threatens or promises ("threatened to burn the
+// granary", "promised the miners that wages would rise"): the act is narrated, its content is not done. A
+// coordinated narrated act after it ("... and burned the granary") is narration. A demand or order with its
+// content stays a narrated act: one shown demand may establish a levy or toll (an arrangement).
+const SPEECH_ACT_CONTENT_RE = /\b(?:threatens?|threatened|threatening)\s+to\s+\S+|\b(?:promises?|promised|promising|vows?|vowed)(?:\s+\S+){0,3}?\s+(?:to|that)\s+\S+/iu;
 function claimCarriesSpeechActContent(claim) {
   const text = canonicalText(claim);
   const match = SPEECH_ACT_CONTENT_RE.exec(text);

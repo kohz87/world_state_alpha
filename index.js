@@ -2777,7 +2777,7 @@ async function captureAssistantBoundary(chatKey, messageId, markStarted) {
       messageId,
       CAPTURE_LIMITS.lifecycleContextMessages,
       currentState?.lineage,
-    ).filter(row => !currentExchangeIds.has(row?.messageId)),
+    ).filter(row => !currentExchangeIds.has(row?.messageId) && row?.is_system !== true),
   ));
   const lifecycleSelection = selectLifecycleCandidates(before, {
     index,
