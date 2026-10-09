@@ -22,7 +22,8 @@ function normalizeEvaluation(raw) {
     throw new EvolutionWireError('evaluation must be an object');
   }
   const recordId = text(raw.recordId, 120);
-  const outcome = text(raw.outcome, 24);
+  // Outcomes are compared in lower case: "Stable" is stable.
+  const outcome = text(raw.outcome, 24).toLowerCase();
   const reason = text(raw.reason, EVOLUTION_WIRE_LIMITS.reasonChars);
   if (!recordId) throw new EvolutionWireError('evaluation requires recordId');
   if (!EVOLUTION_OUTCOMES.includes(outcome)) throw new EvolutionWireError('unsupported evaluation outcome');
@@ -93,7 +94,8 @@ export function parseEvolutionJson(rawText) {
   if (parsed.evaluations.length > EVOLUTION_WIRE_LIMITS.evaluations) {
     throw new EvolutionWireError('evolution response exceeds evaluation limit');
   }
-  const derived = parsed.derived === undefined ? [] : parsed.derived;
+  // An absent or null `derived` means none ("not stated", as everywhere on the wire).
+  const derived = parsed.derived === undefined || parsed.derived === null ? [] : parsed.derived;
   if (!Array.isArray(derived)) throw new EvolutionWireError('derived must be an array when present');
   if (derived.length > EVOLUTION_WIRE_LIMITS.derived) {
     throw new EvolutionWireError('evolution response exceeds derived-development limit');

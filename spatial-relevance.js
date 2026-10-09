@@ -1,7 +1,7 @@
 import { SPATIAL_LIMITS } from './constants.js';
 import { resolveEffectiveLocations, resolveEffectiveRoutes } from './spatial-core.js';
 import { nonAsciiBigrams, phraseCandidates, rarestFirst, RELEVANCE_STOPWORDS } from './relevance.js';
-import { canonicalText as normalizeText } from './hash.js';
+import { INFIX_NAME_SCRIPT, canonicalText as normalizeText } from './hash.js';
 
 function tokens(value) {
   return normalizeText(value).match(/[\p{L}\p{N}]+/gu) || [];
@@ -200,11 +200,13 @@ function nameMatchStrength(name, normalizedHaystack, haystackTokens) {
   if (!norm) return 0;
 
   const nameTokens = norm.split(' ').filter(Boolean);
-  const hasNonAscii = /[^\x00-\x7F]/u.test(norm);
+  // Inside a run of letters only in scripts written without spaces or with attached particles (as record
+  // anchors match).
+  const spaceless = INFIX_NAME_SCRIPT.test(norm);
 
   const exactPhrase = nameTokens.length > 1
     ? ` ${normalizedHaystack} `.includes(` ${norm} `)
-    : haystackTokens.has(norm) || (hasNonAscii && norm.length >= 2 && normalizedHaystack.includes(norm));
+    : haystackTokens.has(norm) || (spaceless && norm.length >= 2 && normalizedHaystack.includes(norm));
 
   if (exactPhrase) {
     return 10 + Math.min(2, norm.length / 10);

@@ -14,6 +14,8 @@ function singleLine(value) {
 }
 
 function normalizeBudget(value) {
+  // An unset budget (null, '') is the default, never 1.
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return SPATIAL_LIMITS.promptBudgetTokens;
   const number = Number(value);
   if (!Number.isFinite(number)) return SPATIAL_LIMITS.promptBudgetTokens;
   return Math.max(1, Math.min(2400, Math.trunc(number)));

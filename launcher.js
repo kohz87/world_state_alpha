@@ -184,6 +184,12 @@ export function mountWorldStateLauncher({
     if (moved) commitDraggedPosition();
   }
 
+  // Capture lost without a pointerup (the browser took the gesture, the window lost focus): the drag ends
+  // where it is, so the button never stays stuck following a pointer.
+  function onLostPointerCapture(event) {
+    onPointerCancel(event);
+  }
+
   function onClick(event) {
     event.preventDefault?.();
     if (Date.now() < suppressClickUntil) return;
@@ -194,6 +200,7 @@ export function mountWorldStateLauncher({
   button.addEventListener('pointermove', onPointerMove);
   button.addEventListener('pointerup', onPointerUp);
   button.addEventListener('pointercancel', onPointerCancel);
+  button.addEventListener('lostpointercapture', onLostPointerCapture);
   button.addEventListener('click', onClick);
   win.addEventListener?.('resize', onResize);
   doc.body.appendChild(button);
@@ -213,6 +220,7 @@ export function mountWorldStateLauncher({
       button.removeEventListener('pointermove', onPointerMove);
       button.removeEventListener('pointerup', onPointerUp);
       button.removeEventListener('pointercancel', onPointerCancel);
+      button.removeEventListener('lostpointercapture', onLostPointerCapture);
       button.removeEventListener('click', onClick);
       win.removeEventListener?.('resize', onResize);
       delete button.__worldStateLauncher;

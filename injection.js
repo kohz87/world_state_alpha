@@ -23,6 +23,8 @@ function singleLine(value) {
 }
 
 function normalizeBudget(value) {
+  // An unset budget (null, '') is the default, never Number(null) = 0, which would turn injection off.
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return WORLD_STATE_INJECTION_DEFAULTS.budgetTokens;
   const number = Number(value);
   if (!Number.isFinite(number)) return WORLD_STATE_INJECTION_DEFAULTS.budgetTokens;
   return Math.max(1, Math.min(2400, Math.trunc(number)));

@@ -3,7 +3,7 @@ import { consolidateCreateCandidate } from './duplicate.js';
 import { clone } from './common.js';
 import { cloneState, normalizeState, readableState, reduceMutations } from './state-core.js';
 import { exportBundle, importBundle, resetState } from './transfer.js';
-import { canonicalText as normalizeText } from './hash.js';
+import { SPACELESS_SCRIPT, canonicalText as normalizeText } from './hash.js';
 
 export const MANUAL_LIMITS = Object.freeze({
   queryResults: 100,
@@ -38,8 +38,10 @@ function queryMatches(record, needle) {
   if (!needle) return true;
   const tokens = normalizeText(needle).split(' ').filter(Boolean);
   if (!tokens.length) return true;
-  const haystack = recordSearchText(record);
-  return tokens.every(token => haystack.includes(token));
+  // Each typed word matches the start of a word ("war" finds "war" and "warband", never "toward"); in a
+  // script written without spaces it matches anywhere in a run of letters.
+  const haystack = ' ' + recordSearchText(record);
+  return tokens.every(token => (SPACELESS_SCRIPT.test(token) ? haystack.includes(token) : haystack.includes(' ' + token)));
 }
 
 function sortRecords(left, right) {

@@ -41,6 +41,21 @@ export function sharedSpacelessBigrams(left, right) {
   return content ? shared : 0;
 }
 
+// Pairs that carry content (an ideograph, katakana or a Southeast Asian letter), not particles or endings.
+const CONTENT_PAIR = /[\p{Script=Han}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+// Content pairs of `left` found in `rightPairs` (a precomputed spacelessBigrams set): kana-only pairs never
+// count, so one shared word plus common verb endings is not a match.
+export function sharedContentBigrams(left, rightPairs) {
+  let shared = 0;
+  for (const pair of spacelessBigrams(left)) if (CONTENT_PAIR.test(pair) && rightPairs.has(pair)) shared += 1;
+  return shared;
+}
+
+// Scripts where a one-word name may carry an attached particle or suffix ("서울에서", "王都の"): a name is found
+// inside a run of letters there. Elsewhere it matches whole words.
+export const INFIX_NAME_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Hangul}]/u;
+
 // An excerpt longer than `max` is cut at the last word boundary inside it, never mid-word: excerpts are
 // matched on word boundaries, so a cut word would no longer be found in its source.
 export function boundedExcerpt(value, max) {
