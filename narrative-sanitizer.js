@@ -1,3 +1,5 @@
+import { hostMessageText } from './common.js';
+
 const NON_CANONICAL_ASSISTANT_BLOCKS = Object.freeze([
   'writer_state',
   'NPC_Inner_Chatter',
@@ -19,7 +21,8 @@ const NON_CANONICAL_ASSISTANT_BLOCKS = Object.freeze([
 const WORLD_STATE_PLANNING_SECTION = /^[^\p{L}\p{N}]*(?:planted[ _]seeds?|consequence[ _]timers?|arc[ _]phase|scene[ _]phase|cyoa|npc[ _]inner[ _]chatter|inner[ _]chatter|skill[ _]mastery|inventory)\b[^:\n]{0,40}:/iu;
 // A section heading: a bold bullet label, or a non-entry line ending its label with a colon. Numbered lines
 // ("1. Duke: ...") are entries like bullets.
-const WORLD_STATE_SECTION = /^\s*(?:[-*•+]\s+\*\*[^*\n]{1,80}?:\s*\*\*|(?![-*•+]|\d+[.)]\s)[^\s][^:\n]{1,80}:)/u;
+// Every bullet style the checklist reader accepts (- * + • ‣ ◦ ▪ ●) is an entry, never a heading.
+const WORLD_STATE_SECTION = /^\s*(?:[-*•+‣◦▪●]\s+\*\*[^*\n]{1,80}?:\s*\*\*|(?![-*•+‣◦▪●]|\d+[.)]\s)[^\s][^:\n]{1,80}:)/u;
 
 function stripTaggedBlock(text, tagName) {
   const escaped = String(tagName).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -58,8 +61,14 @@ export function sanitizeAssistantNarration(text) {
   for (const tagName of NON_CANONICAL_ASSISTANT_BLOCKS) {
     sanitized = stripTaggedBlock(sanitized, tagName);
   }
-  // Reasoning whose opening tag was in the prompt prefill ends at a lone closing tag.
-  sanitized = sanitized.replace(/^[\s\S]*<\/(?:think|thinking|reasoning)\s*>/i, '');
+  // Reasoning whose opening tag was in the prompt prefill ends at a lone closing tag. A stray closing tag after
+  // the narration (nothing follows it) ends no reasoning: only the tag goes.
+  const lone = /<\/(?:think|thinking|reasoning)\s*>/gi;
+  const closings = [...sanitized.matchAll(lone)];
+  // The reasoning ends at the last closing tag that narration follows; later stray tags are dropped.
+  const end = closings.reverse().find(match => sanitized.slice(match.index + match[0].length).replace(lone, '').trim());
+  if (end) sanitized = sanitized.slice(end.index + end[0].length);
+  sanitized = sanitized.replace(lone, '');
   sanitized = sanitized.replace(/<!--\s*INVENTORY_BLOCK[\s\S]*?(?:-->|$)/gi, '');
   sanitized = stripWorldStatePlanning(sanitized);
   return sanitized.trim();
@@ -70,9 +79,8 @@ export function sanitizeExchangeMessage(message) {
   const role = message.role === 'user' || message.is_user === true ? 'user' : 'assistant';
   if (role === 'user') return message;
 
-  const rawContent = typeof message.content === 'string'
-    ? message.content
-    : (typeof message.mes === 'string' ? message.mes : (typeof message.text === 'string' ? message.text : ''));
+  // A host row's `mes` first, as lineage reads it; a normalized row has only `content`.
+  const rawContent = hostMessageText(message);
 
   const sanitized = sanitizeAssistantNarration(rawContent);
 

@@ -29,7 +29,7 @@ export function functionWordNames(value) {
   const source = String(value ?? '');
   const out = new Set();
   for (const match of source.matchAll(/(?<![\p{L}\p{N}])\p{Lu}\p{Ll}*(?![\p{L}\p{N}])/gu)) {
-    const word = match[0].toLocaleLowerCase();
+    const word = match[0].toLowerCase();
     if (!RELEVANCE_STOPWORDS.has(word) || out.has(word)) continue;
     let at = match.index - 1;
     while (at >= 0 && source[at] !== '\n' && NAME_SPACE.test(source[at])) at -= 1;
@@ -44,7 +44,7 @@ export function functionWordNames(value) {
       out.add(word);
       continue;
     }
-    const next = /^\s*([\p{L}\p{N}]+)/u.exec(source.slice(end, end + 40))?.[1]?.toLocaleLowerCase() || '';
+    const next = /^\s*([\p{L}\p{N}]+)/u.exec(source.slice(end, end + 40))?.[1]?.toLowerCase() || '';
     const sentenceEnd = /[.!?…\n]/u.exec(source.slice(end));
     const question = sentenceEnd?.[0] === '?';
     if (next && !RELEVANCE_STOPWORDS.has(next) && !question) out.add(word);
