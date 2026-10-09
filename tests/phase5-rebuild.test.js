@@ -1610,7 +1610,8 @@ test('Operations log trimming never drops a still-unrecovered capture failure', 
   assert.equal(mergeOperationRows(rows, [], 4)[0].sourceMessageId, 5);
   assert.equal(trimOperationRows(rows, 8).length, 8);
   // The light view carries only what detection reads.
-  assert.deepEqual(Object.keys(store.recoveryRows('chat:a')[0]).sort(), ['at', 'contentLineageKey', 'label', 'lineageKey', 'operationId', 'outcome', 'sourceMessageId']);
+  // (the writing session and, for a recovery, the failures it cleared: recovery follows those, not clocks).
+  assert.deepEqual(Object.keys(store.recoveryRows('chat:a')[0]).sort(), ['at', 'contentLineageKey', 'label', 'lineageKey', 'operationId', 'outcome', 'session', 'sourceMessageId']);
 });
 
 test('only rows that change missed-capture recovery skip the Operations log quiet period', async () => {

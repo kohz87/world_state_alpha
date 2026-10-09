@@ -51,6 +51,38 @@ function anchorLongEnough(anchor) {
   return anchor.length >= 3 || (anchor.length >= 2 && SPACELESS_SCRIPT.test(anchor));
 }
 
+// Polarity and endings. An excerpt sharing a summary's words does not establish it when it says the opposite
+// ("Northbridge has not collapsed" for "Northbridge has collapsed"), and a condition that the excerpt says
+// continues ("the garrison still occupies Northbridge") is not ended by it. Judged per clause and only where a
+// clause carries every content word of the statement, so a paraphrase is never refused on wording alone.
+const NEGATION = /\b(?:not|never|cannot|nor|neither|none|no\s+longer)\b|n['’]t\b/iu;
+const CONTINUATION = /\b(?:still|remains?|remained|continues?|continued|persists?|persisted|keeps?|kept|yet)\b/iu;
+const CLAIM_CLAUSE = /[;,:—–]|\s(?:and|but|while|whereas|though|although)\s|(?<=[.!?])\s+/iu;
+
+function clausesCarrying(statement, claim) {
+  const words = [...new Set(significantTokens(statement))];
+  if (words.length < 2) return [];
+  return String(claim ?? '').split(CLAIM_CLAUSE).filter(clause => {
+    const tokens = new Set(significantTokens(clause));
+    return words.every(word => tokens.has(word));
+  });
+}
+
+// Every clause of the claim that states the summary's content states it with the opposite polarity.
+export function claimContradictsStatement(statement, claim) {
+  const clauses = clausesCarrying(statement, claim);
+  const negated = NEGATION.test(String(statement ?? ''));
+  return clauses.length > 0 && clauses.every(clause => NEGATION.test(clause) !== negated);
+}
+
+// The claim says the record's own condition continues: a clause carrying it with the same polarity and a word of
+// continuation ("still", "remains", "continues").
+export function claimStatesContinuation(recordSummary, claim) {
+  const negated = NEGATION.test(String(recordSummary ?? ''));
+  return clausesCarrying(recordSummary, claim)
+    .some(clause => CONTINUATION.test(clause) && NEGATION.test(clause) === negated);
+}
+
 function targetAffinity(record, text) {
   if (!record) return false;
 
@@ -505,8 +537,15 @@ function preservesProspectiveStatus(summary) {
 
 // A record that is itself a reported account (a rumour, a report): another report may end it. A record of an
 // arrangement worded as a speech act ("men demanding a levy") is an established condition.
-function reportedAccountRecord(summary) {
+export function reportedAccountRecord(summary) {
   return REPORTED_ACCOUNT_RE.test(String(summary ?? ''));
+}
+
+// A stored claim read on its own (evolution has no source message to judge it in): it reports, or it is a
+// plan or expectation. Such a claim keeps its uncertainty when another writer reuses it.
+export function claimTextAttributed(claim) {
+  const text = String(claim ?? '');
+  return REPORTED_ACCOUNT_RE.test(text) || PROSPECTIVE_CLAIM_RE.test(text);
 }
 
 // What is planned, expected or conditional has not happened: a claim stating it ("the valley will flood",
@@ -667,10 +706,26 @@ export function applyCaptureSourceFirewall(mutation, {
     if (existing && proposedAnchors && !candidate.anchors.length) delete candidate.anchors;
   }
 
-  // An unconfirmed account cannot end an established condition: ending it needs narrated support.
-  // (A record that is itself reported information may be ended by another report.)
   const endsRecord = ['resolve', 'supersede'].includes(candidate.action)
     || ['resolved', 'superseded'].includes(candidate.status);
+
+  // A summary the cited clauses state the opposite of is not established by them.
+  if (!endsRecord && candidate.summary && supportingEvidence.every(item => claimContradictsStatement(candidate.summary, item.claim))) {
+    return {
+      ok: false,
+      reason: 'the cited evidence states the opposite of the proposed summary (a negation), so it cannot establish it',
+    };
+  }
+  // An ending needs evidence of the ending: a claim that says the condition still holds ends nothing.
+  if (existing && endsRecord && supportingEvidence.every(item => claimStatesContinuation(existing.summary, item.claim))) {
+    return {
+      ok: false,
+      reason: 'the cited evidence says the condition continues, so it cannot resolve or supersede it',
+    };
+  }
+
+  // An unconfirmed account cannot end an established condition: ending it needs narrated support.
+  // (A record that is itself reported information may be ended by another report.)
   if (existing && endsRecord && supportingEvidence.every(item => item.attributed)
     && !reportedAccountRecord(existing.summary)) {
     return {
