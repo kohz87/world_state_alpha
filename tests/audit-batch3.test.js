@@ -151,7 +151,7 @@ test('the live capture handler records captures the chat switch or a mid-save sw
   assert.match(handler, /contentLineageKey\(captureMessages, messageId, captureLineage\)/);
   // A superseded row settles only its own attempt.
   assert.match(handler, /outcome: 'superseded',[\s\S]{0,200}operationId: captureOperationId,|operationId: captureOperationId,[\s\S]{0,200}outcome: 'superseded',/);
-  const pending = source.slice(source.indexOf('function pendingCaptureFailures('), source.indexOf('function capturesFailedBefore('));
+  const pending = source.slice(source.indexOf('function pendingCaptureFailures('), source.indexOf('function invalidateChatOperations('));
   assert.match(pending, /currentContentLineageKeys\(chat, lineage, needKeys\)/);
   assert.match(pending, /hiddenConversationRole\(chat\[messageId\]\) === 'assistant'/);
 });

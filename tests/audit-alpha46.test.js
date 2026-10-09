@@ -17,7 +17,7 @@ test('A09/A10: a rename clears the old log only after the new owner saved it; a 
   assert.match(retire, /const target = liveOperationLogKey\(successorKey\);[\s\S]*?if \(!await saveOperationLog\(target\)\) \{\s*retry\(\);\s*return;\s*\}/);
   // The old log's lock is released before the new log is saved (opposite renames cannot deadlock).
   assert.match(retire, /const server = await queueOperationLogWrite\(chatKey, \(\) => readOperationLogForMerge\(chatKey\)/);
-  assert.match(retire, /operationLogSuccessors\.set\(chatKey, successorKey\);[\s\S]{0,120}retiredOperationLogs\.delete\(successorKey\);/);
+  assert.match(retire, /operationLogSuccessors\.set\(chatKey, successorKey\);[\s\S]{0,300}if \(attempt === 0\) retiredOperationLogs\.delete\(successorKey\);/);
   const save = source.slice(source.indexOf('async function saveOperationLogLocked('), source.indexOf('function scheduleOperationLogSave('));
   // Before: an upload error was only logged; the rows were not retried, flushed or parked.
   assert.match(save, /await hostStorage\.uploadJsonFile\(operationLogFile\(chatKey\), operationLogBody\(chatKey, rows\)\);\s*\} catch \(error\) \{[\s\S]*?postponeOperationLogSave\(chatKey, snapshot, attempt\);\s*return false;/);

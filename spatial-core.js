@@ -6,16 +6,8 @@ import {
   SPATIAL_LIMITS,
   SPATIAL_LOCATION_STATUSES,
 } from './constants.js';
-import { clone, uniqueStrings as boundedUniqueStrings } from './common.js';
+import { boundedText, clone, uniqueStrings } from './common.js';
 import { canonicalText, deterministicId, stableStringify } from './hash.js';
-
-// Idempotent: a value cut right after a space is trimmed again (base-map digests re-parse stored names).
-function boundedText(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max).trim() : '';
-}
-
-// The shared helper, bounding each item with the idempotent rule above.
-const uniqueStrings = (value, maxItems, maxChars) => boundedUniqueStrings(value, maxItems, maxChars, boundedText);
 
 function messageId(value) {
   return Number.isInteger(value) && value >= 0 ? value : null;

@@ -70,6 +70,9 @@ const stateCache = new Map();
 const relevanceIndices = new Map();
 // Chats whose saved sidecar could not be read: chat key -> that file's path, replaceable by a recovery write.
 const corruptSidecars = new Map();
+// This session's own sidecar writes per chat: running now, and started so far.
+const sidecarWritesInFlight = new Map();
+const sidecarWriteStarts = new Map();
 // Counts canonical state replacements per chat (not lineage-only extensions): what a running rebuild compares.
 const canonicalGenerations = new Map();
 const spatialRelevanceIndices = new Map();
@@ -107,8 +110,8 @@ const deleteRetryTimers = new Map();
 const OPERATION_LOG_LIMIT = 80;
 const diagnosticStore = createDiagnosticStore({
   limit: OPERATION_LOG_LIMIT,
-  onRecord: (chatKey, row) => scheduleOperationLogSave(chatKey, {
-    now: affectsCaptureRecovery(row, { failuresListed: capturesFailedBefore(chatKey) }),
+  onRecord: (chatKey, row, { failuresListed = false } = {}) => scheduleOperationLogSave(chatKey, {
+    now: affectsCaptureRecovery(row, { failuresListed }),
   }),
 });
 const rebuildStatuses = new Map();
@@ -301,6 +304,10 @@ function saveOperationLog(chatKey, snapshot = null, attempt = 0) {
 
 async function saveOperationLogLocked(chatKey, snapshot, attempt) {
   if (retiredOperationLogs.has(chatKey)) return false;
+  // This session's rows as they are now: if the chat leaves the cache while the saved log is read (its rows
+  // are cleared), they are still saved, as a snapshot, and the cleared chat is not marked loaded.
+  const generation = operationStoreGenerations.get(chatKey) || 0;
+  const localAtStart = snapshot || diagnosticStore.allRecords(chatKey);
   let server;
   try {
     server = await readOperationLogForMerge(chatKey);
@@ -309,6 +316,7 @@ async function saveOperationLogLocked(chatKey, snapshot, attempt) {
     postponeOperationLogSave(chatKey, snapshot, attempt);
     return false;
   }
+  if (!snapshot && (operationStoreGenerations.get(chatKey) || 0) !== generation) snapshot = localAtStart;
   if (!snapshot && !operationLogLoads.has(chatKey)) {
     diagnosticStore.merge(chatKey, server);
     operationLogLoads.set(chatKey, Promise.resolve());
@@ -360,6 +368,8 @@ function flushAllOperationLogs() {
 // Where a renamed chat's log now lives: renames can chain (A to B to C) before
 // an earlier retirement has finished.
 const operationLogSuccessors = new Map();
+// Bumped when a chat leaves the cache (its Operations rows are cleared).
+const operationStoreGenerations = new Map();
 
 function liveOperationLogKey(chatKey) {
   let key = chatKey;
@@ -377,8 +387,9 @@ function retireOperationLog(chatKey, successorKey = '', attempt = 0) {
   retiredOperationLogs.add(chatKey);
   if (successorKey) {
     operationLogSuccessors.set(chatKey, successorKey);
-    // A rename target is live again (renaming back reuses a retired identity).
-    retiredOperationLogs.delete(successorKey);
+    // A rename target is live again (renaming back reuses a retired identity). Only the rename itself does
+    // this: a retry must not revive a successor that was renamed or deleted in the meantime.
+    if (attempt === 0) retiredOperationLogs.delete(successorKey);
   }
   // Rows parked after a failed save follow a rename and are dropped with a deleted chat.
   const parked = attempt === 0 ? unsavedOperationRows.get(chatKey) || [] : [];
@@ -416,7 +427,9 @@ function retireOperationLog(chatKey, successorKey = '', attempt = 0) {
       }
       await queueOperationLogWrite(chatKey, () => hostStorage.uploadJsonFile(operationLogFile(chatKey), operationLogBody(chatKey, [])));
     } catch (error) {
-      console.warn('[World State Alpha] retired Operations log could not be cleared.', error);
+      // Retried (a deleted chat's rows must not stay on the server for a later chat reusing its name).
+      console.warn('[World State Alpha] retired Operations log could not be cleared; retrying.', error);
+      retry();
     }
   })();
 }
@@ -579,6 +592,7 @@ function forgetCachedChat(chatKey) {
   chatCacheTouches.delete(key);
   flushOperationLog(key);
   diagnosticStore.clear(key);
+  operationStoreGenerations.set(key, (operationStoreGenerations.get(key) || 0) + 1);
   operationLogLoads.delete(key);
   operationLogsHydrated.delete(key);
   rebuildStatuses.delete(key);
@@ -690,10 +704,20 @@ async function getChatBaseMap(chatKey, state) {
   return null;
 }
 
+// The index remembers the base map it was built with: one built while the map was not loaded yet (a failed
+// load, another device's newly attached map, an evicted map) is rebuilt once the map is at hand, so base-map
+// places are shown to capture and injection instead of being missed or duplicated.
+function buildSpatialIndexFor(spatialState, baseMap) {
+  const index = buildSpatialRelevanceIndex(spatialState, baseMap);
+  index.baseMapLocations = baseMap?.locations || null;
+  return index;
+}
+
 function getSpatialRelevanceIndex(chatKey, spatialState, baseMap) {
   if (!chatKey || chatKey === 'no-chat' || !spatialState) return null;
-  if (spatialRelevanceIndices.has(chatKey)) return spatialRelevanceIndices.get(chatKey);
-  const index = buildSpatialRelevanceIndex(spatialState, baseMap);
+  const existing = spatialRelevanceIndices.get(chatKey);
+  if (existing && (!baseMap?.locations || existing.baseMapLocations === baseMap.locations)) return existing;
+  const index = buildSpatialIndexFor(spatialState, baseMap);
   spatialRelevanceIndices.set(chatKey, index);
   return index;
 }
@@ -703,7 +727,7 @@ function resetSpatialRelevanceIndex(chatKey, spatialState, baseMap) {
     spatialRelevanceIndices.delete(chatKey);
     return null;
   }
-  const index = buildSpatialRelevanceIndex(spatialState, baseMap);
+  const index = buildSpatialIndexFor(spatialState, baseMap);
   spatialRelevanceIndices.set(chatKey, index);
   return index;
 }
@@ -760,12 +784,6 @@ function pendingCaptureFailures(chatKey) {
   return [...new Set(ids)].sort((a, b) => a - b);
 }
 
-// Whether a failure was listed before the row just recorded, so its recovery is saved at once.
-function capturesFailedBefore(chatKey) {
-  const rows = diagnosticStore.recoveryRows(chatKey);
-  return unrecoveredCaptureFailures(rows.slice(0, -1)).length > 0;
-}
-
 // Bumped only by explicit invalidation (settings, ownership changes), never by branch events or new
 // canonical state, so a manual rebuild can tell "the operator kept playing" from "start over".
 const operationInvalidations = new Map();
@@ -785,9 +803,12 @@ function setCachedState(chatKey, state, {
   // A forward lineage extension of the same canonical state (the chat grew): it is not new canonical state.
   lineageOnly = false,
 } = {}) {
-  if (!lineageOnly) canonicalGenerations.set(chatKey, (canonicalGenerations.get(chatKey) || 0) + 1);
-  // Any new canonical state makes a failed rebuild's resume point stale.
-  rebuildResumes.delete(chatKey);
+  // Any new canonical state makes a failed rebuild's resume point stale; the chat growing does not (Resume
+  // re-checks its own range and the canonical state when it is used).
+  if (!lineageOnly) {
+    canonicalGenerations.set(chatKey, (canonicalGenerations.get(chatKey) || 0) + 1);
+    rebuildResumes.delete(chatKey);
+  }
   const normalized = normalizeState(state, { strictSchema: true, chatKey });
   stateCache.set(chatKey, normalized);
   const hydratedPointer = sourcePointer === undefined ? pointerFor(chatKey) : sourcePointer;
@@ -1014,16 +1035,27 @@ async function persistState(chatKey, state = stateCache.get(chatKey), {
     if (recovered?.pointer) pointer = recovered.pointer;
   }
 
-  const committed = await writeSidecar({
-    adapter: hostStorage,
-    chatKey,
-    state,
-    pointer,
-    appVersion: WORLD_STATE_ALPHA_VERSION,
-    // Only an explicit recovery (Full rebuild, import, reset) may replace a damaged sidecar, and only the
-    // file recorded as damaged.
-    replaceCorrupt: baselineRecoveryWrite ? corruptSidecars.get(chatKey) || '' : '',
-  });
+  // Counted while it runs: a freshness check reading the server meanwhile may see this write before its
+  // answer arrives here, and must not adopt it as another session's.
+  sidecarWritesInFlight.set(chatKey, (sidecarWritesInFlight.get(chatKey) || 0) + 1);
+  sidecarWriteStarts.set(chatKey, (sidecarWriteStarts.get(chatKey) || 0) + 1);
+  let committed;
+  try {
+    committed = await writeSidecar({
+      adapter: hostStorage,
+      chatKey,
+      state,
+      pointer,
+      appVersion: WORLD_STATE_ALPHA_VERSION,
+      // Only an explicit recovery (Full rebuild, import, reset) may replace a damaged sidecar, and only the
+      // file recorded as damaged.
+      replaceCorrupt: baselineRecoveryWrite ? corruptSidecars.get(chatKey) || '' : '',
+    });
+  } finally {
+    const left = (sidecarWritesInFlight.get(chatKey) || 1) - 1;
+    if (left > 0) sidecarWritesInFlight.set(chatKey, left);
+    else sidecarWritesInFlight.delete(chatKey);
+  }
   assertOwnershipEpoch(chatKey, ownerEpoch);
   corruptSidecars.delete(chatKey);
 
@@ -1184,6 +1216,17 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
       console.warn('[World State Alpha] identity migration could not load the source sidecar:', oldKey);
       return false;
     }
+    return true;
+  }
+  // A chat that still needs recovery (no baseline, a missing or damaged sidecar) caches only a stand-in:
+  // writing it would give the renamed chat a fresh, empty continuity. Nothing durable moves; the new name
+  // stays recovery-required until a Full chat rebuild, an import or a reset.
+  if (!recoveredSource?.payload?.state && bootstrapRequiredChats.has(oldKey)) {
+    await retireOperationLog(oldKey, newKey);
+    clearChatRuntimeState(oldKey);
+    bootstrapRequiredChats.add(newKey);
+    if (activeChatKey === oldKey) activeChatKey = newKey;
+    if (panelChatKey === oldKey) closeWorldStatePanel();
     return true;
   }
 
@@ -1727,8 +1770,11 @@ async function ensureChatStateLoaded(chatKey = currentChatKey()) {
       }
       return loadedState;
     } catch (error) {
-      if (error?.code !== 'WORLD_STATE_STALE_OWNERSHIP') hydrationErrors.set(chatKey, error);
-      loadedChats.delete(chatKey);
+      // A load overtaken by an ownership change leaves the newer load's result alone.
+      if (error?.code !== 'WORLD_STATE_STALE_OWNERSHIP') {
+        hydrationErrors.set(chatKey, error);
+        loadedChats.delete(chatKey);
+      }
       throw error;
     } finally {
       if (loadingChats.get(chatKey) === loading) loadingChats.delete(chatKey);
@@ -1759,8 +1805,17 @@ async function recheckProvisionalFreshHydration(chatKey = currentChatKey()) {
   const ownerEpoch = ownershipEpoch(chatKey);
   const pointer = pointerFor(chatKey);
   try {
-    const recovered = await recoverExistingSidecarPointer(chatKey, pointer, { retryDeterministicMiss: true, readOnly: true });
+    const recovered = await recoverExistingSidecarPointer(chatKey, pointer, { retryDeterministicMiss: true, readOnly: true, reportCorrupt: true });
     assertOwnershipEpoch(chatKey, ownerEpoch);
+
+    // A damaged sidecar keeps the chat recovery-required (Full chat rebuild, import or reset), as the load
+    // decided: it is not a hydration error on every activation.
+    if (recovered?.corrupt) {
+      provisionalFreshChats.delete(chatKey);
+      corruptSidecars.set(chatKey, recovered.path);
+      bootstrapRequiredChats.add(chatKey);
+      return false;
+    }
 
     if (!recovered) {
       provisionalFreshChats.delete(chatKey);
@@ -1802,8 +1857,10 @@ async function recheckProvisionalFreshHydration(chatKey = currentChatKey()) {
     });
     return true;
   } catch (error) {
-    if (error?.code !== 'WORLD_STATE_STALE_OWNERSHIP') hydrationErrors.set(chatKey, error);
-    loadedChats.delete(chatKey);
+    if (error?.code !== 'WORLD_STATE_STALE_OWNERSHIP') {
+      hydrationErrors.set(chatKey, error);
+      loadedChats.delete(chatKey);
+    }
     throw error;
   }
 }
@@ -1875,6 +1932,7 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   const startHydratedPointer = hydratedPointerFor(chatKey);
   const preferredPointer = startSettingsPointer?.path ? startSettingsPointer : startHydratedPointer;
   const startSettingsToken = sidecarPointerToken(startSettingsPointer);
+  const startWrites = sidecarWriteStarts.get(chatKey) || 0;
 
   const recovered = await recoverExistingSidecarPointer(chatKey, preferredPointer, {
     retryDeterministicMiss: retryDeterministicMiss ?? Boolean(preferredPointer?.path),
@@ -1883,8 +1941,10 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   });
   assertOwnershipEpoch(chatKey, ownerEpoch);
 
+  // A write of this session's that ran during the read may be what the read saw: never adopt it as foreign.
   if (epoch(chatKey) !== startStateEpoch
-    || sidecarPointerToken(pointerFor(chatKey)) !== startSettingsToken) {
+    || sidecarPointerToken(pointerFor(chatKey)) !== startSettingsToken
+    || sidecarWritesInFlight.get(chatKey) || (sidecarWriteStarts.get(chatKey) || 0) !== startWrites) {
     return { outcome: 'raced', changed: false };
   }
 
@@ -2232,6 +2292,13 @@ function chatHeadGuard(chatKey) {
     && stableStringify(chatLineage(getContext().chat || [])) === startLineage;
 }
 
+// After a stale write was compensated, the server holds the restored state at a new revision. When the
+// cache is that restored state, it now stands for that revision: otherwise the next freshness check takes
+// this session's own write for another session's (cancelling requests and a running rebuild).
+function noteCompensatedRevision(chatKey, restoredState, pointer) {
+  if (pointer?.path && stateCache.get(chatKey) === restoredState) hydratedPointers.set(chatKey, structuredClone(pointer));
+}
+
 async function persistGuardedMutation({
   chatKey,
   candidateState,
@@ -2258,7 +2325,8 @@ async function persistGuardedMutation({
 
   try {
     if (!recoveryState) throw new Error('No authoritative recovery state was available.');
-    await persistState(chatKey, recoveryState, { expectedPointer: committed });
+    const restored = await persistState(chatKey, recoveryState, { expectedPointer: committed });
+    noteCompensatedRevision(chatKey, recoveryState, restored);
   } catch (restoreError) {
     const detail = String(restoreError?.message || restoreError || 'stale write compensation failed').slice(0, 320);
     const blocked = new Error('World State Alpha blocked this chat after a stale ' + label + ' write could not be compensated: ' + detail);
@@ -2565,13 +2633,48 @@ async function handleAssistantMessage(messageId) {
   // the reply with only a console message; it is recorded as a missed capture instead.
   let captureStarted = false;
   const startFingerprint = storyFingerprintOf(message);
+  // The messages as they are now (a shallow copy): if a chat switch abandons the capture before it starts,
+  // the missed capture is still recorded with this message's own keys.
+  const prefix = chat.slice(0, messageId + 1);
   await queueChatWork(chatKey, async () => {
+    let outcome;
     try {
-      await captureAssistantBoundary(chatKey, messageId, () => { captureStarted = true; });
+      outcome = await captureAssistantBoundary(chatKey, messageId, () => { captureStarted = true; });
     } catch (error) {
       if (!captureStarted) recordCaptureStartFailure(chatKey, messageId, startFingerprint, error);
       throw error;
     }
+    if (captureStarted) return;
+    if (currentChatKey() !== chatKey) recordAbandonedCapture(chatKey, messageId, prefix, startFingerprint);
+    else if (outcome === 'branch-unavailable') {
+      recordCaptureStartFailure(chatKey, messageId, startFingerprint, {
+        code: 'WORLD_STATE_CAPTURE_BRANCH_UNAVAILABLE',
+        message: 'the chat branch could not be proven, so this reply was not captured',
+      });
+    }
+  });
+}
+
+// A capture abandoned before it started because the chat was switched away is a missed capture (alpha.44),
+// recorded with the keys of the message as it was when the reply arrived.
+function recordAbandonedCapture(chatKey, messageId, prefix, startFingerprint) {
+  const settings = getWorldStateSettings();
+  if (!settings.enabled || !settings.autoCapture || bootstrapRequiredChats.has(chatKey)) return;
+  const message = prefix[messageId];
+  if (!message || storyFingerprintOf(message) !== startFingerprint) return;
+  const lineageKey = chatLineage(prefix)[messageId]?.lineageKey || '';
+  // A reply the state already holds (a swipe back to a captured, resumed branch) was not missed.
+  const state = stateCache.get(chatKey);
+  if (lineageKey && state?.lastCaptureMessage === messageId && state.lineage?.[messageId]?.lineageKey === lineageKey) return;
+  diagnosticStore.record(chatKey, {
+    operationId: 'capture:' + messageId + ':abandoned:' + Date.now(),
+    label: 'capture',
+    sourceMessageId: messageId,
+    lineageKey,
+    contentLineageKey: contentLineageKey(prefix, messageId),
+    outcome: 'stale',
+    code: 'WORLD_STATE_CAPTURE_ABANDONED',
+    detail: 'Capture was abandoned before it started because the chat was switched.',
   });
 }
 
@@ -2618,7 +2721,8 @@ async function captureAssistantBoundary(chatKey, messageId, markStarted) {
   if (branch?.failClosed) {
     updatePrivateInjection();
     refreshPanel();
-    return;
+    // Not captured, so listed as a missed capture rather than dropped without a trace.
+    return currentChatKey() === chatKey ? 'branch-unavailable' : undefined;
   }
 
   const liveChat = getContext().chat || [];
@@ -3032,9 +3136,14 @@ function scheduleBranchCapture(chatKey) {
   // reply is captured by MESSAGE_RECEIVED when it completes.
   if (Array.isArray(message.swipes) && Number.isInteger(message.swipe_id) && message.swipe_id >= message.swipes.length) return;
   const fingerprint = fingerprintMessage(message);
+  const prefix = chat.slice(0, messageId + 1);
+  const storyStart = storyFingerprintOf(message);
   branchCaptureTimers.set(chatKey, setTimeout(() => {
     branchCaptureTimers.delete(chatKey);
-    if (currentChatKey() !== chatKey) return;
+    if (currentChatKey() !== chatKey) {
+      recordAbandonedCapture(chatKey, messageId, prefix, storyStart);
+      return;
+    }
     const live = getContext().chat || [];
     if (live.length - 1 !== messageId || fingerprintMessage(live[messageId]) !== fingerprint) return;
     void handleAssistantMessage(messageId).catch(error => {
@@ -3412,7 +3521,19 @@ async function applyMaintenanceAction(actionId, payload = {}, expectedChatKey = 
   }
 
   return queueChatWork(chatKey, () => applyMaintenanceActionNow(actionId, payload, chatKey))
-    .catch(error => actionFailed('World State maintenance (' + actionId + ')', error, chatKey));
+    .catch(error => {
+      // A rebuild that throws past its own handling never stays 'running' or 'committing': that would block
+      // Forfeit and new rebuilds until a reload.
+      if (actionId === 'rebuild' && rebuildRunning(chatKey)) {
+        rebuildStatuses.set(chatKey, {
+          ...(rebuildStatuses.get(chatKey) || {}),
+          phase: 'failed',
+          detail: String(error?.message || error || 'rebuild failed').slice(0, 320),
+          completedAt: Date.now(),
+        });
+      }
+      return actionFailed('World State maintenance (' + actionId + ')', error, chatKey);
+    });
 }
 
 function rebuildRunning(chatKey) {
@@ -3461,6 +3582,7 @@ async function forfeitMissedCapture(chatKey, payload) {
     + 'World State does not change: whatever that reply established stays uncaptured unless you add it by hand. '
     + 'It is no longer listed as a missed capture, but a later Recapture or rebuild that covers this message still re-reads it.')) return false;
   if (currentChatKey() !== chatKey || rebuildRunning(chatKey)) return false;
+  // A row that clears a listed failure is saved at once (the store reports the failure it clears).
   diagnosticStore.record(chatKey, {
     operationId: 'capture:' + messageId + ':forfeited:' + Date.now(),
     label: 'capture',
@@ -3471,9 +3593,6 @@ async function forfeitMissedCapture(chatKey, payload) {
     code: 'WORLD_STATE_CAPTURE_FORFEITED',
     detail: 'The operator forfeited this missed capture; World State was not changed.',
   });
-  // Saved at once: recording it can trim away the failure it clears, which would otherwise leave it to the
-  // log's quiet period.
-  scheduleOperationLogSave(chatKey, { now: true });
   notify('success', 'Missed capture of message ' + messageId + ' forfeited. World State is unchanged.');
   refreshPanel();
   return true;
@@ -3970,11 +4089,16 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       rebuildCommitted = await persistState(chatKey, result.state, {
         allowBootstrapRecovery: bootstrapRecoveryAtStart && mode === 'full',
       });
-    } catch (error) {
-      if (await handleServerRevisionConflict(chatKey, error, {
-        label: 'rebuild',
-        sourceMessageId,
-      })) {
+    } catch (persistError) {
+      let error = persistError;
+      let conflictHandled = false;
+      try {
+        conflictHandled = await handleServerRevisionConflict(chatKey, persistError, { label: 'rebuild', sourceMessageId });
+      } catch (conflictError) {
+        // The conflict's rehydration failed too: the rebuild ends as failed below, never stuck at 'committing'.
+        error = conflictError;
+      }
+      if (conflictHandled) {
         const detail = 'Rebuild candidate was rejected because another session advanced the server state; the latest durable state was rehydrated.';
         rebuildStatuses.set(chatKey, {
           ...(rebuildStatuses.get(chatKey) || {}),
@@ -4089,10 +4213,11 @@ async function applyMaintenanceActionNow(actionId, payload, chatKey) {
       }
 
       try {
-        await persistState(chatKey, state, {
+        const restored = await persistState(chatKey, state, {
           allowBootstrapRecovery: true,
           expectedPointer: rebuildCommitted,
         });
+        noteCompensatedRevision(chatKey, state, restored);
       } catch (restoreError) {
         const detail = String(restoreError?.message || restoreError || 'stale rebuild compensation failed').slice(0, 320);
         const blocked = new Error('World State Alpha blocked this chat after a stale rebuild write could not be compensated: ' + detail);

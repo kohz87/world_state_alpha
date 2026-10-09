@@ -78,9 +78,12 @@ test('Phase 7 host sidecar filenames are World State-only and deterministic', ()
 
 test('SillyTavern host storage GETs pointers, uploads base64 JSON, and returns actual server path', async () => {
   const calls = [];
+  let uploaded = null;
   const fetchFn = async (url, options = {}) => {
     calls.push({ url, options });
     if (url === '/user/files/world-state-alpha-existing.json') {
+      // Without Web Locks the write reads its own upload back.
+      if (uploaded !== null) return response({ text: uploaded });
       return response({
         text: encodeSidecar({
           chatKey: 'chat:a:c',
@@ -92,6 +95,7 @@ test('SillyTavern host storage GETs pointers, uploads base64 JSON, and returns a
       });
     }
     if (url === '/api/files/upload') {
+      uploaded = Buffer.from(JSON.parse(options.body).data, 'base64').toString('utf8');
       return response({ json: { path: '/user/files/world-state-alpha-existing.json' } });
     }
     throw new Error('unexpected URL ' + url);
@@ -436,7 +440,7 @@ test('cross-session hydration waits for host readiness, retries deterministic re
   assert.match(source, /const STARTUP_SIDECAR_RETRY_DELAYS_MS = Object\.freeze\(\[120, 240\]\)/);
   assert.match(source, /async function recoverExistingSidecarPointer\(chatKey, preferredPointer = null, \{[\s\S]*retryDeterministicMiss = false/);
   assert.match(source, /retryDeterministicMiss && deterministic[\s\S]*STARTUP_SIDECAR_RETRY_DELAYS_MS/);
-  assert.match(source, /loadChatState\(chatKey\)[\s\S]*recoverExistingSidecarPointer\(chatKey, pointer, \{ retryDeterministicMiss: true(?:, readOnly: true)? \}\)/);
+  assert.match(source, /loadChatState\(chatKey\)[\s\S]*recoverExistingSidecarPointer\(chatKey, pointer, \{ retryDeterministicMiss: true(?:, readOnly: true)?(?:, reportCorrupt: true)? \}\)/);
   assert.match(source, /if \(!hostHydrationReady\)[\s\S]*WORLD_STATE_HOST_NOT_READY/);
   assert.match(source, /provisionalFreshChats\.add\(chatKey\)[\s\S]*chatHasEstablishedHistory\(chatKey\)[\s\S]*bootstrapRequiredChats\.add\(chatKey\)/);
   assert.match(source, /async function recheckProvisionalFreshHydration\(chatKey = currentChatKey\(\)\)/);
@@ -751,6 +755,7 @@ test('stale in-flight mutation writes are compensated before publication', async
     'hydrationErrors',
     'clearPrivatePrompt',
     'diagnosticStore',
+    'noteCompensatedRevision',
     'return (' + body.replace(/^async function persistGuardedMutation/, 'async function') + ');',
   );
   const helper = factory(
@@ -766,6 +771,7 @@ test('stale in-flight mutation writes are compensated before publication', async
     new Map(),
     () => {},
     { record(_chatKey, row) { diagnostics.push(row); } },
+    () => {},
   );
 
   const result = await helper({
@@ -1124,6 +1130,7 @@ test('branch changes resume parked branches and capture a settled swipe or edite
     const schedule = new Function(
       'clearBranchCaptureTimer', 'getContext', 'messageRole', 'messageText', 'fingerprintMessage',
       'branchCaptureTimers', 'setTimeout', 'currentChatKey', 'handleAssistantMessage', 'BRANCH_CAPTURE_DELAY_MS', 'console',
+      'storyFingerprintOf', 'recordAbandonedCapture',
       'return (' + body + ');',
     )(
       key => timers.delete(key),
@@ -1137,6 +1144,8 @@ test('branch changes resume parked branches and capture a settled swipe or edite
       async messageId => { captured.push(messageId); },
       900,
       console,
+      message => message.content,
+      () => {},
     );
     schedule('chat:test');
     if (pending) pending();
@@ -1184,7 +1193,7 @@ test('a local tail delete or regenerate rolls back instead of being mistaken for
 
 test('the Operations log is kept in its own per-chat server file, merged on save and carried across rename', () => {
   const source = fs.readFileSync('index.js', 'utf8');
-  assert.match(source, /createDiagnosticStore\(\{\s*limit: OPERATION_LOG_LIMIT,\s*onRecord: \(chatKey, row\) => scheduleOperationLogSave\(chatKey, \{\s*now: affectsCaptureRecovery\(row, \{ failuresListed: capturesFailedBefore\(chatKey\) \}\),\s*\}\),\s*\}\)/);
+  assert.match(source, /createDiagnosticStore\(\{\s*limit: OPERATION_LOG_LIMIT,\s*onRecord: \(chatKey, row, \{ failuresListed = false \} = \{\}\) => scheduleOperationLogSave\(chatKey, \{\s*now: affectsCaptureRecovery\(row, \{ failuresListed \}\),\s*\}\),\s*\}\)/);
   // Rows that decide missed-capture recovery are saved at once; everything else waits for the quiet period,
   // and pending rows are flushed when the page is hidden or unloaded.
   assert.match(source, /if \(now\) \{\s*operationLogTimers\.delete\(chatKey\);\s*void saveOperationLog\(chatKey\);\s*return;\s*\}/);
@@ -1250,7 +1259,10 @@ test('a first write to a logical sidecar path is revision-checked against the de
     fetchFn: async (url, options = {}) => {
       calls.push([url, options.method]);
       if (url === physical && options.method === 'GET') return serverText === null ? response({ status: 404 }) : response({ text: serverText });
-      if (url === '/api/files/upload') return response({ json: { path: physical } });
+      if (url === '/api/files/upload') {
+        serverText = Buffer.from(JSON.parse(options.body).data, 'base64').toString('utf8');
+        return response({ json: { path: physical } });
+      }
       throw new Error('unexpected URL ' + url);
     },
   });
@@ -1265,7 +1277,8 @@ test('a first write to a logical sidecar path is revision-checked against the de
   calls.length = 0;
   const written = await adapter.write({ path: logical, expectedRevision: 0, body: firstBody });
   assert.equal(written.revision, 1);
-  assert.deepEqual(calls.map(call => call[0]), [physical, '/api/files/upload']);
+  // Without Web Locks the upload is read back to detect a concurrent writer.
+  assert.deepEqual(calls.map(call => call[0]), [physical, '/api/files/upload', physical]);
 });
 
 test('batch-1 host guards: file pickers before the queue, Places edits from canonical state, safe renames', () => {

@@ -76,10 +76,15 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     if (!key) return null;
     const rows = byChat.get(key) || [];
     const value = sanitizeCaptureDiagnostic({ ...raw, at: raw.at ?? now() });
+    // Whether a failure was listed before this row, judged before the trim below can drop the failure it
+    // clears: the host saves such a recovery at once.
+    const failuresListed = typeof onRecord === 'function' && isCaptureRecovery(value)
+      ? unrecoveredFailureLists(rows.map(recoveryView)).length > 0
+      : false;
     rows.push(value);
     byChat.set(key, rows.length > max ? trimOperationRows(rows, max) : rows);
     if (typeof onRecord === 'function') {
-      try { onRecord(key, recoveryView(value)); } catch { /* persistence hooks never break telemetry */ }
+      try { onRecord(key, recoveryView(value), { failuresListed }); } catch { /* persistence hooks never break telemetry */ }
     }
     return clone(value);
   }
@@ -215,10 +220,11 @@ function sameCaptureLineage(failure, row) {
 // Walks the log in time order. A failure is identified by message and the
 // message's lineage key (so another swipe's capture does not clear it), and is
 // cleared by a later successful or forfeited capture of the same message and lineage, a
-// completed rebuild whose start covers it (a rebuild also drops parked
+// completed rebuild whose range covers it (a rebuild also drops parked
 // branches), or an import/reset that replaced the state. Returns each
 // unrecovered version's failure rows, oldest first.
-function unrecoveredFailureLists(rows = []) {
+// `clearing` (optional Set) collects the recovery rows that cleared at least one failure row of the walk.
+function unrecoveredFailureLists(rows = [], clearing = null) {
   // Per message version: its unrecovered failure rows, oldest first. A
   // 'superseded' row removes only its own attempt, so an earlier failure of
   // the same version stays listed.
@@ -232,8 +238,16 @@ function unrecoveredFailureLists(rows = []) {
     for (const [key, list] of [...failed]) {
       if (list[0].sourceMessageId !== row.sourceMessageId) continue;
       const kept = list.filter(failure => !matches(failure));
+      if (kept.length !== list.length) clearing?.add(row);
       if (kept.length) failed.set(key, kept);
       else failed.delete(key);
+    }
+  };
+  const clearWhere = (row, test) => {
+    for (const [key, list] of [...failed]) {
+      if (!test(list[0].sourceMessageId)) continue;
+      clearing?.add(row);
+      failed.delete(key);
     }
   };
   for (const row of ordered) {
@@ -255,11 +269,14 @@ function unrecoveredFailureLists(rows = []) {
     } else if (row.label === 'capture' && Number.isInteger(row.sourceMessageId) && row.outcome === CAPTURE_SUPERSEDED) {
       drop(row, failure => Boolean(failure.operationId) && failure.operationId === row.operationId);
     } else if (row.label === 'rebuild' && row.outcome === 'rebuild-completed') {
+      // A rebuild recovered the messages of its own range only: from its start to the last message it read
+      // (the row's message). A reply added and missed while it ran stays listed.
       const start = rebuildStartFromOperationId(row.operationId);
       if (start === null) continue;
-      for (const [key, list] of [...failed]) if (list[0].sourceMessageId >= start) failed.delete(key);
+      const end = Number.isInteger(row.sourceMessageId) ? row.sourceMessageId : Infinity;
+      clearWhere(row, messageId => messageId >= start && messageId <= end);
     } else if ((row.label === 'import' || row.label === 'reset') && row.outcome === 'applied') {
-      failed.clear();
+      clearWhere(row, () => true);
     }
   }
   return [...failed.values()];
@@ -289,10 +306,15 @@ const MAX_PINNED_FAILURE_ROWS = 400;
 export function trimOperationRows(rows = [], max = DEFAULT_LIMIT) {
   const list = Array.isArray(rows) ? rows : [];
   if (list.length <= max) return list.slice();
-  const unrecovered = unrecoveredFailureLists(list).flat();
+  // A row that clears a failure still in the list is kept with the unrecovered failures: dropped together
+  // with that failure, the server's copy of the failure would come back on the next save with nothing to
+  // clear it. (Once the failure itself is gone from the list and the saved log, the row may go.)
+  const clearing = new Set();
+  const unrecovered = unrecoveredFailureLists(list, clearing).flat();
   const pinned = new Set([...unrecovered]
     .sort((a, b) => (a.sourceMessageId - b.sourceMessageId) || (int(a.at) - int(b.at)))
     .slice(0, MAX_PINNED_FAILURE_ROWS));
+  for (const row of clearing) pinned.add(row);
   const keepAnswers = new Set([...pinned].sort((a, b) => int(b.at) - int(a.at)).slice(0, PINNED_FAILURES));
   let drop = list.length - max;
   return list.filter(row => {
