@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.9.0-alpha.64 - Relevance, evolution, rebuild, injection and panel (deep pass on alpha.60)
+
+### Fixed
+
+- **Relevance and evolution**
+  - A one-word anchor or place name in a spaced script matches whole words only ("été" no longer matches "société", "Иван" no longer matches "Ивановке"). Chinese and Japanese still match inside text.
+  - Function words no longer use up the anchor lookups unless the text uses them as names ("Will").
+  - A due development is no longer dropped because non-due ones filled the four relevant slots.
+  - A background catch-up that does not finish gives its slots back, so it is tried again later.
+  - A `derived: null` list or a capitalized outcome ("Stable") no longer fails the whole evolution response.
+  - An evolution that changes nothing no longer copies the state.
+- **Rebuild and injection**
+  - Rebuild lifecycle and history matching reads Chinese and Japanese text.
+  - Any specific one-word anchor marks a record as addressed, not only when it is the record's only anchor.
+  - An empty or tracker-only boundary no longer commits a no-op that pushes out a real checkpoint.
+  - Background targets and rebuild ties sort the same on every device.
+  - An unset injection budget uses the default instead of turning injection off.
+  - A rebuild whose messages changed while it ran is reported as stale, with a clear reason, instead of "failed: completed".
+- **Panel**
+  - A double-click on Start Rebuild starts one rebuild.
+  - Clearing Max boundaries or Last N keeps the default instead of sending 1.
+  - Select mode ends when no active row remains.
+  - Escape no longer acts on the hidden Places form or Map settings from another tab.
+  - The rebuild sheet focuses its first control, not the backdrop.
+  - Another record no longer expands on its own when the selected one leaves the view.
+  - A place mention opens the right record even if the state changed.
+  - Operations are listed newest first, an expanded row stays expanded, and the model's response keeps its line breaks.
+  - Forfeit no longer waits behind provider calls and redraws the panel. It shows six buttons with "Show all", and a bad message id is no longer read as message 0.
+  - The Missed captures notice is no longer a re-created live region.
+  - Leaving a place form with unsaved edits asks first.
+  - Copy falls back when the clipboard refuses and keeps focus.
+  - A lost pointer capture ends a launcher drag.
+  - A relation stored under an override's own id shows the place's name.
+  - Panel name matching folds names like the Places core.
+  - Panel search matches the start of words ("war" no longer finds "toward").
+
+### Architecture
+
+- No durable format change (schema 2; envelopes 1).
+- Contract C23.1 is corrected (item 109). New C25 records the relevance, rebuild-matching and panel rules, including why rebuild keeps its own boundary-local matcher.
+- ARCHITECTURE's "Operations newest first" now holds (item 110).
+
+### Validation
+
+- New `tests/audit-alpha64.test.js` (17 tests, each failing on 0.9.0-alpha.63).
+- Two older tests updated: Forfeit now shows six buttons before "Show all", and the render call grew.
+- `npm test` (729) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
+- Live in SillyTavern, these behave as on alpha.63: the branch, rebuild, resume, hide, forfeit (now outside the chat queue), alpha.59 and alpha.57 Places scripts.
+
 ## 0.9.0-alpha.63 - Places (deep pass on alpha.60)
 
 ### Fixed
