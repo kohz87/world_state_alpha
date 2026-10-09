@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.0-alpha.67 - Places geometry and provenance (Astra Pro audit A06-A09, A14, A16, A17)
+
+### Fixed
+
+- **Places geometry**
+  - A place moved by name (without its id) in a reply now counts as moved, so a place positioned relative to it is not placed from where it used to be (A06).
+  - In a sentence giving two places two coordinates ("Northford stands at [1, 2], while Southford stands at [5, 6]"), each coordinate counts only for the place named in its own clause; a swapped coordinate is dropped (A07).
+- **Operator decisions**
+  - Archiving or merging places by hand is recorded as your decision, and a rebuild that re-extracts Places no longer brings an archived place back or splits merged duplicates again (A08).
+- **Evolution**
+  - A derived development keeps the evidence of the conditions it was derived from, so a later time skip can still evolve it (A09).
+- **Routes, links and merges**
+  - A route waypoint naming no known place is dropped instead of stored (A14).
+  - The same relationship repeated on later messages is one link instead of a new link each time; duplicates already saved collapse on load (A16).
+  - A merge that turns two relations into one keeps both relations' evidence (A17).
+
+### Architecture
+
+- New contract section C28. No sidecar, bundle or journal format change (schema 2, envelopes 1).
+
+### Validation
+
+- `tests/audit-alpha67.test.js` (7 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+
 ## 0.9.0-alpha.66 - Data and ownership (Astra Pro audit A01-A05, A10, A18, A19)
 
 ### Fixed
