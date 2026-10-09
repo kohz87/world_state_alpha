@@ -216,6 +216,8 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
         continue;
       }
       linkIds.add(link.id);
+      // Links saved before related pairs were deduplicated are kept as they are: dropping them here would
+      // change the canonical domain under the checkpoints that recorded it (and their exact restores).
       state.links.push(link);
     } catch (error) {
       if (strictSchema) throw error;
@@ -369,11 +371,18 @@ function addEvidence(state, record, mutation, context, counter) {
   record.evidenceIds = boundedEvidenceRefs([...record.evidenceIds, ...added]);
 }
 
+function sameRelatedPair(link, left, right) {
+  return link?.type === 'related'
+    && ((link.from === left && link.to === right) || (link.from === right && link.to === left));
+}
+
 function addRelatedLinks(state, record, mutation, context, appendedLinks = null) {
   for (const relatedId of uniqueStrings(mutation.relatedRecordIds, LIMITS.linksPerRecord, 120)) {
     if (relatedId === record.id || !state.records.some(item => item.id === relatedId)) continue;
     const id = linkIdFor(state, relatedId, record.id, 'related', context);
-    if (!state.links.some(link => link.id === id)) {
+    // One relationship between two records is one link (in either direction): repeating it on a later message
+    // adds no second edge.
+    if (!state.links.some(link => link.id === id || sameRelatedPair(link, relatedId, record.id))) {
       const link = normalizeLink({
         id,
         from: relatedId,

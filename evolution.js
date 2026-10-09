@@ -328,12 +328,29 @@ function changeHasCausalSupport(supports) {
   return hasCurrent || (hasTime && hasHistorical);
 }
 
-function newEvidenceFromSupports(supports, currentTimeAnchor) {
+// `includeHistorical`: a derived development keeps the historical evidence of its causes as its own (with
+// its original source class and time anchor), so a later elapsed-time evaluation still has the causal
+// premises it was derived from. An update of an existing record already holds its own.
+function newEvidenceFromSupports(supports, currentTimeAnchor, { includeHistorical = false } = {}) {
   const out = [];
   const seen = new Set();
   for (const support of supports) {
+    if (includeHistorical && support.type === 'historical') {
+      // One key for historical and current support: the same message and claim cited both ways is one entry.
+      const key = `evidence|${support.sourceMessageId}|${support.claim}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        sourceMessageId: support.sourceMessageId,
+        lineageKey: support.lineageKey,
+        sourceClass: support.sourceClass,
+        claim: support.claim,
+        ...(support.timeAnchor ? { timeAnchor: support.timeAnchor } : {}),
+      });
+      continue;
+    }
     if (!['current', 'time'].includes(support.type)) continue;
-    const key = `${support.type}|${support.sourceMessageId}|${support.claim}`;
+    const key = `${support.type === 'current' ? 'evidence' : support.type}|${support.sourceMessageId}|${support.claim}`;
     if (seen.has(key)) continue;
     seen.add(key);
     if (support.type === 'current') {
@@ -476,6 +493,7 @@ function derivedMutation(candidate, context, state, index = null) {
   const evidence = newEvidenceFromSupports(
     [...supportIds].map(id => context.supportCatalog[id]).filter(Boolean),
     context.currentTimeAnchor,
+    { includeHistorical: true },
   );
   return {
     ok: true,
