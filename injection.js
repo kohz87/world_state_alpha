@@ -92,6 +92,9 @@ export function fitLine(line, currentText, budgetTokens) {
   let high = chars.length;
   let best = '';
 
+  // Searched on the budget alone (a shorter cut always fits when a longer one does). The minimum useful
+  // length is checked on the result, never used to steer the search: a cut too short to keep sends the search
+  // to longer cuts, which may still fit.
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
     const candidateBody = mid < chars.length
@@ -99,11 +102,9 @@ export function fitLine(line, currentText, budgetTokens) {
       : raw;
     const candidate = `${prefix}${candidateBody}`;
     const next = `${currentText}\n${candidate}`;
-    const meaningfulChars = [...candidateBody.replace(/…$/u, '')].length;
-    if (candidateBody
-      && (mid === chars.length || meaningfulChars >= 8)
-      && estimateInjectionTokens(next) <= budgetTokens) {
-      best = candidate;
+    if (estimateInjectionTokens(next) <= budgetTokens) {
+      const meaningfulChars = [...candidateBody.replace(/…$/u, '')].length;
+      if (mid === chars.length || meaningfulChars >= 8) best = candidate;
       low = mid + 1;
     } else {
       high = mid - 1;

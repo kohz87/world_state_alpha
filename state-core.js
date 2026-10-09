@@ -8,7 +8,7 @@ import {
   ROLLBACK_JOURNAL_VERSION,
   SCHEMA_VERSION,
 } from './constants.js';
-import { boundedText, clone, keyedUndo, restoreKeyed, uniqueStrings } from './common.js';
+import { boundedText, clone, keyedUndo, ownEntry, reservedMapKey, restoreKeyed, uniqueStrings } from './common.js';
 import { deterministicId, stableStringify } from './hash.js';
 import {
   applySpatialUndoPatch,
@@ -134,6 +134,7 @@ export function normalizeEvidence(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') throw new Error('evidence must be an object');
   const id = boundedText(raw.id, 140);
   if (!id) throw new Error('evidence id is required');
+  if (reservedMapKey(id)) throw new Error(`evidence id is reserved: ${id}`);
   if (strict && raw.sourceClass !== undefined && raw.sourceClass !== null && !EVIDENCE_SOURCE_CLASSES.includes(raw.sourceClass)) {
     throw new Error(`invalid evidence sourceClass: ${raw.sourceClass}`);
   }
@@ -239,7 +240,7 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
   if (strictSchema) {
     for (const record of state.records) {
       for (const evidenceId of record.evidenceIds || []) {
-        if (!state.evidence[evidenceId]) {
+        if (!ownEntry(state.evidence, evidenceId)) {
           throw new Error(`record ${record.id} references missing evidence: ${evidenceId}`);
         }
       }
@@ -355,7 +356,7 @@ function addEvidence(state, record, mutation, context, counter) {
       lineageKey: boundedText(raw.lineageKey, 80) || context.lineageKey,
       recordIds: [record.id],
     });
-    const existing = state.evidence[id];
+    const existing = ownEntry(state.evidence, id);
     if (existing && stableStringify(existing) !== stableStringify(evidence)) {
       throw new Error(`deterministic evidence id collision: ${id}`);
     }

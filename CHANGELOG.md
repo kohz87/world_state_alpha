@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.9.0-alpha.66 - Data and ownership (Astra Pro audit A01-A05, A10, A18, A19)
+
+### Fixed
+
+- **Records**
+  - A new condition about a different named subject is never merged into an existing record because they share a faction or predicate: "Stonehaven is besieged by the Iron Legion" no longer overwrites Ravenford's siege, and two people with the same injury stay two records. The same subject in other words still updates its record (A01).
+- **Places editing**
+  - Saving a place applies only the fields you changed. A field another device changed since you opened the form keeps that device's value, and a field changed on both sides is refused with a warning instead of silently undoing the other edit. A position shown in an old form is no longer taken for a newly typed manual one. Map settings refuse a save when the profile changed elsewhere (A02).
+- **Rename and delete**
+  - A rename or delete overtaken by a newer one stops instead of retiring the newer owner, clearing its cache or emptying its Operations log; a superseded transition is not reported as a failure (A03).
+  - A chat that still needs recovery and is renamed onto an existing empty file stays recovery-required after a reload, until a Full chat rebuild, import or reset (A04).
+- **Recovery**
+  - Hidden roleplay turns count as existing history, so a long chat with hidden older messages asks for recovery instead of starting empty (A05).
+- **Saved data**
+  - Evidence references are checked as the map's own entries: an id such as `constructor` is reported missing, and `__proto__` is not accepted as an evidence id (A10).
+- **Injection**
+  - A line that does not fit whole is cut to the longest useful length instead of sometimes being dropped (A18).
+  - A null or blank saved budget uses the default (800 for World State, 500 for Places) instead of one token, which emptied the injection (A19).
+
+### Architecture
+
+- New contract section C27. New host setting `recoveryRequiredChats` (settings only; no sidecar, bundle or journal format change: schema 2, envelopes 1). `common.js` gains `ownEntry` and `reservedMapKey`; the panel's place detail carries `editBase` and the Places model `profileBase`.
+
+### Validation
+
+- `tests/audit-alpha66.test.js` (13 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+
+### Code review hardening
+
+- A possessive subject ("Ravenford's gates ...") counts as a name, so it no longer slips past the subject check. A summary opening with a plural or abstract noun ("Bandits", "Sickness", "Rioting") is not taken for a name, so paraphrases of one condition still consolidate; names such as "Thomas" stay names. The word sets are computed once per candidate and record.
+- A recovery-required identity renamed onto an existing file can be recovered: the recovery write replaces exactly the revision it reads. Character renames and deletes find such identities, and the marker is read without normalizing all settings.
+- Once a rename or delete is saved to settings, its Operations log still moves and runtime state is cleared only for identities no newer transition owns, instead of stopping half-done.
+- The Places and Map settings forms keep the values they were opened on across re-renders, so a field changed both here and elsewhere is refused even after the panel refreshed; after a refusal the form stands on the current values. A touched position conflicts with an authority or lock changed elsewhere.
+- A budget below one token (typing 0) is the default, as before.
+
 ## 0.9.0-alpha.65 - Shared helpers and bounded per-turn work (deep pass on alpha.60)
 
 ### Fixed

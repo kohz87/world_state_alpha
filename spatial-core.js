@@ -6,7 +6,7 @@ import {
   SPATIAL_LIMITS,
   SPATIAL_LOCATION_STATUSES,
 } from './constants.js';
-import { boundedText, clone, keyedUndo, restoreKeyed, uniqueStrings } from './common.js';
+import { boundedText, clone, keyedUndo, ownEntry, reservedMapKey, restoreKeyed, uniqueStrings } from './common.js';
 import { canonicalText, deterministicId, stableStringify } from './hash.js';
 
 function messageId(value) {
@@ -279,6 +279,7 @@ export function normalizeSpatialEvidence(raw, { strict = false } = {}) {
   if (!raw || typeof raw !== 'object') throw new Error('spatial evidence must be an object');
   const id = boundedText(raw.id, 140);
   if (!id) throw new Error('spatial evidence id is required');
+  if (reservedMapKey(id)) throw new Error(`spatial evidence id is reserved: ${id}`);
   if (strict && raw.sourceClass !== undefined && raw.sourceClass !== null && !EVIDENCE_SOURCE_CLASSES.includes(raw.sourceClass)) {
     throw new Error(`invalid spatial evidence sourceClass: ${raw.sourceClass}`);
   }
@@ -373,7 +374,7 @@ export function normalizeSpatialState(raw, { strict = false } = {}) {
   // evidence or relabelling it on import never hands it back to the model. A
   // state saved before the flag existed derives it from manual evidence.
   for (const entity of [...spatial.locations, ...spatial.relations, ...spatial.routes]) {
-    if (entity.operatorOwned !== true && (entity.evidenceIds || []).some(id => spatial.evidence[id]?.sourceClass === 'manual')) {
+    if (entity.operatorOwned !== true && (entity.evidenceIds || []).some(id => ownEntry(spatial.evidence, id)?.sourceClass === 'manual')) {
       entity.operatorOwned = true;
     }
   }
@@ -386,7 +387,7 @@ export function normalizeSpatialState(raw, { strict = false } = {}) {
     ];
     for (const [kind, entity] of entities) {
       for (const evidenceId of entity.evidenceIds || []) {
-        if (!spatial.evidence[evidenceId]) {
+        if (!ownEntry(spatial.evidence, evidenceId)) {
           throw new Error(`spatial ${kind} ${entity.id} references missing evidence: ${evidenceId}`);
         }
       }
@@ -855,7 +856,7 @@ function addEntitySpatialEvidence(spatial, entity, locationIds, proposal, contex
       lineageKey: boundedText(raw.lineageKey, 80) || context.lineageKey,
       locationIds,
     });
-    const existing = spatial.evidence[id];
+    const existing = ownEntry(spatial.evidence, id);
     if (existing && stableStringify(existing) !== stableStringify(ev)) {
       throw new Error(`deterministic spatial evidence id collision: ${id}`);
     }
@@ -864,7 +865,7 @@ function addEntitySpatialEvidence(spatial, entity, locationIds, proposal, contex
   }
   entity.evidenceIds = boundedEvidenceRefs([...(entity.evidenceIds || []), ...added]);
   // Manual evidence marks operator authorship on the entity, independent of evidence retention.
-  if (added.some(id => spatial.evidence[id]?.sourceClass === 'manual')) entity.operatorOwned = true;
+  if (added.some(id => ownEntry(spatial.evidence, id)?.sourceClass === 'manual')) entity.operatorOwned = true;
 }
 
 function addSpatialEvidence(spatial, location, proposal, context, chatKey, counter) {
@@ -1060,7 +1061,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         }
 
         const hasManualEvidence = existingLoc.operatorOwned === true || (existingLoc.evidenceIds || [])
-          .some(id => spatial.evidence?.[id]?.sourceClass === 'manual');
+          .some(id => ownEntry(spatial.evidence, id)?.sourceClass === 'manual');
         const preserveManualMetadata = automaticNarrative && hasManualEvidence;
 
         // Provider narration may add route associations and improve coordinate
@@ -1321,7 +1322,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
 
       if (existingRel) {
         const hasManualEvidence = existingRel.operatorOwned === true || (existingRel.evidenceIds || [])
-          .some(evidenceId => spatial.evidence?.[evidenceId]?.sourceClass === 'manual');
+          .some(evidenceId => ownEntry(spatial.evidence, evidenceId)?.sourceClass === 'manual');
         const preserveManualRelation = automaticNarrative && hasManualEvidence;
         if (!preserveManualRelation) {
           if (stated) existingRel.direction = stated;
@@ -1387,7 +1388,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
 
       if (existingRt) {
         const hasManualEvidence = existingRt.operatorOwned === true || (existingRt.evidenceIds || [])
-          .some(evidenceId => spatial.evidence?.[evidenceId]?.sourceClass === 'manual');
+          .some(evidenceId => ownEntry(spatial.evidence, evidenceId)?.sourceClass === 'manual');
         const preserveManualRoute = automaticNarrative && hasManualEvidence;
         if (!preserveManualRoute) {
           if (proposal.type) existingRt.type = boundedText(proposal.type, SPATIAL_LIMITS.typeChars);
@@ -1448,7 +1449,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       return Boolean(actual) && canonicalSpatialDirection(actual) !== direction;
     };
     const operatorRelation = rel => rel.operatorOwned === true
-      || (rel.evidenceIds || []).some(id => spatial.evidence?.[id]?.sourceClass === 'manual');
+      || (rel.evidenceIds || []).some(id => ownEntry(spatial.evidence, id)?.sourceClass === 'manual');
     if (automaticNarrative) {
       for (const rel of spatial.relations) {
         if (!operatorRelation(rel) || !contradicted(rel)) continue;

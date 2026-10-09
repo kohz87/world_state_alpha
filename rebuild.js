@@ -5,7 +5,7 @@ import { RELEVANCE_STOPWORDS, extractContextTerms, functionWordNames, normalizeA
 import { SUPPORT_STOPWORDS, significantTokens } from './source-firewall.js';
 import { selectRelevantLocations } from './spatial-relevance.js';
 import { activeCampaignPlaceCount, applySpatialUndoPatch, compactSpatialEvidence, createSpatialState, normalizeSpatialState, placeNameKey } from './spatial-core.js';
-import { boundedInt, clone, compareText, hostMessageText, messageRole as roleOf } from './common.js';
+import { boundedInt, clone, compareText, hostMessageText, messageRole as roleOf, ownEntry } from './common.js';
 import { canonicalDomain, createState, normalizeState } from './state-core.js';
 
 export const REBUILD_LIMITS = Object.freeze({
@@ -466,7 +466,7 @@ function overlayOperatorSpatial(spatial, source) {
   next.locations.push(...carried);
 
   for (const entity of [...locations, ...carried, ...relations, ...routes]) {
-    for (const id of entity.evidenceIds || []) if (src.evidence?.[id]) next.evidence[id] = clone(src.evidence[id]);
+    for (const id of entity.evidenceIds || []) if (ownEntry(src.evidence, id)) next.evidence[id] = clone(src.evidence[id]);
   }
   return normalizeSpatialState(compactSpatialEvidence(next));
 }

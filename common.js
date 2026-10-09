@@ -7,6 +7,18 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+// The entry a plain-object map holds under `key` itself, never one inherited from Object.prototype
+// ("constructor", "toString"): evidence maps are plain objects keyed by ids that come from saved data.
+export function ownEntry(map, key) {
+  return map && typeof map === 'object' && Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
+// An id that cannot key a plain-object map: assigning "__proto__" changes the map's prototype instead of
+// storing an entry.
+export function reservedMapKey(id) {
+  return id === '__proto__';
+}
+
 // Idempotent: a value cut right after a space, or between the halves of an astral character, is tidied, so
 // bounding it again (each normalization does) changes nothing.
 export function boundedText(value, max) {
@@ -41,13 +53,14 @@ export function singleLine(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
-// A token budget: an unset value (null, undefined, '') or a non-number is `fallback` (never Number(null) = 0,
-// which would turn injection off); otherwise an integer from 1 to 2400.
+// A token budget: an unset value (null, undefined, '') , a non-number or a value below one token is
+// `fallback` (never Number(null) = 0 or 1 token, which would turn injection off); otherwise an integer up to
+// 2400.
 export function tokenBudget(value, fallback) {
   if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return fallback;
   const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(1, Math.min(2400, Math.trunc(number)));
+  if (!Number.isFinite(number) || number < 1) return fallback;
+  return Math.min(2400, Math.trunc(number));
 }
 
 // Inverted-index postings: key -> Set of ids (an empty set is removed).
