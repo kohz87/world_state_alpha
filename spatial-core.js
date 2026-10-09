@@ -485,10 +485,10 @@ export const OPPOSITE_DIRECTION = Object.freeze(Object.assign(Object.create(null
 }));
 
 // The coordinate of the place an effective id names as the state holds it now: its active campaign entry (an
-// override answers to the base id it shadows), else its visible projection.
-function currentCoordinateFor(id, effectiveById, spatial, baseMap) {
-  const campaign = spatial.locations.find(loc => loc.status !== 'archived' && effectiveLocationId(loc, baseMap, spatial) === id);
-  return campaign?.coordinate || effectiveCoordinateFor(id, effectiveById, spatial);
+// override answers to the base id it shadows), else its visible projection. `campaignByEffectiveId` maps
+// effective ids to the stored entries (references, so a coordinate moved in place is read as it is now).
+function currentCoordinateFor(id, effectiveById, spatial, campaignByEffectiveId) {
+  return campaignByEffectiveId.get(id)?.coordinate || effectiveCoordinateFor(id, effectiveById, spatial);
 }
 
 function effectiveCoordinateFor(id, effectiveById, spatial) {
@@ -940,6 +940,20 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
     ? options.visibleLocations
     : (options.allowBaseScan ? resolveEffectiveLocations(spatial, baseMap) : []);
   const effectiveById = new Map(visibleEffective.map(loc => [loc.id, loc]));
+  // Active campaign entries by effective id, built when a relation needs it and dropped whenever a place
+  // action may add, remove or re-key one.
+  let campaignIndex = null;
+  const campaignByEffectiveId = () => {
+    if (!campaignIndex) {
+      campaignIndex = new Map();
+      for (const loc of spatial.locations) {
+        if (loc.status === 'archived') continue;
+        const key = effectiveLocationId(loc, baseMap, spatial);
+        if (!campaignIndex.has(key)) campaignIndex.set(key, loc);
+      }
+    }
+    return campaignIndex;
+  };
 
   for (let index = 0; index < proposals.length; index += 1) {
     const proposal = proposals[index];
@@ -948,6 +962,7 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       continue;
     }
     const action = proposal.action || 'upsert_location';
+    if (action !== 'upsert_relation' && action !== 'delete_relation' && action !== 'upsert_route') campaignIndex = null;
 
     if (action === 'set_profile') {
       spatial.profile = normalizeSpatialProfile(proposal.profile, { strict: true });
@@ -1307,8 +1322,8 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       const profile = resolveSpatialProfile(spatial, baseMap);
       // Where the places are now (an override created or moved earlier in this batch included), not where the
       // visible projection saw them before the reply.
-      const fromCoord = currentCoordinateFor(fromId, effectiveById, spatial, baseMap);
-      const toCoord = currentCoordinateFor(toId, effectiveById, spatial, baseMap);
+      const fromCoord = currentCoordinateFor(fromId, effectiveById, spatial, campaignByEffectiveId());
+      const toCoord = currentCoordinateFor(toId, effectiveById, spatial, campaignByEffectiveId());
       // Only a compass point can contradict a coordinate delta: a free-text direction ("upriver") is kept.
       if (direction && OPPOSITE_DIRECTION[direction]
         && profile?.trueNorthLocked === true
@@ -1329,12 +1344,15 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       // A relation id names that relation only between its own places (either way round): one between other
       // places is never overwritten through it.
       const byId = spatial.relations.find(r => r.id === id);
-      if (byId && !((byId.fromId === fromId && byId.toId === toId) || (byId.fromId === toId && byId.toId === fromId))) {
+      const reversedById = Boolean(byId && byId.fromId === toId && byId.toId === fromId);
+      if (byId && !reversedById && !(byId.fromId === fromId && byId.toId === toId)) {
         rejected.push({ proposal, reason: 'relationId names a relation between other places' });
         continue;
       }
-      let existingRel = spatial.relations.find(r => r.id === id || (r.fromId === fromId && r.toId === toId));
-      let stated = direction;
+      let existingRel = byId || spatial.relations.find(r => r.fromId === fromId && r.toId === toId) || null;
+      // A relation addressed from its other side is read from its own side: the opposite compass point (a
+      // free-text direction has none, so it does not overwrite the stored one).
+      let stated = reversedById ? (direction && OPPOSITE_DIRECTION[direction]) || null : direction;
       if (!existingRel && (!direction || OPPOSITE_DIRECTION[direction])) {
         // The same pair stated the other way round ("Oakvale lies west of Millbrook" for Millbrook east of
         // Oakvale) is that relation, read from its own side: never a second, possibly contradictory one.

@@ -307,23 +307,27 @@ function directionStated(sentence, form) {
   return false;
 }
 
+// The written forms of a canonical direction. Own keys only: "constructor" is no compass point (and never a crash).
+function directionForms(key) {
+  return Object.hasOwn(DIRECTION_TEXT_FORMS, key) ? DIRECTION_TEXT_FORMS[key] : [];
+}
+
 function directionGroundedInNarration(direction, sentences) {
-  // Own keys only: a direction such as "constructor" is no compass point (and never a crash).
-  const key = canonicalDirection(direction);
-  const forms = Object.hasOwn(DIRECTION_TEXT_FORMS, key) ? DIRECTION_TEXT_FORMS[key] : [];
+  const forms = directionForms(canonicalDirection(direction));
   return forms.length > 0 && sentences.some(sentence => forms.some(form => directionStated(sentence, form)));
 }
 
 // Which way round the narration states a direction: in "<direction> of <place>" the place after "of" (or
 // "from") is the reference point. True when the sentences name the subject there instead (the relation is
 // stated the other way round); false when they name the reference, or say nothing either way.
-function directionReversed(direction, sentences, subjectName, referenceName) {
-  const key = canonicalDirection(direction);
-  const forms = Object.hasOwn(DIRECTION_TEXT_FORMS, key) ? DIRECTION_TEXT_FORMS[key] : [];
+function directionReversed(key, sentences, subjectName, referenceName) {
+  const forms = directionForms(key);
   const position = (tail, name) => {
     const needle = norm(name);
     return needle ? ` ${tail} `.indexOf(` ${needle} `) : -1;
   };
+  // Where one name starts the other ("Mill" and "Mill Town"), the longer name standing there is the one meant.
+  const subjectLonger = norm(subjectName).length > norm(referenceName).length;
   for (const sentence of sentences) {
     for (const form of forms) {
       const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${form.replace(' ', '[\\s-]+')}\\s+(?:of|from)\\s+([^.;!?]{0,120})`, 'giu');
@@ -331,7 +335,7 @@ function directionReversed(direction, sentences, subjectName, referenceName) {
         const tail = norm(match[1]);
         const subject = position(tail, subjectName);
         const reference = position(tail, referenceName);
-        if (reference >= 0 && (subject < 0 || reference < subject)) return false;
+        if (reference >= 0 && (subject < 0 || reference < subject || (reference === subject && !subjectLonger))) return false;
         if (subject >= 0) return true;
       }
     }
@@ -490,9 +494,11 @@ function explicitWorldStateLocationHeaders(exchangeById) {
 
         // A coordinate counts in the Loc part, or a later part that is unlabelled, an axis or a position field
         // ("Date: (3, 12)" is a date, not a position).
-        const positionText = parts.slice(locIndex)
-          .filter((part, at) => at === 0 || !/^\s*\**\s*[\p{L}][\p{L} ]{0,24}\**\s*:/u.test(part)
-            || /^\s*\**\s*(?:x|y|coords?|coordinates?|pos(?:ition)?|xy|grid|map)\b/iu.test(part))
+        // A position field counts wherever it stands on the line ("Pos: (12, 4) | Loc: Old Mill").
+        const positionField = part => /^\s*\**\s*(?:x|y|coords?|coordinates?|pos(?:ition)?|xy|grid|map)\b/iu.test(part);
+        const positionText = parts
+          .filter((part, at) => at === locIndex || positionField(part)
+            || (at > locIndex && !/^\s*\**\s*[\p{L}][\p{L} ]{0,24}\**\s*:/u.test(part)))
           .join(' | ');
         const coords = uniqueCoordinates(extractExplicitCoordinatesFromText(positionText));
         headers.push({
@@ -614,10 +620,21 @@ export function processSpatialCapture({
   const namedBase = [];
   let places = null;
   const activeProfile = baseMap ? resolveSpatialProfile(spatial, baseMap) : (profile || resolveSpatialProfile(spatial));
-  // Places this reply gives a position: a relation to one of them is judged after they are saved.
-  const movedThisReply = new Set(supplemented.mutations
-    .filter(item => item?.action === 'upsert_location' && item.locationId && coordKnown(item.coordinate))
-    .map(item => item.locationId));
+  // Places this reply moves (a narrated coordinate that differs from the place's own): a relation to one of
+  // them is judged after they are saved, and no position is derived from where it was. A restated or invented
+  // coordinate moves nothing.
+  const movedThisReply = new Set();
+  for (const item of supplemented.mutations) {
+    if (item?.action !== 'upsert_location' || !item.locationId || !coordKnown(item.coordinate)) continue;
+    const grounded = groundEvidence(item.evidence, exchangeById, evidenceSourceClass);
+    const known = visibleById.get(item.locationId);
+    const narrated = grounded.ok
+      ? narratedCoordinateFor(normalizeCoordinate(item.coordinate), grounded.evidence, exchangeById, activeProfile?.decimalStep, item.name)
+      : null;
+    if (narrated && !(coordKnown(known?.coordinate) && known.coordinate.x === narrated.x && known.coordinate.y === narrated.y)) {
+      movedThisReply.add(item.locationId);
+    }
+  }
 
   for (let index = 0; index < supplemented.mutations.length; index += 1) {
     const proposal = structuredClone(supplemented.mutations[index]);
@@ -662,9 +679,9 @@ export function processSpatialCapture({
       // An update may rename a place only to a name the narration actually uses; otherwise it keeps its name.
       if (isUpdate) {
         const known = visibleById.get(proposal.locationId);
-        // The evidence must name the place it updates (by its name, or the new name it is given).
-        if (known?.name && !locationNameGrounded(known.name, proposal.evidence, exchangeById)
-          && !locationNameGrounded(proposal.name, proposal.evidence, exchangeById)) {
+        // The evidence must name the place it updates by its own name (a rename names both: "the Old Mill, now
+        // Harrow Bridge"); evidence about another place never updates or renames this one.
+        if (known?.name && !locationNameGrounded(known.name, proposal.evidence, exchangeById)) {
           rejected.push({ stage: 'spatial-source-firewall', index: rowIndex, reason: 'evidence does not name the place being updated' });
           continue;
         }
@@ -681,9 +698,11 @@ export function processSpatialCapture({
         // A base-map place outside the visible set is that place, not a new campaign one (a campaign place
         // of the same name is matched by the reducer).
         places ||= campaignPlaces(spatial);
-        // A campaign place the operator archived (not merged) is retired: narration does not re-create it.
-        if (!visibleMatch && !places.activeByName.has(placeNameKey(proposal.name)) && places.archivedByName.has(placeNameKey(proposal.name))) {
-          rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'the operator archived this place' });
+        // A campaign place the operator archived (not merged) is retired: narration does not re-create it (a
+        // base-map place of that name is still that place). A header row naming it every turn is not logged.
+        if (!visibleMatch && !places.activeByName.has(nameKey) && places.archivedByName.has(nameKey)
+          && !(baseMap && baseLocationByName(baseMap, proposal.name))) {
+          if (rowIndex !== undefined) rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'the operator archived this place' });
           continue;
         }
         const base = !visibleMatch && baseMap && !places.activeByName.has(nameKey)
@@ -703,8 +722,8 @@ export function processSpatialCapture({
         const known = mergedTarget || effective;
         if (known?.id && (known.status || 'active') !== 'active' && !mergedTarget) {
           // An archived override is a base place the operator retired: narration neither updates it nor
-          // re-creates it as a campaign place.
-          rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'the operator archived this place' });
+          // re-creates it as a campaign place (a header row naming it every turn is not logged).
+          if (rowIndex !== undefined) rejected.push({ stage: 'spatial-admission', index: rowIndex, reason: 'the operator archived this place' });
           continue;
         }
         if (known?.id) {

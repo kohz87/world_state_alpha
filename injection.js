@@ -74,8 +74,11 @@ function recordLine(record) {
 function cutBody(chars, mid) {
   let body = chars.slice(0, mid).join('');
   if (mid < chars.length && /[\p{L}\p{N}.,'’-]/u.test(chars[mid]) && /[\p{L}\p{N}.,'’-]$/u.test(body)) {
+    // Back to the last space only when that keeps most of the text (a line whose only space is near its start,
+    // such as a Japanese one, is cut where it is); a number is never split either way.
     const space = body.search(/\s\S*$/u);
-    body = space > 0 ? body.slice(0, space) : body;
+    if (space > body.length / 2) body = body.slice(0, space);
+    else if (/\d/u.test(chars[mid]) || /[\d][.,]?$/u.test(body)) body = body.replace(/[\d.,-]+$/u, '');
   }
   const open = Math.max(body.lastIndexOf('['), body.lastIndexOf('('));
   if (open >= 0 && open > Math.max(body.lastIndexOf(']'), body.lastIndexOf(')'))) body = body.slice(0, open);

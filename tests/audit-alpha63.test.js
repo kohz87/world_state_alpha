@@ -177,3 +177,51 @@ test('69: the Places corpus counts active places after a build as after an updat
   const spatial = normalizeSpatialState({ locations: [place('a', 'A'), place('b', 'B', unknown, { status: 'archived' })] });
   assert.equal(buildSpatialRelevanceIndex(spatial).corpusCount, 1);
 });
+
+test('review hardening: a line with one early space is still cut, not dropped', () => {
+  const line = '- 東京 の北にある古い製粉所は戦争で焼け落ち、今は廃墟となっている。村人は近づかない。';
+  for (let budget = 20; budget <= 35; budget += 1) {
+    assert.notEqual(fitLine(line, 'header', estimateInjectionTokens('header') + budget), '', String(budget));
+  }
+});
+
+test('review hardening: a relation addressed from its other side keeps its own direction', () => {
+  const spatial = normalizeSpatialState({ locations: [place('a', 'A'), place('b', 'B')], relations: [{ id: 'r', fromId: 'a', toId: 'b', direction: 'north' }] });
+  const out = manual(spatial, [{ action: 'upsert_relation', relationId: 'r', fromId: 'b', toId: 'a', direction: 'south' }]);
+  assert.equal(out.spatial.relations[0].direction, 'north');
+});
+
+test('review hardening: restating an anchor\'s coordinate still lets a dependent place be derived', () => {
+  const spatial = normalizeSpatialState({ profile, locations: [place('oak', 'Oakvale', { x: 5, y: 5, authority: 'narrative_explicit', locked: false })] });
+  const text = 'Oakvale sits at [5, 5]. Millbrook lies 10 km north of Oakvale as the crow flies.';
+  const out = spatialCapture(text, [
+    location('Oakvale', 'Oakvale sits at [5, 5]', { locationId: 'oak', coordinate: { x: 5, y: 5 } }),
+    location('Millbrook', 'Millbrook lies 10 km north of Oakvale as the crow flies', { relative: { toLocationId: 'oak', direction: 'north', distanceKm: 10, distanceMode: 'straight_line' } }),
+  ], spatial);
+  const mill = out.spatial.locations.find(item => item.name === 'Millbrook');
+  assert.deepEqual([mill.coordinate.x, mill.coordinate.y], [5, 15]);
+});
+
+test('review hardening: an archived duplicate gives way to a base place, and header rows are silent', () => {
+  const baseMap = parseBaseMap({ id: 'realm', locations: [{ id: 'b_oak', name: 'Oakvale', coord: [1, 1] }] });
+  const spatial = normalizeSpatialState({ baseMapRef: { id: 'realm' }, locations: [place('dup', 'Oakvale', unknown, { status: 'archived' })] });
+  const out = spatialCapture('Oakvale lies 3 km north of Millbrook.', [location('Oakvale', 'Oakvale lies 3 km north of Millbrook')], spatial, { baseMap });
+  assert.ok(!out.rejected.some(item => /archived/.test(item.reason)), JSON.stringify(out.rejected));
+  const archived = normalizeSpatialState({ locations: [place('mill', 'Old Mill', unknown, { status: 'archived' })] });
+  const header = spatialCapture('<World_State>\nLoc: Old Mill\n</World_State>\nThe wind howls.', [], archived);
+  assert.deepEqual(header.rejected, []);
+  assert.equal(header.spatial.locations.length, 1);
+});
+
+test('review hardening: evidence about another place never updates or renames this one', () => {
+  const out = spatialCapture('Harrow Bridge spans the gorge at [3, 4].', [location('Harrow Bridge', 'Harrow Bridge spans the gorge at [3, 4]', { locationId: 'mill', coordinate: { x: 3, y: 4 } })], twoPlaces());
+  assert.equal(out.spatial.locations.find(item => item.id === 'mill').name, 'Millbrook');
+});
+
+test('review hardening: a longer name standing after "of" is the one meant; a position before Loc counts', () => {
+  const spatial = normalizeSpatialState({ locations: [place('town', 'Mill Town'), place('m', 'Mill')] });
+  const out = spatialCapture('Mill lies north of Mill Town.', [{ action: 'upsert_relation', fromId: 'town', toId: 'm', direction: 'north', evidence: [{ sourceMessageId: 2, claim: 'Mill lies north of Mill Town' }] }], spatial);
+  assert.equal(out.spatial.relations[0].direction, 'north');
+  const before = spatialCapture('<World_State>\nPos: (12, 4) | Loc: Old Mill\n</World_State>\nThe wind howls.', [], normalizeSpatialState({}));
+  assert.equal(before.spatial.locations[0]?.coordinate.x, 12);
+});

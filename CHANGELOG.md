@@ -37,10 +37,21 @@
 
 ### Validation
 
-- New `tests/audit-alpha63.test.js` (20 tests, each failing on 0.9.0-alpha.62).
+- New `tests/audit-alpha63.test.js` (26 tests). The first 20 each fail on 0.9.0-alpha.62, and the 6 review-hardening tests fail on the pre-review code.
 - One older test changed: it expected the per-turn base-place rejection, which is now intentionally silent.
-- `npm test` (706) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
-- Live in SillyTavern, these behave as on alpha.62: the branch, rebuild, resume, hide, forfeit, alpha.59 (including the place save) and alpha.57 Places scripts.
+- `npm test` (712) passes on Node 22 and Node 24. `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
+- Live in SillyTavern, these behave as on alpha.62: the branch, rebuild, resume, hide, forfeit, alpha.59 (including the place save) and alpha.57 Places scripts. They were run again after the review hardening.
+
+### Code review hardening
+
+- A line whose only space is near its start (for example Japanese text) is cut where it is instead of being dropped from the injection.
+- A relation addressed through its id from the other side keeps its own direction.
+- Only a narrated coordinate that differs from the anchor's own counts as moving it. A restated or invented coordinate no longer blocks deriving a place's position from it.
+- An archived duplicate gives way to a base-map place of the same name. A World_State header naming an archived place is no longer logged every turn.
+- An update must be named by its evidence under the place's own name. Evidence about another place can no longer update or rename it.
+- When one place name starts another ("Mill" and "Mill Town"), the longer name after "of" is the one meant.
+- A position field before the Loc part of a header line counts.
+- The True North check uses one per-batch index of current places instead of scanning all places, and the direction-form lookup lives once.
 
 ## 0.9.0-alpha.62 - Capture firewall, wire and elapsed time (deep pass on alpha.60)
 
