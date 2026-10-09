@@ -2,7 +2,7 @@ import { sanitizeCaptureDiagnostic } from './diagnostics.js';
 import { inspectWorldStateRecord, queryWorldState } from './manual.js';
 import { hashText, withoutSplitSurrogate } from './hash.js';
 import { clone } from './common.js';
-import { CONTINUITY_ICON_SVG } from './launcher.js';
+import { CONTINUITY_ICON_SVG } from './constants.js';
 import { readableState } from './state-core.js';
 import { canonicalSpatialDirection, OPPOSITE_DIRECTION, placeNameKey, resolveEffectiveLocations, resolveSpatialProfile } from './spatial-core.js';
 
@@ -430,12 +430,12 @@ function possibleDuplicatePlaceKeys(locations, parents) {
 }
 
 // The Places list projection of one Places state and base map: the effective places, their rows, the name
-// nesting and the duplicate hints (an O(n²) pass). Kept for the last base map and Places content (one native
-// serialization, linear), so a re-render that changes only the selection, search or a form reuses it. Never
-// modify the result.
+// nesting and the duplicate hints (an O(n²) pass). It reads only the places and the base map, so it is kept
+// for the last base map and a hash of the places (one linear serialization, never the evidence map), and a
+// re-render that changes only the selection, search or a form reuses it. Never modify the result.
 let lastPlacesProjection = null;
 function placesProjection(spatial, baseMap) {
-  const signature = JSON.stringify(spatial);
+  const signature = hashText(JSON.stringify(spatial?.locations || []));
   if (lastPlacesProjection && lastPlacesProjection.baseMap === baseMap && lastPlacesProjection.signature === signature) {
     return lastPlacesProjection.value;
   }
@@ -580,7 +580,7 @@ export function buildWorldStateUiModel(state, {
   const detailRecordId = key ? recordIdByUiKey.get(key) : '';
   const detail = detailRecordId ? projectDetail(normalized, detailRecordId, reasons, key) : null;
 
-  // Spatial Projection (reused while the Places state and base map are the same objects)
+  // Spatial Projection (reused while the places and the base map are unchanged)
   const {
     resolvedLocations,
     effectiveLocations,

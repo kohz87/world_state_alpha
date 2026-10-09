@@ -5,7 +5,7 @@
 ### Fixed
 
 - **Time passing**
-  - A title or initial ("Mt.", "Lt.", "Capt.") no longer ends the sentence a time skip is judged in, so "If the scouts reach Mt. Ember, two days later we march." stays a condition instead of counting as two days passed.
+  - A title ("Mt.", "Lt.", "Capt.") no longer ends the sentence a time skip is judged in, so "If the scouts reach Mt. Ember, two days later we march." stays a condition instead of counting as two days passed.
 - **Cleanups**
   - Helpers that had drifted into several modules now live once: bounded text, the message role and the role of a hidden row, keyed undo, token budgets, index postings, the connection-profile lookup, the evaluation boundary, the continuity icon, the list of known chats, the rebuild finish and the exchange budget.
   - Unused code is gone: the rebuild lore option, an unread link counter, a dead branch check, a duplicate failure list in the panel model and dead Places branches. Defaults are safe: a branch reconcile saves its restore unless told otherwise.
@@ -25,7 +25,15 @@
 
 ### Validation
 
-- `tests/audit-alpha65.test.js` (14 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+- `tests/audit-alpha65.test.js` (18 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+
+### Code review hardening
+
+- A lone capital before a full stop ("plan B.") ends its sentence again for time skips, so a "would" or "should" in the sentence before can no longer cancel a real skip or day step; only titles ("Mt.", "Lt.") join.
+- The day-step walk reads SillyTavern rows `mes` first (a stale `content` left by another extension is never counted), and its cache keys on a hash instead of keeping long replies in memory.
+- A chat row without `is_user` (from an import or another extension) is still treated as a reply, as before.
+- The Places list cache reads only the places (never the evidence map) and keeps a hash, not a copy.
+- A lineage passed to a branch reconcile is used only when it fits the chat; rebuild passes no lore at all; the replayed Places a rebuild shares are documented as read-only; the continuity icon lives in `constants.js`, so the panel no longer depends on the optional launcher; three stray screenshots are removed.
 
 ## 0.9.0-alpha.64 - Relevance, evolution, rebuild, injection and panel (deep pass on alpha.60)
 

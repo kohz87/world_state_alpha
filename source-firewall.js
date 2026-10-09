@@ -369,17 +369,21 @@ function claimInsideReportedComplement(claim, sentence) {
 const SENTENCE_SEPARATOR = /((?<=[.!?]["'”’»」』)\]]*)[ \t]+|\s*\r?\n\s*)/u;
 // A full stop after a title or an initial does not end the sentence ("Lt. Varro reported that ...").
 // Titles are capitalized; a lower-case word ("the scout said no.") or a unit ("10 ft.") ends its sentence.
-const ABBREVIATION_END = /(?:^|[\s(\["“'‘])(?:Mr|Mrs|Ms|Dr|St|Mt|Lt|Col|Gen|Capt|Cpt|Sgt|Cmdr|Cdr|Adm|Maj|Prof|Rev|Fr|Sr|Jr|Hon|Gov|Pres|Sen|vs|e\.g|i\.e|\p{Lu})\.$/u;
+const ABBREVIATIONS = 'Mr|Mrs|Ms|Dr|St|Mt|Lt|Col|Gen|Capt|Cpt|Sgt|Cmdr|Cdr|Adm|Maj|Prof|Rev|Fr|Sr|Jr|Hon|Gov|Pres|Sen|vs|e\\.g|i\\.e';
+const ABBREVIATION_END = new RegExp('(?:^|[\\s(\\["“\'‘])(?:' + ABBREVIATIONS + '|\\p{Lu})\\.$', 'u');
+// Titles only: a lone capital before a full stop is as often a sentence's last word ("plan B.") as an initial.
+const TITLE_END = new RegExp('(?:^|[\\s(\\["“\'‘])(?:' + ABBREVIATIONS + ')\\.$', 'u');
 
 // Whether the character at `index` ends a sentence: a line break, "!" or "?", or a full stop that does not
-// close a title or an initial (the rule sentencesOf uses). Shared with the elapsed-time detector.
+// close a title ("Mt.", "Lt.", "Capt."). Used by the elapsed-time detector, which must not join two real
+// sentences ("... plan B. Two days later ..."), so a lone capital before a full stop ends its sentence here.
 export function endsSentenceAt(source, index) {
   const char = source[index];
   if (char === '\n' || char === '!' || char === '?') return true;
   if (char !== '.') return false;
   const from = Math.max(0, index - 16);
   // A cut-off word start is marked with a letter so the pattern's start anchor does not see a word boundary.
-  return !ABBREVIATION_END.test(`${from > 0 ? 'x' : ''}${source.slice(from, index + 1)}`);
+  return !TITLE_END.test(`${from > 0 ? 'x' : ''}${source.slice(from, index + 1)}`);
 }
 
 export function sentencesOf(text) {

@@ -95,11 +95,13 @@ export function messageRole(message) {
   return 'system';
 }
 
-// The role of a SillyTavern row as the conversation shows it: a hidden row carries is_system even when is_user
-// is true, and counts as system.
+// The role of a SillyTavern host row as the conversation shows it: a hidden row carries is_system even when
+// is_user is true, and counts as system; any other row that is not the user's is a reply (a row an import or
+// another extension left without is_user included).
 export function visibleRole(message) {
-  if (message?.is_system === true || message?.role === 'system') return 'system';
-  return messageRole(message);
+  if (message?.is_system || message?.role === 'system') return 'system';
+  if (message?.is_user || message?.role === 'user') return 'user';
+  return 'assistant';
 }
 
 // Keeps a long text's start and end around a marker, within `max` characters. A limit too small for the

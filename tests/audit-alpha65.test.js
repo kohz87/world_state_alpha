@@ -53,6 +53,9 @@ test('121: one role rule for hidden rows; lineage roles are the shared message r
   assert.equal(visibleRole({ is_user: true, is_system: true }), 'system');
   assert.equal(visibleRole({ is_user: true }), 'user');
   assert.equal(visibleRole({ is_user: false, is_system: false }), 'assistant');
+  // Review: a row without is_user (an import or another extension) is still a reply, and a truthy is_system hides.
+  assert.equal(visibleRole({ mes: 'The gate opens.' }), 'assistant');
+  assert.equal(visibleRole({ is_user: false, is_system: 1 }), 'system');
   assert.equal(chatLineage([{ is_user: true, mes: 'hi' }, { is_user: false, mes: 'yo' }]).map(row => row.role).join(','), 'user,assistant');
   assert.doesNotMatch(index, /^function messageRole\(/m);
   assert.match(index, /visibleRole as messageRole/);
@@ -65,8 +68,11 @@ test('121: shared helpers replace the module copies', () => {
   assert.deepEqual(keyedUndo([{ id: 'a', v: 1 }], [{ id: 'a', v: 1 }]), []);
   assert.equal(evaluationBoundary({ lastChangedMessage: 4, createdAtMessage: 1 }), 4);
   assert.doesNotMatch(fs.readFileSync('evolution.js', 'utf8'), /function lastEvaluationBoundary/);
-  assert.match(launcher, /export const CONTINUITY_ICON_SVG/);
+  // The icon lives in constants.js, so the panel does not depend on the optional launcher module.
+  assert.match(fs.readFileSync('constants.js', 'utf8'), /export const CONTINUITY_ICON_SVG/);
+  assert.match(launcher, /import \{ CONTINUITY_ICON_SVG \} from '\.\/constants\.js';/);
   assert.match(ui, /CONTINUITY_ICON_SVG \+ '<\/span>'/);
+  assert.doesNotMatch(ui, /from '\.\/launcher\.js'/);
   assert.equal((index.match(/\.\.\.Object\.keys\(settings\.dataFiles \|\| \{\}\),/g) || []).length, 1);
   // One finish helper records every ending of a rebuild.
   assert.match(index, /const endRun = \(\{ phase, outcome, code, detail, logDetail = detail, at = sourceMessageId, status = \{\}, log = \{\} \}\) => \{/);
@@ -178,4 +184,41 @@ test('135: Places name and description postings skip function words', () => {
   assert.ok(built.nameTokens.get('tower')?.has('p1'));
   assert.equal(built.contextTokens.has('on'), false);
   assert.ok(built.contextTokens.get('ruin')?.has('p1'));
+});
+
+test('review: a lone capital before a full stop still ends the sentence a time skip is judged in', () => {
+  // Joining "plan B." to the next sentence let its "would" or "should" cancel a real skip.
+  assert.equal(extractElapsedHint('If needed they would fall back to plan B. Two days later the bridge fell.')?.amount, 2);
+  assert.equal(extractElapsedHint('Should we go with option A. Three weeks later, the harvest failed.')?.amount, 3);
+  assert.equal(extractElapsedHint('If the scouts reach Mt. Ember, two days later we march.'), null);
+  const chat = [
+    { is_user: true, mes: 'Go.' },
+    { is_user: false, mes: 'They would take plan B. The next morning, they rode out.' },
+    { is_user: true, mes: 'On.' },
+    { is_user: false, mes: 'They would take plan C. The next morning, they rode on.' },
+  ];
+  assert.equal(detectAccumulatedDayStepHint(chat, 3, { lineage: chatLineage(chat) })?.amount, 2);
+});
+
+test('review: the day-step walk reads host rows mes-first', () => {
+  const chat = [
+    { is_user: true, mes: 'We rest.', content: 'The next morning we ride out.' },
+    { is_user: false, mes: 'The fire crackles.' },
+    { is_user: true, mes: 'We rest again.', content: 'The next day we ride on.' },
+    { is_user: false, mes: 'The fire burns low.' },
+  ];
+  assert.equal(detectAccumulatedDayStepHint(chat, 3, { lineage: chatLineage(chat) }), null);
+});
+
+test('review: a supplied lineage that does not fit the chat is not trusted', () => {
+  const state = seeded([['The ford is flooded', ['ford']]]);
+  const chat = [{ is_user: true, mes: 'go' }];
+  const stale = chatLineage([{ is_user: true, mes: 'stay' }]);
+  const reconciled = reconcileBranch(state, chat, { lineage: stale });
+  assert.deepEqual(reconciled.state.lineage, chatLineage(chat));
+});
+
+test('review: no stray screenshots ship and rebuild passes no lore', () => {
+  for (const file of ['rebuild-last.png', 'resume-done.png', 'resume-failed.png']) assert.equal(fs.existsSync(file), false);
+  assert.doesNotMatch(rebuild, /loreText/);
 });

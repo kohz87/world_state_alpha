@@ -542,7 +542,9 @@ export async function runManualRebuild({
     : [];
   const lastWindowMessageId = plan.windows.length ? plan.windows[plan.windows.length - 1].messageId : null;
   // The candidate's Spatial after boundary `messageId`: replayed as it was when extraction is off, or the
-  // model's places with the operator's own as they stood there when it is on.
+  // model's places with the operator's own as they stood there when it is on. The replayed Places are the
+  // timeline's own objects (shared with `original`, not copied per boundary): the result is only ever passed
+  // to commitMutationBoundary, which normalizes (copies) it. Never modify it in place.
   const spatialAtBoundary = (state, messageId, last = false) => {
     if (spatialTimeline) return { ...state, spatial: spatialTimeline.at(messageId, last) };
     if (operatorTimeline) return { ...state, spatial: overlayOperatorSpatial(state.spatial, operatorTimeline.at(messageId, last)) };
@@ -717,9 +719,8 @@ export async function runManualRebuild({
       continue;
     }
 
-    // Rebuild reads no lore: a boundary is judged on its own exchange (lore is never evidence).
-    const loreText = '';
-
+    // Rebuild reads no lore: a boundary is judged on its own exchange (lore is never evidence), so neither the
+    // Places selection nor the capture request is given any.
     const visibleSelection = visibleForRebuild(candidate, window.exchange, window.messageId);
     const visibleRecords = visibleSelection.records;
     const lifecycleContextRecordIds = visibleSelection.lifecycleContextRecordIds;
@@ -728,7 +729,6 @@ export async function runManualRebuild({
       const spatialRel = selectRelevantLocations(candidate.spatial, {
         baseMap,
         recentText: exchangeText(window.exchange),
-        loreText,
         maxLocations: 6,
       });
       visibleLocations = spatialRel.selected.map(item => item.location);
@@ -740,7 +740,6 @@ export async function runManualRebuild({
       exchange: window.exchange,
       visibleRecords,
       lifecycleContextRecordIds,
-      loreText,
       chatKey: owner,
       sourceMessageId: window.messageId,
       sourceLineageKey: window.lineageKey,

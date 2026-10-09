@@ -1,5 +1,6 @@
 import { boundedText, hostMessageText, messageRole, messageText, visibleRole } from './common.js';
-import { sanitizeExchangeMessage } from './narrative-sanitizer.js';
+import { sanitizeAssistantNarration, sanitizeExchangeMessage } from './narrative-sanitizer.js';
+import { hashText } from './hash.js';
 import { endsSentenceAt, quotedDialogueRanges } from './source-firewall.js';
 
 const WORD_NUMBERS = Object.freeze({
@@ -403,16 +404,19 @@ function explicitMeaningfulSkip(source) {
 }
 
 // What one message contributes to the walk, judged once per text: the walk reads the same lookback window on
-// every turn, so each message is sanitized and matched only when its text is new. Keyed by the role the
-// sanitizer reads and the raw text, so an edit or swipe is judged afresh.
+// every turn, so each message is sanitized and matched only when its text is new. Host rows are read `mes`
+// first (a stale `content` another extension left is never read before it). Keyed by a hash of the role and
+// text, so an edit or swipe is judged afresh and long replies are not kept alive in the cache.
 const DAY_STEP_CACHE = new Map();
 const DAY_STEP_CACHE_SIZE = 512;
-function dayStepAnalysis(raw, messageId) {
-  const userRow = raw?.role === 'user' || raw?.is_user === true;
-  const key = (userRow ? 'u\u0000' : 'a\u0000') + (userRow ? messageText(raw) : hostMessageText(raw));
+function dayStepAnalysis(raw) {
+  // The walk has already skipped hidden and system rows, so this is the row's visible role.
+  const userRow = visibleRole(raw) === 'user';
+  const rawText = hostMessageText(raw);
+  const key = hashText((userRow ? 'u:' : 'a:') + rawText);
   const cached = DAY_STEP_CACHE.get(key);
   if (cached) return cached;
-  const source = messageText(sanitizeExchangeMessage({ ...raw, messageId }));
+  const source = userRow ? rawText : sanitizeAssistantNarration(rawText);
   const blank = !source.trim();
   const skip = !blank && explicitMeaningfulSkip(source);
   const analysis = Object.freeze({ blank, skip, step: blank || skip ? null : narratedDayStep(source) });
@@ -455,7 +459,7 @@ export function detectAccumulatedDayStepHint(chat = [], endMessageId, {
     const followsAssistantStep = role === 'user' && previousRole === 'assistant' && previousAssistantHadStep;
     previousRole = role;
 
-    const analysis = dayStepAnalysis(raw, messageId);
+    const analysis = dayStepAnalysis(raw);
     if (role === 'assistant') previousAssistantHadStep = false;
     if (analysis.blank) continue;
 

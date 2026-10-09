@@ -477,12 +477,18 @@ export function firstStoryChange(previousLineage, chat, currentLineage = null) {
   return plan.kind === 'destructive' ? plan.firstSemantic : previous.length;
 }
 
-// `options.lineage`: the chat's lineage when the caller already holds it (a rebuild's plan), so the chat is not
-// hashed again.
+// `options.lineage`: the chat's lineage when the caller already holds it (a rebuild's plan, computed from this
+// same frozen chat), so the chat is not hashed again. It is used only when it matches the chat's length and
+// its last entry is that message's fingerprint; otherwise the chat is hashed as usual.
+function suppliedLineageFits(lineage, rows) {
+  if (!Array.isArray(lineage) || lineage.length !== rows.length) return false;
+  return !rows.length || lineage[rows.length - 1]?.fingerprint === fingerprintMessage(rows[rows.length - 1]);
+}
+
 export function reconcileBranch(inputState, chat, options = {}) {
   const state = normalizeState(inputState);
   const rows = Array.isArray(chat) ? chat : [];
-  const currentLineage = Array.isArray(options.lineage) && options.lineage.length === rows.length
+  const currentLineage = suppliedLineageFits(options.lineage, rows)
     ? options.lineage
     : chatLineage(chat);
   const previousLineage = Array.isArray(state.lineage) ? state.lineage : [];
