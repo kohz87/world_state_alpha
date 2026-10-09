@@ -417,11 +417,23 @@ function overlayOperatorSpatial(spatial, source) {
   const routes = owned(src.routes);
   const operatorIds = new Set(locations.map(loc => loc.id));
   const operatorNames = new Map(locations.filter(loc => loc.status === 'active').map(loc => [placeNameKey(loc.name), loc.id]));
+  // Places the operator archived or merged away: the model's copy of that name is retired too (a merged-away
+  // name points at the place it was merged into).
+  const retiredNames = new Map();
+  for (const loc of locations) {
+    const key = placeNameKey(loc.name);
+    if (loc.status === 'archived' && key && !operatorNames.has(key) && !retiredNames.has(key)) retiredNames.set(key, loc.mergedInto || '');
+  }
   const moved = new Map();
   next.locations = next.locations.filter(loc => {
     if (loc.operatorOwned === true || operatorIds.has(loc.id)) return false;
-    const operatorId = loc.status === 'active' ? operatorNames.get(placeNameKey(loc.name)) : null;
+    const key = placeNameKey(loc.name);
+    const operatorId = loc.status === 'active' ? operatorNames.get(key) : null;
     if (operatorId) moved.set(loc.id, operatorId);
+    if (!operatorId && loc.status === 'active' && retiredNames.has(key)) {
+      if (retiredNames.get(key)) moved.set(loc.id, retiredNames.get(key));
+      return false;
+    }
     return !operatorId;
   });
   next.locations.push(...locations.map(clone));

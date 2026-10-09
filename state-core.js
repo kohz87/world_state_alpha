@@ -208,6 +208,7 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
     }
   }
   const linkIds = new Set();
+  const relatedPairs = new Set();
   for (const item of Array.isArray(raw.links) ? raw.links : []) {
     try {
       const link = normalizeLink(item);
@@ -216,6 +217,13 @@ export function normalizeState(raw, { strictSchema = false, chatKey = '' } = {})
         continue;
       }
       linkIds.add(link.id);
+      // A "related" pair repeated on later messages (saved before links were deduplicated) is one edge: the
+      // first is kept.
+      if (link.type === 'related') {
+        const pair = [link.from, link.to].sort().join('\u0000');
+        if (relatedPairs.has(pair)) continue;
+        relatedPairs.add(pair);
+      }
       state.links.push(link);
     } catch (error) {
       if (strictSchema) throw error;
@@ -369,11 +377,18 @@ function addEvidence(state, record, mutation, context, counter) {
   record.evidenceIds = boundedEvidenceRefs([...record.evidenceIds, ...added]);
 }
 
+function sameRelatedPair(link, left, right) {
+  return link?.type === 'related'
+    && ((link.from === left && link.to === right) || (link.from === right && link.to === left));
+}
+
 function addRelatedLinks(state, record, mutation, context, appendedLinks = null) {
   for (const relatedId of uniqueStrings(mutation.relatedRecordIds, LIMITS.linksPerRecord, 120)) {
     if (relatedId === record.id || !state.records.some(item => item.id === relatedId)) continue;
     const id = linkIdFor(state, relatedId, record.id, 'related', context);
-    if (!state.links.some(link => link.id === id)) {
+    // One relationship between two records is one link (in either direction): repeating it on a later message
+    // adds no second edge.
+    if (!state.links.some(link => link.id === id || sameRelatedPair(link, relatedId, record.id))) {
       const link = normalizeLink({
         id,
         from: relatedId,

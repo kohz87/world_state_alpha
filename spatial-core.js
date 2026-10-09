@@ -1172,6 +1172,12 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
       if (loc) {
         loc.status = 'archived';
         loc.lastChangedMessage = context.messageId;
+        // An operator's archive is operator intent: recorded with its evidence and kept by a rebuild that
+        // re-extracts Places (the model's copy of the place does not come back).
+        if (!automaticNarrative) {
+          addEntitySpatialEvidence(spatial, loc, [loc.id], proposal, context, chatKey, evidenceCounter);
+          loc.operatorOwned = true;
+        }
         applied.push({ action: 'archive_location', locationId: targetId });
       } else {
         rejected.push({ proposal, reason: 'location not found for archive' });
@@ -1240,8 +1246,10 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
           const sig = [nextRel.fromId, nextRel.toId, nextRel.direction || '', nextRel.distanceKm ?? '', nextRel.distanceMode || ''].join('|');
           const kept = relSeen.get(sig);
           if (kept) {
-            // A dropped duplicate's operator authority moves to the relation that is kept.
+            // A dropped duplicate's operator authority and evidence move to the relation that is kept, so the
+            // compaction below never drops the support it was accepted on.
             if (nextRel.operatorOwned === true) kept.operatorOwned = true;
+            kept.evidenceIds = boundedEvidenceRefs([...(kept.evidenceIds || []), ...(nextRel.evidenceIds || [])]);
             continue;
           }
           relSeen.set(sig, nextRel);
@@ -1258,6 +1266,13 @@ export function reduceSpatialMutations(inputSpatial, batch, baseMap = null, opti
         sourceLoc.mergedInto = targetId;
         sourceLoc.lastChangedMessage = context.messageId;
         targetLoc.lastChangedMessage = context.messageId;
+        // An operator's merge is operator intent on both places: a rebuild keeps the merged-away name pointing
+        // at the place it was merged into instead of re-creating the duplicate.
+        if (!automaticNarrative) {
+          addEntitySpatialEvidence(spatial, targetLoc, [targetLoc.id, sourceLoc.id], proposal, context, chatKey, evidenceCounter);
+          sourceLoc.operatorOwned = true;
+          targetLoc.operatorOwned = true;
+        }
         applied.push({ action: 'merge_locations', sourceId, targetId });
       } else {
         rejected.push({ proposal, reason: 'source or target location not found for merge' });
