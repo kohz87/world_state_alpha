@@ -70,9 +70,8 @@ const stateCache = new Map();
 const relevanceIndices = new Map();
 // Chats whose saved sidecar could not be read: chat key -> that file's path, replaceable by a recovery write.
 const corruptSidecars = new Map();
-// This session's own sidecar writes per chat: running now, and started so far.
+// This session's own sidecar writes running now, per chat.
 const sidecarWritesInFlight = new Map();
-const sidecarWriteStarts = new Map();
 // Counts canonical state replacements per chat (not lineage-only extensions): what a running rebuild compares.
 const canonicalGenerations = new Map();
 const spatialRelevanceIndices = new Map();
@@ -307,7 +306,7 @@ async function saveOperationLogLocked(chatKey, snapshot, attempt) {
   // This session's rows as they are now: if the chat leaves the cache while the saved log is read (its rows
   // are cleared), they are still saved, as a snapshot, and the cleared chat is not marked loaded.
   const generation = operationStoreGenerations.get(chatKey) || 0;
-  const localAtStart = snapshot || diagnosticStore.allRecords(chatKey);
+  const localAtStart = snapshot || diagnosticStore.rowsSnapshot(chatKey);
   let server;
   try {
     server = await readOperationLogForMerge(chatKey);
@@ -324,7 +323,7 @@ async function saveOperationLogLocked(chatKey, snapshot, attempt) {
   }
   const parked = unsavedOperationRows.get(chatKey);
   if (!snapshot && parked) diagnosticStore.merge(chatKey, parked);
-  const rows = mergeOperationRows(server, snapshot || diagnosticStore.allRecords(chatKey), OPERATION_LOG_LIMIT);
+  const rows = mergeOperationRows(server, snapshot || diagnosticStore.rowsSnapshot(chatKey), OPERATION_LOG_LIMIT);
   try {
     await hostStorage.uploadJsonFile(operationLogFile(chatKey), operationLogBody(chatKey, rows));
   } catch (error) {
@@ -709,14 +708,15 @@ async function getChatBaseMap(chatKey, state) {
 // places are shown to capture and injection instead of being missed or duplicated.
 function buildSpatialIndexFor(spatialState, baseMap) {
   const index = buildSpatialRelevanceIndex(spatialState, baseMap);
-  index.baseMapLocations = baseMap?.locations || null;
+  // The map's digest, not the map: the index never keeps an evicted base map in memory.
+  index.baseMapDigest = String(baseMap?.digest || '');
   return index;
 }
 
 function getSpatialRelevanceIndex(chatKey, spatialState, baseMap) {
   if (!chatKey || chatKey === 'no-chat' || !spatialState) return null;
   const existing = spatialRelevanceIndices.get(chatKey);
-  if (existing && (!baseMap?.locations || existing.baseMapLocations === baseMap.locations)) return existing;
+  if (existing && (!baseMap?.digest || existing.baseMapDigest === String(baseMap.digest))) return existing;
   const index = buildSpatialIndexFor(spatialState, baseMap);
   spatialRelevanceIndices.set(chatKey, index);
   return index;
@@ -1038,7 +1038,6 @@ async function persistState(chatKey, state = stateCache.get(chatKey), {
   // Counted while it runs: a freshness check reading the server meanwhile may see this write before its
   // answer arrives here, and must not adopt it as another session's.
   sidecarWritesInFlight.set(chatKey, (sidecarWritesInFlight.get(chatKey) || 0) + 1);
-  sidecarWriteStarts.set(chatKey, (sidecarWriteStarts.get(chatKey) || 0) + 1);
   let committed;
   try {
     committed = await writeSidecar({
@@ -1202,8 +1201,23 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
 
   let sourceState = stateCache.get(oldKey) || null;
   let sourcePointer = oldPointer;
-  const recoveredSource = await recoverExistingSidecarPointer(oldKey, oldPointer);
+  // A damaged source is reported, not thrown: the chat then stays recovery-required under its new name.
+  const recoveredSource = await recoverExistingSidecarPointer(oldKey, oldPointer, { reportCorrupt: true });
   assertOwnershipEpoch(oldKey, oldOwnerEpoch);
+  // A chat that still needs recovery and holds no continuity of its own (the stand-in of a missing or
+  // damaged sidecar, or no baseline yet) moves nothing durable: writing the stand-in would give the renamed
+  // chat a fresh, empty continuity. The new name stays recovery-required until a Full chat rebuild, an
+  // import or a reset. A cache holding real continuity (a sidecar that was briefly unreachable) is carried
+  // as before, so it is never discarded.
+  if (!recoveredSource?.payload?.state && (bootstrapRequiredChats.has(oldKey) || recoveredSource?.corrupt)
+    && !holdsContinuity(sourceState)) {
+    await retireOperationLog(oldKey, newKey);
+    clearChatRuntimeState(oldKey);
+    bootstrapRequiredChats.add(newKey);
+    if (activeChatKey === oldKey) activeChatKey = newKey;
+    if (panelChatKey === oldKey) closeWorldStatePanel();
+    return true;
+  }
   if (recoveredSource?.payload?.state) {
     sourcePointer = recoveredSource.pointer;
     // The server sidecar is authoritative: another device may have saved a newer revision than this
@@ -1218,18 +1232,6 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
     }
     return true;
   }
-  // A chat that still needs recovery (no baseline, a missing or damaged sidecar) caches only a stand-in:
-  // writing it would give the renamed chat a fresh, empty continuity. Nothing durable moves; the new name
-  // stays recovery-required until a Full chat rebuild, an import or a reset.
-  if (!recoveredSource?.payload?.state && bootstrapRequiredChats.has(oldKey)) {
-    await retireOperationLog(oldKey, newKey);
-    clearChatRuntimeState(oldKey);
-    bootstrapRequiredChats.add(newKey);
-    if (activeChatKey === oldKey) activeChatKey = newKey;
-    if (panelChatKey === oldKey) closeWorldStatePanel();
-    return true;
-  }
-
   const migrated = normalizeState(sourceState, { strictSchema: true, chatKey: oldKey });
   migrated.chatKey = newKey;
   const committed = await writeSidecar({
@@ -1270,6 +1272,13 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
   if (activeChatKey === oldKey) activeChatKey = newKey;
   if (panelChatKey === oldKey) closeWorldStatePanel();
   return true;
+}
+
+// Whether a state holds any World State continuity (records or Places), as opposed to an empty stand-in.
+function holdsContinuity(state) {
+  const spatial = state?.spatial || {};
+  return Boolean((state?.records || []).length || (spatial.locations || []).length || (spatial.routes || []).length
+    || (spatial.relations || []).length || spatial.profile || spatial.baseMapRef?.id);
 }
 
 function characterOwnerKeyPrefix(ownerId) {
@@ -1932,7 +1941,6 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   const startHydratedPointer = hydratedPointerFor(chatKey);
   const preferredPointer = startSettingsPointer?.path ? startSettingsPointer : startHydratedPointer;
   const startSettingsToken = sidecarPointerToken(startSettingsPointer);
-  const startWrites = sidecarWriteStarts.get(chatKey) || 0;
 
   const recovered = await recoverExistingSidecarPointer(chatKey, preferredPointer, {
     retryDeterministicMiss: retryDeterministicMiss ?? Boolean(preferredPointer?.path),
@@ -1942,9 +1950,10 @@ async function refreshChatStateFromServer(chatKey = currentChatKey(), {
   assertOwnershipEpoch(chatKey, ownerEpoch);
 
   // A write of this session's that ran during the read may be what the read saw: never adopt it as foreign.
+  // One still running is counted; one that finished has moved the settings pointer.
   if (epoch(chatKey) !== startStateEpoch
     || sidecarPointerToken(pointerFor(chatKey)) !== startSettingsToken
-    || sidecarWritesInFlight.get(chatKey) || (sidecarWriteStarts.get(chatKey) || 0) !== startWrites) {
+    || sidecarWritesInFlight.has(chatKey)) {
     return { outcome: 'raced', changed: false };
   }
 
@@ -2641,7 +2650,10 @@ async function handleAssistantMessage(messageId) {
     try {
       outcome = await captureAssistantBoundary(chatKey, messageId, () => { captureStarted = true; });
     } catch (error) {
-      if (!captureStarted) recordCaptureStartFailure(chatKey, messageId, startFingerprint, error);
+      if (!captureStarted) {
+        if (currentChatKey() !== chatKey) recordAbandonedCapture(chatKey, messageId, prefix, startFingerprint);
+        else recordCaptureStartFailure(chatKey, messageId, startFingerprint, error);
+      }
       throw error;
     }
     if (captureStarted) return;

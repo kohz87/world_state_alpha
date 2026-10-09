@@ -109,6 +109,12 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     return clone(byChat.get(clean(chatKey, 500)) || []);
   }
 
+  // The kept rows as they are now, without copying them: rows are never edited in place (recording appends,
+  // relinking and trimming replace a row), and whoever saves them sanitizes a copy.
+  function rowsSnapshot(chatKey) {
+    return (byChat.get(clean(chatKey, 500)) || []).slice();
+  }
+
   // The few fields missed-capture detection reads, without copying response JSON.
   function recoveryRows(chatKey) {
     return (byChat.get(clean(chatKey, 500)) || []).map(recoveryView);
@@ -149,7 +155,7 @@ export function createDiagnosticStore({ limit = DEFAULT_LIMIT, now = () => Date.
     };
   }
 
-  return Object.freeze({ record, records, allRecords, recoveryRows, merge, relink, clear, bundle });
+  return Object.freeze({ record, records, allRecords, rowsSnapshot, recoveryRows, merge, relink, clear, bundle });
 }
 
 // A rebuild operation id is `rebuild:<sourceMessageId>:<epoch>:<startMessageId>[:resume-…]`.
@@ -314,11 +320,12 @@ export function trimOperationRows(rows = [], max = DEFAULT_LIMIT) {
   const pinned = new Set([...unrecovered]
     .sort((a, b) => (a.sourceMessageId - b.sourceMessageId) || (int(a.at) - int(b.at)))
     .slice(0, MAX_PINNED_FAILURE_ROWS));
-  for (const row of clearing) pinned.add(row);
+  // Stored answers are kept for the newest pinned failures; a clearing row is only kept, its answer as is.
   const keepAnswers = new Set([...pinned].sort((a, b) => int(b.at) - int(a.at)).slice(0, PINNED_FAILURES));
+  const kept = new Set([...pinned, ...clearing]);
   let drop = list.length - max;
   return list.filter(row => {
-    if (drop > 0 && !pinned.has(row)) {
+    if (drop > 0 && !kept.has(row)) {
       drop -= 1;
       return false;
     }

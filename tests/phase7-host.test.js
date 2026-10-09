@@ -1201,7 +1201,7 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   assert.match(source, /addEventListener\?\.\('pagehide', \(\) => flushAllOperationLogs\(\)\)/);
   assert.match(source, /return 'world-state-alpha-ops-' \+ hashText\(String\(chatKey\)\) \+ '\.json';/);
   assert.match(source, /raw\.format !== OPERATION_LOG_FORMAT[\s\S]{0,120}raw\.chatKey !== chatKey/);
-  assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.allRecords\(chatKey\), OPERATION_LOG_LIMIT\);/);
+  assert.match(source, /const rows = mergeOperationRows\(server, snapshot \|\| diagnosticStore\.rowsSnapshot\(chatKey\), OPERATION_LOG_LIMIT\);/);
   assert.match(source, /return withWorldStateFileLock\(operationLogFile\(chatKey\), task\);/);
   assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return false;/);
   assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);

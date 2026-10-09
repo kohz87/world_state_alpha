@@ -42,9 +42,23 @@
 
 ### Validation
 
-- New `tests/audit-alpha61.test.js` (16 tests), with host scenarios `tests/host/rename-recovery.mjs` and `tests/host/corrupt-reactivate.mjs`. Each test fails on 0.9.0-alpha.60.
-- `npm test` (656), `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
-- Live in SillyTavern, these behave as on alpha.60: the branch, rebuild, resume, hide, forfeit, alpha.59 and alpha.57 Places scripts.
+- New `tests/audit-alpha61.test.js` (20 tests), with host scenarios `tests/host/rename-recovery.mjs`, `tests/host/corrupt-reactivate.mjs`, `tests/host/rename-cached.mjs` and `tests/host/rename-corrupt.mjs`. Each of the first 16 tests fails on 0.9.0-alpha.60. The review-hardening tests and their two rename scenarios fail on the pre-review code.
+- `npm test` (660), `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
+- Live in SillyTavern, these behave as on alpha.60: the branch, rebuild, resume, hide, forfeit, alpha.59 and alpha.57 Places scripts. They were run again after the review hardening.
+
+### Code review hardening
+
+- Renaming a recovery-required chat writes nothing only when it holds no continuity of its own. When the World State file was briefly unreachable, the cached continuity still moves to the new name instead of being dropped.
+- A chat whose World State file is damaged can be renamed without an error, and stays recovery-required.
+- A capture that fails after you switched chats, before it started, is listed as a missed capture.
+- A kept clearing row no longer takes a stored model answer away from a missed capture.
+- A damaged file recorded under another spelling of its path can still be replaced by a Full chat rebuild, import or reset.
+- The Places index remembers its base map by digest, so it never holds an evicted map in memory.
+- An Operations-log save no longer deep-copies every row.
+- The freshness check drops a redundant counter: a write that finished during the read has already changed the settings pointer.
+- Kept as is:
+  - Without Web Locks, the read-back cannot catch a concurrent writer that uploads and reads back first. The contract says this narrows the window and does not close it.
+  - The capture handler keeps a shallow copy of the chat array, which is only references, not message reads or hashing. It is the only record of the message keys if a chat switch empties the array.
 
 ## 0.9.0-alpha.60 - Forfeit a missed capture
 

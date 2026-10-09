@@ -185,7 +185,7 @@ export function createSillyTavernWorldStateStorageAdapter({
           current = decodeSidecar(currentText, { readOnly: true, expectedChatKey: decoded.chatKey });
         } catch (error) {
           // A recovery baseline (revision 1) may replace a damaged file, only the one recorded as damaged.
-          if (!(replaceCorrupt && replaceCorrupt === physical && expected === 0 && error?.damaged === true)) {
+          if (!(replaceCorrupt && worldStateHostDeterministicPath(replaceCorrupt) === physical && expected === 0 && error?.damaged === true)) {
             error.retryable = false;
             throw error;
           }

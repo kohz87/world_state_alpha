@@ -59,16 +59,17 @@ test('3: renaming a chat that needs recovery writes no empty sidecar; the new na
   assert.equal(result.sidecarsAfter, 0);
   assert.equal(result.newRequired, true);
   const migrate = source.slice(source.indexOf('async function migrateWorldStateChatKey('), source.indexOf('function characterOwnerKeyPrefix('));
-  assert.match(migrate, /if \(!recoveredSource\?\.payload\?\.state && bootstrapRequiredChats\.has\(oldKey\)\) \{\s*await retireOperationLog\(oldKey, newKey\);\s*clearChatRuntimeState\(oldKey\);\s*bootstrapRequiredChats\.add\(newKey\);/);
+  assert.match(migrate, /recoverExistingSidecarPointer\(oldKey, oldPointer, \{ reportCorrupt: true \}\)/);
+  assert.match(migrate, /if \(!recoveredSource\?\.payload\?\.state && \(bootstrapRequiredChats\.has\(oldKey\) \|\| recoveredSource\?\.corrupt\)\s*&& !holdsContinuity\(sourceState\)\) \{\s*await retireOperationLog\(oldKey, newKey\);\s*clearChatRuntimeState\(oldKey\);\s*bootstrapRequiredChats\.add\(newKey\);/);
 });
 
 test('4 and 7: a freshness check never adopts this session\'s own write; a compensated write is this session\'s revision', () => {
   const persist = source.slice(source.indexOf('async function persistState('), source.indexOf('async function loadChatState('));
-  assert.match(persist, /sidecarWritesInFlight\.set\(chatKey, \(sidecarWritesInFlight\.get\(chatKey\) \|\| 0\) \+ 1\);\s*sidecarWriteStarts\.set/);
+  assert.match(persist, /sidecarWritesInFlight\.set\(chatKey, \(sidecarWritesInFlight\.get\(chatKey\) \|\| 0\) \+ 1\);\s*let committed;\s*try \{/);
   assert.match(persist, /\} finally \{\s*const left = \(sidecarWritesInFlight\.get\(chatKey\) \|\| 1\) - 1;/);
   const refresh = source.slice(source.indexOf('async function refreshChatStateFromServer('));
-  assert.match(refresh, /const startWrites = sidecarWriteStarts\.get\(chatKey\) \|\| 0;/);
-  assert.match(refresh, /\|\| sidecarWritesInFlight\.get\(chatKey\) \|\| \(sidecarWriteStarts\.get\(chatKey\) \|\| 0\) !== startWrites\) \{\s*return \{ outcome: 'raced', changed: false \};/);
+  // One still running is counted; one that finished during the read has moved the settings pointer.
+  assert.match(refresh, /\|\| sidecarPointerToken\(pointerFor\(chatKey\)\) !== startSettingsToken\s*\|\| sidecarWritesInFlight\.has\(chatKey\)\) \{\s*return \{ outcome: 'raced', changed: false \};/);
   assert.match(source, /function noteCompensatedRevision\(chatKey, restoredState, pointer\) \{\s*if \(pointer\?\.path && stateCache\.get\(chatKey\) === restoredState\) hydratedPointers\.set/);
   assert.match(source, /const restored = await persistState\(chatKey, recoveryState, \{ expectedPointer: committed \}\);\s*noteCompensatedRevision\(chatKey, recoveryState, restored\);/);
   assert.match(source, /expectedPointer: rebuildCommitted,\s*\}\);\s*noteCompensatedRevision\(chatKey, state, restored\);/);
@@ -97,7 +98,7 @@ test('8: a rebuild whose conflict rehydration fails, or that throws past its han
 
 test('9-12: Operations-log saves, retirements and stale loads keep their rows and their owner', () => {
   const save = source.slice(source.indexOf('async function saveOperationLogLocked('), source.indexOf('function flushAllOperationLogs('));
-  assert.match(save, /const generation = operationStoreGenerations\.get\(chatKey\) \|\| 0;\s*const localAtStart = snapshot \|\| diagnosticStore\.allRecords\(chatKey\);/);
+  assert.match(save, /const generation = operationStoreGenerations\.get\(chatKey\) \|\| 0;\s*const localAtStart = snapshot \|\| diagnosticStore\.rowsSnapshot\(chatKey\);/);
   assert.match(save, /if \(!snapshot && \(operationStoreGenerations\.get\(chatKey\) \|\| 0\) !== generation\) snapshot = localAtStart;/);
   assert.match(source, /diagnosticStore\.clear\(key\);\s*operationStoreGenerations\.set\(key, \(operationStoreGenerations\.get\(key\) \|\| 0\) \+ 1\);/);
   const retireStart = source.indexOf('function retireOperationLog(');
@@ -166,8 +167,10 @@ test('15: without Web Locks a write reads its upload back and reports a concurre
 });
 
 test('16: a Places index built before the base map loaded is rebuilt once the map is at hand', () => {
-  assert.match(source, /function buildSpatialIndexFor\(spatialState, baseMap\) \{\s*const index = buildSpatialRelevanceIndex\(spatialState, baseMap\);\s*index\.baseMapLocations = baseMap\?\.locations \|\| null;/);
-  assert.match(source, /if \(existing && \(!baseMap\?\.locations \|\| existing\.baseMapLocations === baseMap\.locations\)\) return existing;/);
+  // Remembered by digest, so the index never keeps an evicted base map in memory.
+  assert.match(source, /function buildSpatialIndexFor\(spatialState, baseMap\) \{\s*const index = buildSpatialRelevanceIndex\(spatialState, baseMap\);[\s\S]{0,120}index\.baseMapDigest = String\(baseMap\?\.digest \|\| ''\);/);
+  assert.match(source, /if \(existing && \(!baseMap\?\.digest \|\| existing\.baseMapDigest === String\(baseMap\.digest\)\)\) return existing;/);
+  assert.doesNotMatch(source, /baseMapLocations/);
 });
 
 test('17: a damaged sidecar stays recovery-required on every activation instead of a load error', () => {
@@ -235,4 +238,53 @@ test('23: canonical text lowercases without the device locale', () => {
   for (const file of ['spatial-core.js', 'spatial-base-map.js']) {
     assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /^function boundedText\(/m);
   }
+});
+
+test('review hardening: a rename carries real cached continuity, and a damaged sidecar renames without an error', () => {
+  // A sidecar briefly unreachable leaves the cache holding the chat's continuity: it moves to the new name.
+  const cached = scenario('rename-cached');
+  assert.equal(cached.required, true);
+  assert.equal(cached.savedRecords, 1);
+  assert.equal(cached.cachedRecords, 1);
+  // A damaged sidecar is reported rather than thrown, so the rename keeps the chat recovery-required.
+  const corrupt = scenario('rename-corrupt');
+  assert.deepEqual(corrupt, { before: true, newSidecars: 0, newRequired: true, errors: [] });
+});
+
+test('review hardening: a capture that throws after a chat switch is a missed capture', () => {
+  const handler = source.slice(source.indexOf('async function handleAssistantMessage('), source.indexOf('function recordAbandonedCapture('));
+  assert.match(handler, /if \(!captureStarted\) \{\s*if \(currentChatKey\(\) !== chatKey\) recordAbandonedCapture\(chatKey, messageId, prefix, startFingerprint\);\s*else recordCaptureStartFailure\(chatKey, messageId, startFingerprint, error\);/);
+});
+
+test('review hardening: a kept clearing row never takes a stored answer from a failure', () => {
+  const answer = { responseJson: '{"mutations":[]}' };
+  const list = [{ ...failure(1, 1), ...answer }, { ...failure(2, 2), ...answer },
+    ...Array.from({ length: 6 }, (_, i) => ({ label: 'branch', at: 10 + i, outcome: 'same' })),
+    { label: 'capture', at: 50, sourceMessageId: 1, lineageKey: 'ln-1', outcome: 'applied', ...answer }];
+  const trimmed = trimOperationRows(list, 3);
+  // Message 1's failure was recovered, so it may go; its clearing row stays, and message 2's failure keeps its answer.
+  assert.equal(trimmed.find(row => row.sourceMessageId === 2 && row.outcome === 'invalid-response').responseJson, answer.responseJson);
+  assert.equal(trimmed.find(row => row.outcome === 'applied').responseJson, answer.responseJson);
+});
+
+test('review hardening: a recorded damaged path in another spelling can still be replaced; saves copy no rows', async () => {
+  const path = '/user/files/world-state-alpha-damaged.json';
+  const files = new Map([[path, '{"broken":']]);
+  const fetchFn = async (url, options = {}) => {
+    if (options.method === 'GET') return files.has(url) ? { ok: true, status: 200, text: async () => files.get(url) } : { ok: false, status: 404, text: async () => '' };
+    const payload = JSON.parse(options.body);
+    files.set('/user/files/' + payload.name, Buffer.from(payload.data, 'base64').toString('utf8'));
+    return { ok: true, status: 200, json: async () => ({ path: '/user/files/' + payload.name }) };
+  };
+  const adapter = createSillyTavernWorldStateStorageAdapter({ fetchFn });
+  const written = await adapter.write({ path, expectedRevision: 0, body: sidecar('chat:a:x', 1), replaceCorrupt: 'user/files/world-state-alpha-damaged.json' });
+  assert.equal(written.revision, 1);
+  const saveStart = source.indexOf('async function saveOperationLogLocked(');
+  const save = source.slice(saveStart, source.indexOf('\n}\n', saveStart));
+  assert.doesNotMatch(save, /allRecords/);
+  const store = createDiagnosticStore();
+  store.record('chat:y', failure(3, 1));
+  const rows = store.rowsSnapshot('chat:y');
+  store.record('chat:y', failure(4, 2));
+  assert.equal(rows.length, 1);
 });
