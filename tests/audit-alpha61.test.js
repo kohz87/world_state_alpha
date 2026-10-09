@@ -11,6 +11,7 @@ import { boundedExcerpt, canonicalText, hashText, stableStringify } from '../has
 import { createSillyTavernWorldStateStorageAdapter, worldStateHostDeterministicPath } from '../host-storage.js';
 import { createState, reduceMutations } from '../state-core.js';
 import { encodeSidecar } from '../storage.js';
+import { withoutWebLocks } from './web-locks.mjs';
 
 const source = fs.readFileSync('index.js', 'utf8');
 
@@ -147,7 +148,7 @@ test('13 and 14: the revision check reads the file the upload replaces, and neve
   assert.equal(JSON.parse(other.files.get(path)).chatKey, 'chat:b:y');
 });
 
-test('15: without Web Locks a write reads its upload back and reports a concurrent writer as a conflict', async () => {
+test('15: without Web Locks a write reads its upload back and reports a concurrent writer as a conflict', () => withoutWebLocks(async () => {
   const path = '/user/files/world-state-alpha-race.json';
   const files = new Map([[path, sidecar('chat:a:x', 2)]]);
   const fetchFn = async (url, options = {}) => {
@@ -156,7 +157,6 @@ test('15: without Web Locks a write reads its upload back and reports a concurre
     files.set(path, encodeSidecar({ chatKey: 'chat:a:x', state: { ...createState('chat:a:x'), lastCaptureMessage: 9 }, revision: 3 }));
     return { ok: true, status: 200, json: async () => ({ path }) };
   };
-  assert.equal(typeof globalThis.navigator?.locks?.request, 'undefined');
   const adapter = createSillyTavernWorldStateStorageAdapter({ fetchFn });
   assert.deepEqual(await adapter.write({ path, expectedRevision: 2, body: sidecar('chat:a:x', 3) }), { conflict: true, currentRevision: 3 });
   // A read-back that finds this very body succeeds as before.
@@ -164,7 +164,7 @@ test('15: without Web Locks a write reads its upload back and reports a concurre
   const written = await quiet.adapter.write({ path, expectedRevision: 2, body: sidecar('chat:a:x', 3) });
   assert.equal(written.revision, 3);
   assert.deepEqual(quiet.calls.map(call => call[1]), ['GET', 'POST', 'GET']);
-});
+}));
 
 test('16: a Places index built before the base map loaded is rebuilt once the map is at hand', () => {
   // Remembered by digest, so the index never keeps an evicted base map in memory.

@@ -43,7 +43,7 @@
 ### Validation
 
 - New `tests/audit-alpha61.test.js` (20 tests), with host scenarios `tests/host/rename-recovery.mjs`, `tests/host/corrupt-reactivate.mjs`, `tests/host/rename-cached.mjs` and `tests/host/rename-corrupt.mjs`. Each of the first 16 tests fails on 0.9.0-alpha.60. The review-hardening tests and their two rename scenarios fail on the pre-review code.
-- `npm test` (660), `npm run validate`, `npm run measure:prompts` and `npm run package` pass.
+- `npm test` (660), `npm run validate`, `npm run measure:prompts` and `npm run package` pass on Node 22 and Node 24 (CI). Node 24 provides `navigator.locks`, so the tests of the no-Web-Locks path hide it explicitly (`tests/web-locks.mjs`).
 - Live in SillyTavern, these behave as on alpha.60: the branch, rebuild, resume, hide, forfeit, alpha.59 and alpha.57 Places scripts. They were run again after the review hardening.
 
 ### Code review hardening

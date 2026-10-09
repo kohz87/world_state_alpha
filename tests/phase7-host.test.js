@@ -16,6 +16,7 @@ import {
 } from '../host-storage.js';
 import { createState } from '../state-core.js';
 import { encodeSidecar, writeSidecar } from '../storage.js';
+import { withoutWebLocks } from './web-locks.mjs';
 
 function response({ ok = true, status = 200, text = '', json = {} } = {}) {
   return {
@@ -1249,7 +1250,7 @@ test('a failed rebuild keeps an in-memory resume point that only an explicit Res
   assert.doesNotMatch(fs.readFileSync('storage.js', 'utf8'), /resume/i);
 });
 
-test('a first write to a logical sidecar path is revision-checked against the deterministic file', async () => {
+test('a first write to a logical sidecar path is revision-checked against the deterministic file', () => withoutWebLocks(async () => {
   const logical = 'world_state_alpha/first-write.json';
   const physical = worldStateHostDeterministicPath(logical);
   const existing = encodeSidecar({ chatKey: 'chat:a:first', state: createState('chat:a:first'), revision: 3 });
@@ -1279,7 +1280,7 @@ test('a first write to a logical sidecar path is revision-checked against the de
   assert.equal(written.revision, 1);
   // Without Web Locks the upload is read back to detect a concurrent writer.
   assert.deepEqual(calls.map(call => call[0]), [physical, '/api/files/upload', physical]);
-});
+}));
 
 test('batch-1 host guards: file pickers before the queue, Places edits from canonical state, safe renames', () => {
   const source = fs.readFileSync('index.js', 'utf8');
