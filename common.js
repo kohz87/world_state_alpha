@@ -53,13 +53,14 @@ export function singleLine(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
-// A token budget: an unset value (null, undefined, '') or a non-number is `fallback` (never Number(null) = 0,
-// which would turn injection off); otherwise an integer from 1 to 2400.
+// A token budget: an unset value (null, undefined, '') , a non-number or a value below one token is
+// `fallback` (never Number(null) = 0 or 1 token, which would turn injection off); otherwise an integer up to
+// 2400.
 export function tokenBudget(value, fallback) {
   if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return fallback;
   const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(1, Math.min(2400, Math.trunc(number)));
+  if (!Number.isFinite(number) || number < 1) return fallback;
+  return Math.min(2400, Math.trunc(number));
 }
 
 // Inverted-index postings: key -> Set of ids (an empty set is removed).

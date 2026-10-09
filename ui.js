@@ -1908,6 +1908,10 @@ export function createWorldStateUiController({
     detailOpen: false,
     spatialDetailOpen: false,
     spatialEditing: false,
+    // What an open place form or Map settings form was opened on (kept across re-renders, which may show newer
+    // values while the operator's typed drafts stay): the host's conflict check compares against it.
+    placeEditBase: null,
+    profileEditBase: undefined,
     spatialDuplicatesOnly: false,
     mapSettingsOpen: false,
     menuOpen: false,
@@ -2395,6 +2399,7 @@ export function createWorldStateUiController({
 
     if (closest(event.target, '[data-wsa-open-map-settings]')) {
       ui.activeTab = 'spatial';
+      if (!ui.mapSettingsOpen) ui.profileEditBase = shownModel().spatial.profileBase ?? null;
       ui.mapSettingsOpen = true;
       ui.menuOpen = false;
       ui.mobileMoreOpen = false;
@@ -2405,6 +2410,7 @@ export function createWorldStateUiController({
     if (closest(event.target, '[data-wsa-map-settings]')) {
       event.preventDefault?.();
       ui.mapSettingsOpen = !ui.mapSettingsOpen;
+      if (ui.mapSettingsOpen) ui.profileEditBase = shownModel().spatial.profileBase ?? null;
       refresh();
       return;
     }
@@ -2426,7 +2432,11 @@ export function createWorldStateUiController({
     }
 
     if (closest(event.target, '[data-wsa-spatial-edit]')) {
-      if (!ui.spatialEditing) ui.editRelationId = shownModel().spatial.detail?.primaryRelation?.id || '';
+      if (!ui.spatialEditing) {
+        const opened = shownModel().spatial.detail;
+        ui.editRelationId = opened?.primaryRelation?.id || '';
+        ui.placeEditBase = opened ? { key: opened.key, base: opened.editBase } : null;
+      }
       ui.spatialEditing = true;
       ui.spatialDetailOpen = true;
       refresh();
@@ -2747,13 +2757,15 @@ export function createWorldStateUiController({
 
         const result = await onSpatialAction(action, {
           profileData,
-          profileBase: currentModel.spatial.profileBase ?? null,
+          profileBase: ui.profileEditBase !== undefined ? ui.profileEditBase : (currentModel.spatial.profileBase ?? null),
           spatialModel: currentModel.spatial,
         });
         // A saved or reset profile is the new canonical value; a rejected save keeps what was typed.
         // (A declined or failed reset changed nothing, so the typed values stay.)
         if (result === true) ui.drafts.delete(draftScope('profile'));
         refresh();
+        // Saved, or refused because it changed elsewhere: the form now stands on the current profile.
+        if (result === true || result === 'conflict') ui.profileEditBase = shownModel().spatial.profileBase ?? null;
         return;
       }
 
@@ -2778,8 +2790,10 @@ export function createWorldStateUiController({
         relationId: currentLoc?.primaryRelation?.id || '',
       };
 
+      // The form's base is what it was opened on, not a newer value a re-render may show.
+      const openedBase = ui.placeEditBase && currentLoc && ui.placeEditBase.key === currentLoc.key ? ui.placeEditBase.base : currentLoc?.editBase;
       const result = await onSpatialAction(action, {
-        location: currentLoc,
+        location: currentLoc ? { ...currentLoc, editBase: openedBase } : currentLoc,
         formData,
         mergeSuggestions: action === 'merge_location' ? (currentLoc?.mergeSuggestions || []).map(item => ({ ...item })) : [],
         spatialModel: currentModel.spatial,
@@ -2790,6 +2804,11 @@ export function createWorldStateUiController({
         ui.spatialEditing = false;
       }
       refresh();
+      // Refused because the place changed elsewhere: the open form now stands on the current values.
+      if (result === 'conflict') {
+        const rebased = shownModel().spatial.detail;
+        ui.placeEditBase = rebased ? { key: rebased.key, base: rebased.editBase } : null;
+      }
       return;
     }
 

@@ -61,7 +61,7 @@ test('3: renaming a chat that needs recovery writes no empty sidecar; the new na
   assert.equal(result.newRequired, true);
   const migrate = source.slice(source.indexOf('async function migrateWorldStateChatKey('), source.indexOf('function characterOwnerKeyPrefix('));
   assert.match(migrate, /recoverExistingSidecarPointer\(oldKey, oldPointer, \{ reportCorrupt: true \}\)/);
-  assert.match(migrate, /if \(!recoveredSource\?\.payload\?\.state && \(bootstrapRequiredChats\.has\(oldKey\) \|\| recoveredSource\?\.corrupt\)\s*&& !holdsContinuity\(sourceState\)\) \{[\s\S]{0,700}?settings\.recoveryRequiredChats\[newKey\] = \{ reason: 'renamed-unrecovered', from: oldKey \};[\s\S]{0,500}?await retireOperationLog\(oldKey, newKey\);[\s\S]{0,200}?clearChatRuntimeState\(oldKey\);\s*bootstrapRequiredChats\.add\(newKey\);/);
+  assert.match(migrate, /if \(!recoveredSource\?\.payload\?\.state && \(bootstrapRequiredChats\.has\(oldKey\) \|\| recoveredSource\?\.corrupt\)\s*&& !holdsContinuity\(sourceState\)\) \{[\s\S]{0,700}?settings\.recoveryRequiredChats\[newKey\] = \{ reason: 'renamed-unrecovered', from: oldKey \};[\s\S]{0,500}?await retireOperationLog\(oldKey, newKey\);\s*if \(ownershipEpoch\(oldKey\) === oldOwnerEpoch\) clearChatRuntimeState\(oldKey\);[\s\S]{0,200}?bootstrapRequiredChats\.add\(newKey\);/);
 });
 
 test('4 and 7: a freshness check never adopts this session\'s own write; a compensated write is this session\'s revision', () => {

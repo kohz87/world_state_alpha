@@ -25,7 +25,15 @@
 
 ### Validation
 
-- `tests/audit-alpha66.test.js` (9 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+- `tests/audit-alpha66.test.js` (13 tests). Full suite on Node 22 and Node 24, `npm run validate`, `npm run measure:prompts`, `npm run package`, `git diff --check`, and the live SillyTavern scripts.
+
+### Code review hardening
+
+- A possessive subject ("Ravenford's gates ...") counts as a name, so it no longer slips past the subject check. A summary opening with a plural or abstract noun ("Bandits", "Sickness", "Rioting") is not taken for a name, so paraphrases of one condition still consolidate; names such as "Thomas" stay names. The word sets are computed once per candidate and record.
+- A recovery-required identity renamed onto an existing file can be recovered: the recovery write replaces exactly the revision it reads. Character renames and deletes find such identities, and the marker is read without normalizing all settings.
+- Once a rename or delete is saved to settings, its Operations log still moves and runtime state is cleared only for identities no newer transition owns, instead of stopping half-done.
+- The Places and Map settings forms keep the values they were opened on across re-renders, so a field changed both here and elsewhere is refused even after the panel refreshed; after a refusal the form stands on the current values. A touched position conflicts with an authority or lock changed elsewhere.
+- A budget below one token (typing 0) is the default, as before.
 
 ## 0.9.0-alpha.65 - Shared helpers and bounded per-turn work (deep pass on alpha.60)
 

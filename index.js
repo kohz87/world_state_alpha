@@ -535,8 +535,10 @@ function bumpOwnershipEpoch(chatKey) {
   return next;
 }
 
+// One own-key lookup on the stored settings (no settings normalization on the persistence path).
 function durableRecoveryRequired(chatKey) {
-  return Object.hasOwn(getWorldStateSettings().recoveryRequiredChats, String(chatKey || ''));
+  const marked = extension_settings[WORLD_STATE_HOST_NAMESPACE]?.recoveryRequiredChats;
+  return Boolean(marked && typeof marked === 'object' && Object.hasOwn(marked, String(chatKey || '')));
 }
 
 // A readable sidecar clears the recovery requirement of a chat, unless its identity is durably marked as
@@ -1056,6 +1058,14 @@ async function persistState(chatKey, state = stateCache.get(chatKey), {
     // concurrently appearing sidecar therefore conflicts instead of being
     // overwritten by the recovery candidate.
     pointer = { path: deterministicPath, revision: 0, checksum: '' };
+    // A marked identity (a recovery-required chat renamed onto an existing file) holds a readable sidecar that
+    // is none of this chat's continuity: the recovery replaces exactly the revision read now (a change made
+    // meanwhile still conflicts).
+    if (durableRecoveryRequired(chatKey)) {
+      const marked = await recoverExistingSidecarPointer(chatKey, { path: deterministicPath, revision: 0, checksum: '' }, { readOnly: true });
+      assertOwnershipEpoch(chatKey, ownerEpoch);
+      if (marked?.payload?.state && marked.pointer?.path === deterministicPath) pointer = marked.pointer;
+    }
   }
 
   // A recreated chat may intentionally replace a retired sidecar. Recover only
@@ -1252,12 +1262,11 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
     settings.recoveryRequiredChats[newKey] = { reason: 'renamed-unrecovered', from: oldKey };
     delete settings.recoveryRequiredChats[oldKey];
     await persistCriticalHostSettings('recovery-required renamed World State chat');
-    assertOwnershipEpoch(oldKey, oldOwnerEpoch);
-    assertOwnershipEpoch(newKey, newOwnerEpoch);
+    // Durable from here: the log moves, and runtime state changes only for identities still owned.
     await retireOperationLog(oldKey, newKey);
-    assertOwnershipEpoch(oldKey, oldOwnerEpoch);
-    assertOwnershipEpoch(newKey, newOwnerEpoch);
-    clearChatRuntimeState(oldKey);
+    if (ownershipEpoch(oldKey) === oldOwnerEpoch) clearChatRuntimeState(oldKey);
+    if (panelChatKey === oldKey) closeWorldStatePanel();
+    if (ownershipEpoch(newKey) !== newOwnerEpoch) return true;
     bootstrapRequiredChats.add(newKey);
     if (activeChatKey === oldKey) activeChatKey = newKey;
     if (panelChatKey === oldKey) closeWorldStatePanel();
@@ -1314,15 +1323,14 @@ async function migrateWorldStateChatKey(oldKey, newKey) {
   };
   delete settings.dataFiles[oldKey];
   await persistCriticalHostSettings('renamed World State ownership');
-  assertOwnershipEpoch(oldKey, oldOwnerEpoch);
-  assertOwnershipEpoch(newKey, newOwnerEpoch);
 
+  // The rename is durable now: its log still moves (the retirement guards a revived identity itself), but
+  // runtime state is touched only for an identity no newer transition has taken over meanwhile.
   const wasLoaded = loadedChats.has(oldKey);
   await retireOperationLog(oldKey, newKey);
-  // Publishing the moved state is the last step: a newer transition of either identity owns them now.
-  assertOwnershipEpoch(oldKey, oldOwnerEpoch);
-  assertOwnershipEpoch(newKey, newOwnerEpoch);
-  clearChatRuntimeState(oldKey);
+  if (ownershipEpoch(oldKey) === oldOwnerEpoch) clearChatRuntimeState(oldKey);
+  if (panelChatKey === oldKey) closeWorldStatePanel();
+  if (ownershipEpoch(newKey) !== newOwnerEpoch) return true;
   setCachedState(newKey, migrated);
   if (wasLoaded) loadedChats.add(newKey);
   hydrationErrors.delete(newKey);
@@ -1586,6 +1594,7 @@ async function handleChatRenamed(eventData = {}) {
 function knownChatKeys(settings = getWorldStateSettings()) {
   return new Set([
     ...Object.keys(settings.dataFiles || {}),
+    ...Object.keys(settings.recoveryRequiredChats || {}),
     ...stateCache.keys(),
   ]);
 }
@@ -1705,10 +1714,11 @@ async function removeWorldStateChatOwnership(chatKey, reason = 'chat-deleted') {
   };
   delete settings.dataFiles[chatKey];
   await persistCriticalHostSettings('retired World State ownership');
-  assertOwnershipEpoch(chatKey, ownerEpoch);
 
+  // Durable from here: the log is retired (guarded against a revived identity), and runtime state is
+  // cleared only while no newer transition owns the identity.
   await retireOperationLog(chatKey);
-  assertOwnershipEpoch(chatKey, ownerEpoch);
+  if (ownershipEpoch(chatKey) !== ownerEpoch) return true;
   clearChatRuntimeState(chatKey);
   if (activeChatKey === chatKey) {
     activeChatKey = 'no-chat';
@@ -4710,7 +4720,7 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       if (stableStringify(currentProfile) !== stableStringify(payload.profileBase ?? null)
         && stableStringify(currentProfile) !== stableStringify(profile)) {
         notify('warning', 'The Coordinate Profile was changed elsewhere since you opened Map settings. Nothing was saved: review the current values and save again.');
-        return false;
+        return 'conflict';
       }
     }
     return await applyManualProfile(profile, 'Saved manual Coordinate Profile');
@@ -4868,13 +4878,6 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
       || (Number.isFinite(priorCoord.y) ? priorCoord.y : null) !== baseCoord.y
       || String(priorCoord.authority || 'unknown') !== String(baseCoord.authority || 'unknown')
       || Boolean(priorCoord.locked) !== Boolean(baseCoord.locked));
-    if (coordinateTouched && coordinateMovedElsewhere && (fd.x !== priorX || fd.y !== priorY)) conflicts.push('position');
-    if (conflicts.length) {
-      notify('warning', 'This place was changed elsewhere since you opened it (' + conflicts.join(', ')
-        + '). Nothing was saved: review the current values and save again.');
-      return false;
-    }
-
     const nextLocked = Boolean(fd.locked && fd.x !== null);
     // A position the operator typed is theirs: the Authority select still showing the place's previous label
     // (or a label that cannot hold a position) does not make it rank below derivation or narration. Typed
@@ -4884,10 +4887,19 @@ async function applySpatialActionNow(actionId, payload, chatKey) {
     if (fd.x !== null && (['unknown', 'relative'].includes(nextAuthority)
       || (positionTyped && nextAuthority === String(shown.authority || priorCoord.authority || 'unknown')))) nextAuthority = 'manual';
     // A position the operator left as shown keeps whatever is current (another device may have moved it).
+    // A touched position is written whole (position, authority and lock), so it conflicts with any of them
+    // changed elsewhere.
     const coordinateChanged = coordinateTouched && (fd.x !== priorX
       || fd.y !== priorY
       || nextLocked !== Boolean(priorCoord.locked)
       || nextAuthority !== String(priorCoord.authority || 'unknown'));
+    if (coordinateChanged && coordinateMovedElsewhere) conflicts.push('position');
+    if (conflicts.length) {
+      notify('warning', 'This place was changed elsewhere since you opened it (' + conflicts.join(', ')
+        + '). Nothing was saved: review the current values and save again.');
+      // The panel re-bases the open form on the current values, so saving again is a deliberate choice.
+      return 'conflict';
+    }
 
     const locationMutation = {
       action: 'upsert_location',

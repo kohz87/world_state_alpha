@@ -110,42 +110,66 @@ const LEADING_DETERMINERS = new Set([
 
 // The capitalized words of a summary that may name someone or something, folded like canonicalText: any
 // capitalized word inside a sentence, and the summary's own first word (its subject: "Ravenford is besieged
-// ..."). A later sentence's first word is usually a common noun ("... sealed. Guards patrol the docks").
+// ..."). A later sentence's first word is usually a common noun ("... sealed. Guards patrol the docks"), and so
+// is an opening word shaped like one: a plural ("Bandits", "Guards") or an abstract noun ("Sickness",
+// "Rioting", "Starvation"), so "Sickness spreads ..." and "Plague spreads ..." can still be one condition. A
+// possessive names its owner ("Ravenford's gates").
+const COMMON_NOUN_ENDING = /(?:ness|ing|tion|sion|ment|ity|ance|ence|ism|ship|hood|age|ure|ery|[^aiosu]s)$/u;
 function nameWords(summary) {
   const out = new Set();
   const sentences = String(summary ?? '').normalize('NFKC').split(/[.!?;]+/u);
   sentences.forEach((sentence, sentenceIndex) => {
     const words = sentence.split(/[^\p{L}\p{N}'’-]+/u).filter(Boolean);
     words.forEach((word, index) => {
-      if (!/^\p{Lu}/u.test(word) || (index === 0 && sentenceIndex > 0)) return;
-      const folded = canonicalText(word);
-      if (folded.length < 2 || STOP.has(folded) || LEADING_DETERMINERS.has(folded) || folded.includes(' ')) return;
-      out.add(folded);
+      if (!/^\p{Lu}/u.test(word)) return;
+      const opening = index === 0;
+      if (opening && sentenceIndex > 0) return;
+      for (const folded of canonicalText(word.replace(/['’]s?$/u, '')).split(' ')) {
+        if (folded.length < 2 || STOP.has(folded) || LEADING_DETERMINERS.has(folded)) continue;
+        if (opening && COMMON_NOUN_ENDING.test(folded)) continue;
+        out.add(folded);
+      }
     });
   });
   return out;
+}
+
+// A text's names and its whole vocabulary (summary and anchors), computed once per object and text: one
+// create is compared with every visible record.
+const SUBJECT_PROFILES = new WeakMap();
+function subjectProfile(summary, anchors = [], owner = null) {
+  const key = String(summary ?? '') + '\u0000' + (Array.isArray(anchors) ? anchors.join('\u0001') : '');
+  const cached = owner && typeof owner === 'object' ? SUBJECT_PROFILES.get(owner) : null;
+  if (cached && cached.key === key) return cached;
+  const profile = {
+    key,
+    names: nameWords(summary),
+    vocabulary: new Set([summary, ...(Array.isArray(anchors) ? anchors : [])].flatMap(text => canonicalText(text).split(' ')).filter(Boolean)),
+  };
+  if (owner && typeof owner === 'object') SUBJECT_PROFILES.set(owner, profile);
+  return profile;
 }
 
 // Each summary names someone or something the other never mentions (in its summary or anchors):
 // "Ravenford is besieged by the Iron Legion" and "Stonehaven is besieged by the Iron Legion" share a faction
 // and a predicate, not a subject. A name on one side only ("Bandits hold the pass" / "the bandits hold the
 // pass") is no conflict; uncertain identity keeps the records apart.
-function differentNamedSubjects(left, right, leftAnchors = [], rightAnchors = []) {
-  const vocabulary = (summary, anchors) => new Set([summary, ...anchors].flatMap(text => canonicalText(text).split(' ')).filter(Boolean));
-  const leftWords = vocabulary(left, leftAnchors);
-  const rightWords = vocabulary(right, rightAnchors);
+function differentNamedSubjects(left, right) {
   const exclusive = (names, other) => [...names].some(name => !other.has(name));
-  return exclusive(nameWords(left), rightWords) && exclusive(nameWords(right), leftWords);
+  return exclusive(left.names, right.vocabulary) && exclusive(right.names, left.vocabulary);
 }
 
 // Two summaries name different subjects when the same noun carries different
 // distinguishing modifiers in each, or when each names someone or something the other does not; such
 // conditions are never merged or treated as one, however much else they share.
-export function distinctSubjects(left, right, { leftAnchors = [], rightAnchors = [] } = {}) {
+// `leftOwner` / `rightOwner`: the candidate or record the texts belong to, so their word sets are computed
+// once per object.
+export function distinctSubjects(left, right, { leftAnchors = [], rightAnchors = [], leftOwner = null, rightOwner = null } = {}) {
   const leftSpaceless = SPACELESS_SCRIPT.test(String(left ?? ''));
   const rightSpaceless = SPACELESS_SCRIPT.test(String(right ?? ''));
   if (leftSpaceless && rightSpaceless && distinctSpacelessSubjects(left, right)) return true;
-  if (!leftSpaceless && !rightSpaceless && differentNamedSubjects(left, right, leftAnchors, rightAnchors)) return true;
+  if (!leftSpaceless && !rightSpaceless
+    && differentNamedSubjects(subjectProfile(left, leftAnchors, leftOwner), subjectProfile(right, rightAnchors, rightOwner))) return true;
   const leftTokens = new Set(canonicalText(left).split(' ').filter(Boolean));
   const rightTokens = new Set(canonicalText(right).split(' ').filter(Boolean));
   const leftModifiers = subjectModifiers(left, rightTokens);
@@ -160,7 +184,9 @@ export function distinctSubjects(left, right, { leftAnchors = [], rightAnchors =
 
 export function duplicateSimilarity(candidate, record) {
   if (!candidate || !record || candidate.kind !== record.kind) return 0;
-  if (distinctSubjects(candidate.summary, record.summary, { leftAnchors: candidate.anchors || [], rightAnchors: record.anchors || [] })) return 0;
+  if (distinctSubjects(candidate.summary, record.summary, {
+    leftAnchors: candidate.anchors || [], rightAnchors: record.anchors || [], leftOwner: candidate, rightOwner: record,
+  })) return 0;
   const leftSummary = canonicalText(candidate.summary);
   const rightSummary = canonicalText(record.summary);
   if (leftSummary && leftSummary === rightSummary) return 1;
@@ -188,7 +214,9 @@ export function mergeAnchors(existing = [], incoming = [], max = 20) {
 
 function explicitNewEpisodeRelated(candidate, prior, score, threshold, { beyondAnchorWords = false } = {}) {
   // The anchor fallback below must not merge different subjects (north/south gate) that the score keeps apart.
-  if (distinctSubjects(candidate?.summary, prior?.summary, { leftAnchors: candidate?.anchors || [], rightAnchors: prior?.anchors || [] })) return false;
+  if (distinctSubjects(candidate?.summary, prior?.summary, {
+    leftAnchors: candidate?.anchors || [], rightAnchors: prior?.anchors || [], leftOwner: candidate, rightOwner: prior,
+  })) return false;
   if (score >= threshold) return true;
   const candidateAnchors = anchorSet(candidate);
   const priorAnchors = anchorSet(prior);

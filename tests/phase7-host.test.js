@@ -1207,8 +1207,8 @@ test('the Operations log is kept in its own per-chat server file, merged on save
   assert.match(source, /if \(retiredOperationLogs\.has\(chatKey\)\) return false;/);
   assert.match(source, /flushOperationLog\(key\);\s*diagnosticStore\.clear\(key\);/);
   assert.match(source, /void hydrateOperationLog\(chatKey\);\s*if \(!hydratedNow\) await refreshChatStateFromServer\(chatKey, \{ reason: 'chat-activation', retryDeterministicMiss: true \}\);/);
-  assert.match(source, /await retireOperationLog\(oldKey, newKey\);(?:\s*\/\/[^\n]*)*(?:\s*assertOwnershipEpoch\((?:old|new)Key, (?:old|new)OwnerEpoch\);)*\s*clearChatRuntimeState\(oldKey\);/);
-  assert.match(source, /await retireOperationLog\(chatKey\);\s*assertOwnershipEpoch\(chatKey, ownerEpoch\);\s*clearChatRuntimeState\(chatKey\);/);
+  assert.match(source, /await retireOperationLog\(oldKey, newKey\);\s*if \(ownershipEpoch\(oldKey\) === oldOwnerEpoch\) clearChatRuntimeState\(oldKey\);/);
+  assert.match(source, /await retireOperationLog\(chatKey\);\s*if \(ownershipEpoch\(chatKey\) !== ownerEpoch\) return true;\s*clearChatRuntimeState\(chatKey\);/);
   // Operation telemetry never enters the canonical sidecar payload.
   const storage = fs.readFileSync('storage.js', 'utf8');
   assert.doesNotMatch(storage, /diagnostic|operations/i);
